@@ -1,23 +1,19 @@
 # Album API Draft
 
 ## Status
-- Stage 11.4 draft only
-- no live backend required
-- current app still defaults to fake local album and post data
+- Server 3 minimal implementation target
+- local-dev usable
 
 ## Purpose
-Define the first contract boundary for album directory browsing, album-scoped post lists, and post-to-album relationship updates.
+Define the first working backend contract for album directory browsing and album-scoped post lists.
 
 ## Endpoints
 
-### `GET /v1/albums`
-- use case: fetch album directory
+### `GET /api/albums`
+- use case: fetch album directory in the current space
 - auth: required
-- query:
-  - `page`
-  - `size`
 
-Response draft:
+Response:
 
 ```json
 {
@@ -28,26 +24,17 @@ Response draft:
       "title": "Spring Window",
       "subtitle": "Light and slow daily fragments",
       "coverMediaId": "media_001",
-      "postCount": 8
+      "postCount": 2
     }
-  ],
-  "page": {
-    "page": 1,
-    "pageSize": 20,
-    "nextCursor": null,
-    "hasMore": false
-  }
+  ]
 }
 ```
 
-### `GET /v1/albums/{albumId}/posts`
-- use case: fetch posts under one album
+### `GET /api/albums/{albumId}/posts`
+- use case: fetch posts under one album in the current space
 - auth: required
-- query:
-  - `page`
-  - `size`
 
-Response draft:
+Response:
 
 ```json
 {
@@ -57,65 +44,25 @@ Response draft:
       "postId": "post_001",
       "title": "Night Walk",
       "summary": "A quiet walk home",
-      "contributorLabel": "You and Me",
+      "contributorLabel": "Demo A and Demo B",
       "displayTimeMillis": 1777412800000,
-      "albumIds": ["album_001"],
+      "albumIds": ["album_001", "album_002"],
       "coverMediaId": "media_001",
-      "mediaCount": 6
+      "mediaCount": 3
     }
-  ],
-  "page": {
-    "page": 1,
-    "pageSize": 20,
-    "nextCursor": null,
-    "hasMore": false
-  }
-}
-```
-
-### `PATCH /v1/posts/{postId}/albums`
-- use case: update which albums a post belongs to
-- auth: required
-
-Request draft:
-
-```json
-{
-  "albumIds": ["album_001", "album_002"]
-}
-```
-
-Response draft:
-
-```json
-{
-  "requestId": "req_update_post_albums",
-  "data": {
-    "postId": "post_001",
-    "title": "Night Walk",
-    "summary": "A quiet walk home",
-    "contributorLabel": "You and Me",
-    "displayTimeMillis": 1777412800000,
-    "albumIds": ["album_001", "album_002"],
-    "coverMediaId": "media_001",
-    "mediaCount": 6
-  }
+  ]
 }
 ```
 
 ## Field Notes
-- album APIs do not own post detail media lists
-- album relationship updates only change `albumIds`
-- post cover and media order remain post APIs
+- every album row belongs to one `spaceId`
+- album APIs return post summaries, not full post detail media lists
+- post album membership is updated through `PATCH /api/posts/{postId}`
 
 ## Error Code Placeholders
 - `ALBUM_NOT_FOUND`
 - `POST_NOT_FOUND`
-- `ALBUM_ASSIGNMENT_INVALID`
-- `VALIDATION_ERROR`
 - `AUTH_UNAUTHORIZED`
-- `NOT_IMPLEMENTED`
 
-## Stage 11.4 Draft-Only Notes
-- no album create, rename, delete, or cover management in this stage
-- no album member or permission model in this stage
+## Server 3 Notes
+- no album create, rename, delete, or cover mutation in this stage

@@ -11,16 +11,18 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 @Configuration
 @Profile("dev")
 public class DevAuthSeedDataInitializer {
 
-    private static final String DEMO_SPACE_ID = "space_demo_shared";
+    public static final String DEMO_SPACE_ID = "space_demo_shared";
     private static final String DEMO_PASSWORD = "demo123456";
 
     @Bean
+    @Order(1)
     ApplicationRunner authSeedRunner(
             UserRepository userRepository,
             SpaceRepository spaceRepository,

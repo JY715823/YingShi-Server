@@ -1,53 +1,20 @@
 # Post API Draft
 
 ## Status
-- Stage 11.4 draft only
-- no live backend required
-- current app still defaults to fake local post data
+- Server 3 minimal implementation target
+- local-dev usable
+- not final production post schema
 
 ## Purpose
-Define post list, post detail, post create, basic info update, cover update, and media-order update contracts for future backend integration.
+Define the first working backend contract for post detail and post editing backed by real space-scoped content tables.
 
 ## Endpoints
 
-### `GET /v1/posts`
-- use case: global post list
-- auth: required
-- query:
-  - `page`
-  - `size`
-
-Response draft:
-
-```json
-{
-  "requestId": "req_posts",
-  "data": [
-    {
-      "postId": "post_001",
-      "title": "Night Walk",
-      "summary": "A quiet walk home",
-      "contributorLabel": "You and Me",
-      "displayTimeMillis": 1777412800000,
-      "albumIds": ["album_001"],
-      "coverMediaId": "media_001",
-      "mediaCount": 6
-    }
-  ],
-  "page": {
-    "page": 1,
-    "pageSize": 20,
-    "nextCursor": null,
-    "hasMore": false
-  }
-}
-```
-
-### `GET /v1/posts/{postId}`
-- use case: post detail
+### `GET /api/posts/{postId}`
+- use case: fetch one post detail
 - auth: required
 
-Response draft:
+Response:
 
 ```json
 {
@@ -56,66 +23,78 @@ Response draft:
     "postId": "post_001",
     "title": "Night Walk",
     "summary": "A quiet walk home",
-    "contributorLabel": "You and Me",
+    "contributorLabel": "Demo A and Demo B",
     "displayTimeMillis": 1777412800000,
-    "albumIds": ["album_001"],
+    "albumIds": ["album_001", "album_002"],
     "coverMediaId": "media_001",
+    "mediaCount": 3,
     "mediaItems": [
       {
-        "mediaId": "media_001",
-        "mediaType": "image",
-        "previewUrl": "https://placeholder/media_001_preview.jpg",
-        "originalUrl": null,
-        "videoUrl": null,
-        "width": 1440,
-        "height": 1920,
-        "aspectRatio": 0.75,
-        "displayTimeMillis": 1777412800000,
-        "commentCount": 4,
+        "sortOrder": 1,
         "isCover": true,
-        "videoDurationMillis": null
+        "media": {
+          "mediaId": "media_001",
+          "mediaType": "image",
+          "previewUrl": "https://demo.yingshi.local/media_001_preview.jpg",
+          "originalUrl": "https://demo.yingshi.local/media_001_original.jpg",
+          "videoUrl": null,
+          "coverUrl": null,
+          "width": 1440,
+          "height": 1920,
+          "aspectRatio": 0.75,
+          "displayTimeMillis": 1777412800000
+        }
       }
     ]
   }
 }
 ```
 
-### `POST /v1/posts`
-- use case: create post shell
+### `POST /api/posts`
+- use case: create a post from existing media in the current space
 - auth: required
 
-Request draft:
+Request:
 
 ```json
 {
   "title": "Night Walk",
   "summary": "A quiet walk home",
+  "contributorLabel": "Demo A and Demo B",
   "displayTimeMillis": 1777412800000,
   "albumIds": ["album_001"],
-  "initialMediaIds": ["media_001", "media_002"]
+  "initialMediaIds": ["media_001", "media_002"],
+  "coverMediaId": "media_001"
 }
 ```
 
-### `PATCH /v1/posts/{postId}`
-- use case: update post basic info
+Response:
+- returns `PostDetailDto`
+
+### `PATCH /api/posts/{postId}`
+- use case: update post basic fields and album membership
 - auth: required
 
-Request draft:
+Request:
 
 ```json
 {
   "title": "Night Walk Updated",
   "summary": "A quiet walk home with one more note",
+  "contributorLabel": "Demo A and Demo B",
   "displayTimeMillis": 1777412800000,
-  "albumIds": ["album_001"]
+  "albumIds": ["album_001", "album_003"]
 }
 ```
 
-### `PATCH /v1/posts/{postId}/cover`
+Response:
+- returns `PostDetailDto`
+
+### `PATCH /api/posts/{postId}/cover`
 - use case: set post cover media
 - auth: required
 
-Request draft:
+Request:
 
 ```json
 {
@@ -123,11 +102,14 @@ Request draft:
 }
 ```
 
-### `PATCH /v1/posts/{postId}/media-order`
+Response:
+- returns `PostDetailDto`
+
+### `PATCH /api/posts/{postId}/media-order`
 - use case: update media order inside one post
 - auth: required
 
-Request draft:
+Request:
 
 ```json
 {
@@ -135,41 +117,25 @@ Request draft:
 }
 ```
 
-### `DELETE /v1/posts/{postId}`
-- use case: move one post into app-content trash
-- auth: required
-- Stage 11.6 draft only
-
-Request draft:
-
-```json
-{
-  "deleteMode": "moveToTrash",
-  "operatorNote": null
-}
-```
-
-Response draft:
-- return the created trash entry as `TrashItemDto`
+Response:
+- returns `PostDetailDto`
 
 ## Field Notes
-- post list and post detail are different DTO shapes
-- `coverMediaId` is preferred over duplicating full cover blocks on summaries
-- post detail media order belongs to the post itself
-- album membership update now lives in `album-api.md`
-- post delete is separated from media delete and always creates a post-scoped trash entry in this draft
+- every post belongs to the authenticated user's `spaceId`
+- one post can belong to multiple albums
+- media order is defined by `PostMedia.sortOrder`
+- `coverMediaId` must point to one media already attached to the same post
+- Server 3 does not include delete, comments, or rich editor block payloads
 
 ## Error Code Placeholders
 - `POST_NOT_FOUND`
-- `POST_MEDIA_NOT_FOUND`
 - `POST_MEDIA_ORDER_INVALID`
 - `POST_COVER_INVALID`
-- `POST_DELETE_CONFLICT`
+- `ALBUM_ASSIGNMENT_INVALID`
+- `MEDIA_NOT_FOUND`
 - `VALIDATION_ERROR`
 - `AUTH_UNAUTHORIZED`
-- `NOT_IMPLEMENTED`
 
-## Stage 11.4 Draft-Only Notes
-- no collaborator/member mutation in this stage
-- no rich post editor payload in this stage
-- delete request shape and restore semantics are aligned in Stage 11.6, but no live backend is required yet
+## Server 3 Notes
+- create and update only work with media already present in the current space
+- no delete endpoint in this stage
