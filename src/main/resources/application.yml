@@ -22,3 +22,10 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: alpha
     tags-sorter: alpha
+
+app:
+  auth:
+    jwt:
+      issuer: yingshi-server
+      access-token-ttl: PT30M
+      refresh-token-ttl: P7D
