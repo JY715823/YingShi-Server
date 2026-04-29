@@ -9,6 +9,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import static org.hamcrest.Matchers.nullValue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -185,6 +187,102 @@ class YingshiServerApplicationTests {
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("POST_NOT_FOUND"));
+    }
+
+    @Test
+    void commentApisWorkAndPostMediaFlowsStaySeparated() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        mockMvc.perform(get("/api/posts/post_001/comments")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.comments.length()").value(2))
+                .andExpect(jsonPath("$.data.comments[0].targetType").value("POST"))
+                .andExpect(jsonPath("$.data.comments[0].postId").value("post_001"))
+                .andExpect(jsonPath("$.data.comments[0].mediaId").value(nullValue()));
+
+        mockMvc.perform(get("/api/media/media_001/comments")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.comments.length()").value(2))
+                .andExpect(jsonPath("$.data.comments[0].targetType").value("MEDIA"))
+                .andExpect(jsonPath("$.data.comments[0].mediaId").value("media_001"))
+                .andExpect(jsonPath("$.data.comments[0].postId").value(nullValue()));
+
+        MvcResult postCommentResult = mockMvc.perform(post("/api/posts/post_001/comments")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "New post comment"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.targetType").value("POST"))
+                .andExpect(jsonPath("$.data.postId").value("post_001"))
+                .andExpect(jsonPath("$.data.mediaId").value(nullValue()))
+                .andReturn();
+
+        MvcResult mediaCommentResult = mockMvc.perform(post("/api/media/media_001/comments")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "New media comment"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.targetType").value("MEDIA"))
+                .andExpect(jsonPath("$.data.mediaId").value("media_001"))
+                .andExpect(jsonPath("$.data.postId").value(nullValue()))
+                .andReturn();
+
+        String postCommentId = readField(postCommentResult, "/data/commentId");
+        String mediaCommentId = readField(mediaCommentResult, "/data/commentId");
+
+        mockMvc.perform(patch("/api/comments/" + postCommentId)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "Updated post comment"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content").value("Updated post comment"));
+
+        mockMvc.perform(delete("/api/comments/" + mediaCommentId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isDeleted").value(true))
+                .andExpect(jsonPath("$.data.content").value(nullValue()));
+
+        mockMvc.perform(get("/api/media/media_001/comments")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.comments[0].commentId").value(mediaCommentId))
+                .andExpect(jsonPath("$.data.comments[0].isDeleted").value(true));
+    }
+
+    @Test
+    void commentAuthorRestrictionAndSpaceRestrictionWork() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        mockMvc.perform(patch("/api/comments/comment_post_002")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "Should fail"
+                                }
+                                """))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+
+        mockMvc.perform(get("/api/posts/post_other_secret/comments")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("COMMENT_TARGET_NOT_FOUND"));
     }
 
     private String loginAndGetAccessToken() throws Exception {

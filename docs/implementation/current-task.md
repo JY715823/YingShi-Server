@@ -1,59 +1,56 @@
-# Current Task - Server 3 Album, Post, and Media Core
+# Current Task - Server 4 Comment Core
 
 ## Goal
-Build the first real backend content foundation for album browsing, post detail, photo feed, and Gear Edit style post editing.
+Implement backend comment APIs for post comments and media comments while strictly keeping the two streams separated.
 
 ## In Scope
-- `Album`, `Post`, `Media`, `PostMedia`, and `PostAlbum` data models
-- space-scoped content ownership for every content table
-- album directory API
-- album post list API
-- post detail API
-- post create API
-- post basic update API
-- post cover update API
-- post media order update API
-- deduplicated global media feed API
-- dev seed data for the shared demo space
-- minimal contract sync for `post-api.md`, `media-api.md`, and `album-api.md`
+- `Comment` entity with post/media target split
+- post comment list API
+- media comment list API
+- create comment API
+- update comment API
+- soft delete comment API
+- page / size pagination
+- latest-first ordering
+- DTO and mapper
+- minimal contract sync for `comment-api.md`
+- dev seed comments for current shared space
 
 ## Product Intent
-- all app content belongs to the authenticated user's shared `spaceId`
-- one media item may appear in multiple posts
-- global photo feed should be deduplicated by `mediaId`
-- media order inside a post is controlled by `PostMedia.sortOrder`
-- a post may belong to one or more albums
-- a post cover points to one media item already attached to that post
+- post comments and media comments must never mix into one stream
+- post comments are keyed by `postId`
+- media comments are keyed by `mediaId`
+- one `mediaId` keeps one shared media-comment flow across posts
+- comments belong to the authenticated user's `spaceId`
+- edit and delete should stay inside the author's own comment scope
 
-## Server 3 API Shape
-- `GET /api/albums`
-- `GET /api/albums/{albumId}/posts`
-- `GET /api/posts/{postId}`
-- `POST /api/posts`
-- `PATCH /api/posts/{postId}`
-- `PATCH /api/posts/{postId}/cover`
-- `PATCH /api/posts/{postId}/media-order`
-- `GET /api/media/feed`
+## Server 4 API Shape
+- `GET /api/posts/{postId}/comments`
+- `GET /api/media/{mediaId}/comments`
+- `POST /api/posts/{postId}/comments`
+- `POST /api/media/{mediaId}/comments`
+- `PATCH /api/comments/{commentId}`
+- `DELETE /api/comments/{commentId}`
 
 ## Local Dev Assumptions
-- authenticated requests use the Server 2 bearer token flow
-- local profile uses H2 with JPA schema creation
-- demo content should be rich enough to back album page, post detail, photo feed, and edit flows
+- authenticated requests use the existing Server 2 bearer token flow
+- comments live on top of the current Server 3 post/media data
+- soft delete is enough for this stage
+- default page size is `10`
 
 ## Non-Goals
-- no upload
-- no comments
-- no delete or trash
-- no OSS integration
-- no real pagination
-- no advanced search or filter system
+- no replies
+- no nested threads
+- no quotes
+- no notifications
+- no likes
+- no rich text
 
 ## Done When
-- authenticated user can list albums in the current space
-- authenticated user can list posts under one album in the current space
-- authenticated user can fetch post detail in the current space
-- authenticated user can create and update posts in the current space
-- authenticated user can update post cover and media order
-- authenticated user can fetch a deduplicated media feed for the current space
-- seeded content exists for the shared demo space
+- authenticated user can fetch post comments in current space
+- authenticated user can fetch media comments in current space
+- authenticated user can create comments in current space
+- authenticated user can edit own comments
+- authenticated user can soft delete own comments
+- post and media comment flows remain separated
 - project builds and tests pass
