@@ -1,41 +1,37 @@
 # Comment API Draft
 
 ## Status
-- Stage 11.3 draft only
-- no live backend required
-- current app still defaults to fake local comments
+- Server 4 minimal implementation target
+- local-dev usable
 
 ## Purpose
-Support separate post comments and media comments without mixing target scopes, while reserving list and mutation contracts for future backend integration.
+Support separate post comments and media comments without mixing target scopes.
 
 ## Stream Separation
-- post comments and media comments are two separate streams
+- post comments and media comments are separate streams
 - `postId` comments only belong to the post
 - `mediaId` comments only belong to the media
+- one `mediaId` shares one media-comment stream across different posts
 - the client must not merge post comments and media comments into one list
 
 ## Ordering
 - latest comments appear first
 - server returns newest-to-oldest order by default
-- no alternate sort modes are reserved in this stage
 
-## Pagination Draft
-- this contract currently reserves `page` + `size`
+## Pagination
 - request query:
   - `page`
   - `size`
-- response paging stays placeholder-only in this stage
+- default `page=1`
+- default `size=10`
 
 ## Endpoints
 
-### `GET /v1/posts/{postId}/comments`
+### `GET /api/posts/{postId}/comments`
 - use case: fetch post comment list
 - auth: required
-- query:
-  - `page`
-  - `size`
 
-Response draft:
+Response:
 
 ```json
 {
@@ -43,34 +39,31 @@ Response draft:
   "data": {
     "comments": [
       {
-        "commentId": "comment_001",
-        "targetType": "post",
-        "targetId": "post_001",
-        "authorName": "Me",
-        "content": "A placeholder post comment",
+        "commentId": "comment_post_001",
+        "targetType": "POST",
+        "postId": "post_001",
+        "mediaId": null,
+        "authorId": "user_demo_a",
+        "authorName": "Demo A",
+        "content": "The night colors feel warm.",
         "createdAtMillis": 1777412800000,
         "updatedAtMillis": 1777412860000,
         "isDeleted": false
       }
-    ]
-  },
-  "page": {
+    ],
     "page": 1,
-    "pageSize": 20,
-    "nextCursor": null,
+    "size": 10,
+    "totalElements": 1,
     "hasMore": false
   }
 }
 ```
 
-### `GET /v1/media/{mediaId}/comments`
+### `GET /api/media/{mediaId}/comments`
 - use case: fetch media comment list
 - auth: required
-- query:
-  - `page`
-  - `size`
 
-Response draft:
+Response:
 
 ```json
 {
@@ -78,145 +71,96 @@ Response draft:
   "data": {
     "comments": [
       {
-        "commentId": "comment_101",
-        "targetType": "media",
-        "targetId": "media_001",
-        "authorName": "You",
-        "content": "A placeholder media comment",
-        "createdAtMillis": 1777412800000,
+        "commentId": "comment_media_001",
+        "targetType": "MEDIA",
+        "postId": null,
+        "mediaId": "media_001",
+        "authorId": "user_demo_b",
+        "authorName": "Demo B",
+        "content": "This frame should stay in the shared media flow.",
+        "createdAtMillis": 1777412900000,
         "updatedAtMillis": null,
         "isDeleted": false
       }
-    ]
-  },
-  "page": {
+    ],
     "page": 1,
-    "pageSize": 20,
-    "nextCursor": null,
+    "size": 10,
+    "totalElements": 1,
     "hasMore": false
   }
 }
 ```
 
-### `POST /v1/posts/{postId}/comments`
+### `POST /api/posts/{postId}/comments`
 - use case: create post comment
 - auth: required
 
-Request draft:
+Request:
 
 ```json
 {
-  "content": "A placeholder post comment"
+  "content": "A post comment"
 }
 ```
 
-Response draft:
+Response:
+- returns `CommentDto`
 
-```json
-{
-  "requestId": "req_create_post_comment",
-  "data": {
-    "commentId": "comment_new_post",
-    "targetType": "post",
-    "targetId": "post_001",
-    "authorName": "Me",
-    "content": "A placeholder post comment",
-    "createdAtMillis": 1777412800000,
-    "updatedAtMillis": null,
-    "isDeleted": false
-  }
-}
-```
-
-### `POST /v1/media/{mediaId}/comments`
+### `POST /api/media/{mediaId}/comments`
 - use case: create media comment
 - auth: required
 
-Request draft:
+Request:
 
 ```json
 {
-  "content": "A placeholder media comment"
+  "content": "A media comment"
 }
 ```
 
-Response draft:
+Response:
+- returns `CommentDto`
 
-```json
-{
-  "requestId": "req_create_media_comment",
-  "data": {
-    "commentId": "comment_new_media",
-    "targetType": "media",
-    "targetId": "media_001",
-    "authorName": "Me",
-    "content": "A placeholder media comment",
-    "createdAtMillis": 1777412800000,
-    "updatedAtMillis": null,
-    "isDeleted": false
-  }
-}
-```
-
-### `PATCH /v1/comments/{commentId}`
+### `PATCH /api/comments/{commentId}`
 - use case: edit one existing comment
 - auth: required
+- only the author may edit
 
-Request draft:
+Request:
 
 ```json
 {
-  "content": "Updated placeholder comment"
+  "content": "Updated comment"
 }
 ```
 
-### `DELETE /v1/comments/{commentId}`
-- use case: delete one existing comment
+Response:
+- returns `CommentDto`
+
+### `DELETE /api/comments/{commentId}`
+- use case: soft delete one existing comment
 - auth: required
+- only the author may delete
 
-Response draft:
-
-```json
-{
-  "requestId": "req_delete_comment",
-  "data": {
-    "success": true
-  }
-}
-```
-
-## Shared Comment Item Draft
-
-```json
-{
-  "commentId": "comment_001",
-  "targetType": "media",
-  "targetId": "media_001",
-  "authorName": "Me",
-  "content": "A placeholder comment",
-  "createdAtMillis": 1777412800000,
-  "updatedAtMillis": 1777412860000,
-  "isDeleted": false
-}
-```
+Response:
+- returns `CommentDto` with `isDeleted=true`
 
 ## Field Notes
-- `targetType`: `post` or `media`
-- `targetId` must match `targetType`
-- comments stay flat in Stage 11.3
-- request / response fields use `camelCase`
+- `targetType`: `POST` or `MEDIA`
+- `postId` must be set only for `POST`
+- `mediaId` must be set only for `MEDIA`
+- deleted comments stay soft-deleted in storage
+- response fields use `camelCase`
 
 ## Error Code Placeholders
 - `COMMENT_NOT_FOUND`
 - `COMMENT_TARGET_NOT_FOUND`
 - `COMMENT_SCOPE_MISMATCH`
-- `COMMENT_CONTENT_EMPTY`
-- `COMMENT_CONTENT_TOO_LONG`
+- `FORBIDDEN`
+- `VALIDATION_ERROR`
 - `AUTH_UNAUTHORIZED`
-- `NOT_IMPLEMENTED`
 
-## Stage 11.3 Draft-Only Notes
+## Server 4 Notes
 - no replies or nested threads
 - no moderation state
 - no rich text or media attachments
-- no final paging behavior beyond the placeholder `page` + `size` contract
