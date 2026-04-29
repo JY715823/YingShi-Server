@@ -20,6 +20,20 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    @ExceptionHandler(ApiException.class)
+    public ResponseEntity<ApiResponse<Void>> handleApiException(
+            ApiException exception,
+            HttpServletRequest request
+    ) {
+        return buildErrorResponse(
+                request,
+                exception.getStatus(),
+                exception.getErrorCode(),
+                exception.getMessage(),
+                exception.getDetails()
+        );
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleMethodArgumentNotValid(
             MethodArgumentNotValidException exception,

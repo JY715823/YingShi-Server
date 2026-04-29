@@ -10,7 +10,7 @@ spring:
       path: /h2-console
   jpa:
     hibernate:
-      ddl-auto: none
+      ddl-auto: create-drop
     open-in-view: false
     properties:
       hibernate:
@@ -32,3 +32,8 @@ springdoc:
     enabled: true
   swagger-ui:
     enabled: true
+
+app:
+  auth:
+    jwt:
+      secret: dev-secret-key-for-yingshi-server-minimum-length-32

@@ -1,17 +1,22 @@
 # Auth API Draft
 
 ## Status
-- Stage 11.2 draft only
-- no live backend required
-- no final login UI or account system required yet
+- Server 2 minimal implementation target
+- local-dev usable
+- not final production auth design
 
 ## Purpose
-Reserve the contract for future login, bearer-token injection, token refresh, logout, and current-user queries.
+Define the first working backend auth contract for local development:
+- account/password login
+- bearer-token access
+- current-user query
+- logout placeholder
 
 ## Header Convention
 - authenticated requests use:
   - `Authorization: Bearer <accessToken>`
-- login and refresh-token requests do not require the bearer header
+- login does not require bearer auth
+- logout uses bearer auth in Server 2
 
 ## Token Fields
 - `accessToken`
@@ -19,31 +24,36 @@ Reserve the contract for future login, bearer-token injection, token refresh, lo
 - `accessTokenExpireAtMillis`
 - `refreshTokenExpireAtMillis`
 
+## Space Foundation
+- each user has a default `spaceId`
+- current authenticated context should carry both `userId` and `spaceId`
+- later business modules should keep `spaceId` as their ownership field
+
 ## Endpoints
 
-### `POST /v1/auth/login`
-- use case: username/password login draft
+### `POST /api/auth/login`
+- use case: local account/password login
 
-Request draft:
+Request:
 
 ```json
 {
-  "account": "demo@yingshi.local",
-  "password": "placeholder-password",
-  "deviceName": "Android Placeholder",
-  "clientVersion": "1.0"
+  "account": "demo.a@yingshi.local",
+  "password": "demo123456"
 }
 ```
 
-Response draft:
+Response:
 
 ```json
 {
   "requestId": "req_login",
   "data": {
-    "userId": "user_001",
-    "displayName": "Local Placeholder User",
-    "spaceId": "space_001",
+    "userId": "user_demo_a",
+    "account": "demo.a@yingshi.local",
+    "displayName": "Demo A",
+    "spaceId": "space_demo_shared",
+    "spaceDisplayName": "Yingshi Demo Space",
     "accessToken": "access-token-placeholder",
     "refreshToken": "refresh-token-placeholder",
     "accessTokenExpireAtMillis": 1777416400000,
@@ -52,35 +62,32 @@ Response draft:
 }
 ```
 
-### `POST /v1/auth/refresh-token`
-- use case: refresh expired access token
+### `GET /api/auth/me`
+- use case: fetch current authenticated user and active space
+- requires bearer auth
 
-Request draft:
-
-```json
-{
-  "refreshToken": "refresh-token-placeholder"
-}
-```
-
-Response draft:
+Response:
 
 ```json
 {
-  "requestId": "req_refresh",
+  "requestId": "req_me",
   "data": {
-    "accessToken": "new-access-token-placeholder",
-    "refreshToken": "new-refresh-token-placeholder",
-    "accessTokenExpireAtMillis": 1777418200000,
-    "refreshTokenExpireAtMillis": 1778021200000
+    "userId": "user_demo_a",
+    "account": "demo.a@yingshi.local",
+    "displayName": "Demo A",
+    "avatarUrl": null,
+    "spaceId": "space_demo_shared",
+    "spaceDisplayName": "Yingshi Demo Space"
   }
 }
 ```
 
-### `POST /v1/auth/logout`
-- use case: clear current auth session on server side
+### `POST /api/auth/logout`
+- use case: placeholder logout response for current bearer session
+- requires bearer auth
+- current stage does not revoke tokens persistently
 
-Request draft:
+Request:
 
 ```json
 {
@@ -88,7 +95,7 @@ Request draft:
 }
 ```
 
-Response draft:
+Response:
 
 ```json
 {
@@ -99,40 +106,25 @@ Response draft:
 }
 ```
 
-### `GET /v1/auth/me`
-- use case: fetch current user info
-
-Response draft:
-
-```json
-{
-  "requestId": "req_me",
-  "data": {
-    "userId": "user_001",
-    "displayName": "Local Placeholder User",
-    "avatarUrl": null,
-    "spaceId": "space_001",
-    "spaceDisplayName": "Yingshi Demo Space"
-  }
-}
-```
+## Seed Users For Dev
+- `demo.a@yingshi.local / demo123456`
+- `demo.b@yingshi.local / demo123456`
+- both users belong to `space_demo_shared`
 
 ## Field Naming
 - JSON uses `camelCase`
-- account identifiers are strings
+- identifiers are string IDs
 - expiration values use UTC milliseconds
 
 ## Error Code Placeholders
 - `AUTH_INVALID_CREDENTIALS`
 - `AUTH_TOKEN_EXPIRED`
-- `AUTH_REFRESH_EXPIRED`
 - `AUTH_UNAUTHORIZED`
 - `AUTH_SESSION_INVALID`
-- `AUTH_LOGOUT_FAILED`
-- `NOT_IMPLEMENTED`
+- `VALIDATION_ERROR`
+- `SERVER_ERROR`
 
-## Stage 11.2 Draft-Only Notes
-- no OAuth, phone-code, WeChat, or third-party login in this stage
-- no persistent token storage in this stage
-- no real refresh retry policy in this stage
-- current login contract is a placeholder and may later switch from password to another auth method
+## Server 2 Notes
+- no phone-code, OAuth, WeChat, or third-party login in this stage
+- refresh token is issued but not backed by full session storage or revocation
+- login is intentionally local-first for backend bootstrapping
