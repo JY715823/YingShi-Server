@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: yingshi-server
+  profiles:
+    default: dev
+  mvc:
+    throw-exception-if-no-handler-found: true
+
+server:
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+springdoc:
+  api-docs:
+    enabled: false
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: false
+    path: /swagger-ui.html
+    operations-sorter: alpha
+    tags-sorter: alpha
