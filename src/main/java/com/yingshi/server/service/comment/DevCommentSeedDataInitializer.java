@@ -26,35 +26,35 @@ public class DevCommentSeedDataInitializer {
                     "space_demo_shared",
                     "user_demo_a",
                     "post_001",
-                    "The night colors feel warm."
+                    "今天阳光很好，散步回来心情也慢下来了。"
             ));
             commentRepository.save(createPostComment(
                     "comment_post_002",
                     "space_demo_shared",
                     "user_demo_b",
                     "post_001",
-                    "The walking rhythm fits the cover choice."
+                    "这组放在日常里很顺，封面也选得刚刚好。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_001",
                     "space_demo_shared",
                     "user_demo_b",
                     "media_001",
-                    "This frame should stay in the shared media flow."
+                    "这张单独留在全局照片流里也很好看。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_002",
                     "space_demo_shared",
                     "user_demo_a",
                     "media_001",
-                    "Agreed, the crop still works in both posts."
+                    "同意，这个裁切放进两个帖子里都成立。"
             ));
             commentRepository.save(createPostComment(
                     "comment_other_secret",
                     "space_private_other",
                     "user_demo_b",
                     "post_other_secret",
-                    "Hidden space comment"
+                    "隐藏空间里的测试评论"
             ));
         };
     }

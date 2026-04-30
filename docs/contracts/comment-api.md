@@ -23,8 +23,8 @@
   "postId": "post_001",
   "mediaId": null,
   "authorId": "user_demo_a",
-  "authorName": "Demo A",
-  "content": "The night colors feel warm.",
+  "authorName": "小雨",
+  "content": "今天阳光很好，散步回来心情也慢下来了。",
   "createdAtMillis": 1777412800000,
   "updatedAtMillis": 1777412860000,
   "isDeleted": false
@@ -36,6 +36,9 @@ Notes:
 - `postId` is only set for post comments
 - `mediaId` is only set for media comments
 - after soft delete, `isDeleted=true` and `content` may be `null`
+- comment create still records the real author
+- comment update/delete is currently allowed for any authenticated member inside the same `spaceId`
+- TODO: when a non-author edits/deletes a comment, notify the original author in a later stage
 
 ## Endpoints
 
@@ -53,8 +56,8 @@ Response data:
       "postId": "post_001",
       "mediaId": null,
       "authorId": "user_demo_a",
-      "authorName": "Demo A",
-      "content": "The night colors feel warm.",
+      "authorName": "小雨",
+      "content": "今天阳光很好，散步回来心情也慢下来了。",
       "createdAtMillis": 1777412800000,
       "updatedAtMillis": 1777412860000,
       "isDeleted": false
@@ -74,7 +77,7 @@ Request:
 
 ```json
 {
-  "content": "A comment"
+  "content": "这张照片让我想起那天的风。"
 }
 ```
 
@@ -87,7 +90,7 @@ Request:
 
 ```json
 {
-  "content": "Updated comment"
+  "content": "补一句，这个角度也很适合放进日常相册。"
 }
 ```
 

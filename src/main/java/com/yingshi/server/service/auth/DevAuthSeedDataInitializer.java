@@ -36,11 +36,11 @@ public class DevAuthSeedDataInitializer {
 
             SpaceEntity space = new SpaceEntity();
             space.setId(DEMO_SPACE_ID);
-            space.setDisplayName("Yingshi Demo Space");
+            space.setDisplayName("映世共享空间");
             spaceRepository.save(space);
 
-            UserEntity demoA = createUser("user_demo_a", "demo.a@yingshi.local", "Demo A", passwordEncoder);
-            UserEntity demoB = createUser("user_demo_b", "demo.b@yingshi.local", "Demo B", passwordEncoder);
+            UserEntity demoA = createUser("user_demo_a", "demo.a@yingshi.local", "小雨", passwordEncoder);
+            UserEntity demoB = createUser("user_demo_b", "demo.b@yingshi.local", "阿泽", passwordEncoder);
             userRepository.save(demoA);
             userRepository.save(demoB);
 

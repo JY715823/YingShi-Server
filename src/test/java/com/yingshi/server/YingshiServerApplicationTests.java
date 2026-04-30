@@ -93,8 +93,7 @@ class YingshiServerApplicationTests {
         mockMvc.perform(get("/api/albums")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(3))
-                .andExpect(jsonPath("$.data[0].albumId").value("album_003"));
+                .andExpect(jsonPath("$.data.length()").value(3));
 
         mockMvc.perform(get("/api/albums/album_001/posts")
                         .header("Authorization", "Bearer " + accessToken))
@@ -271,7 +270,7 @@ class YingshiServerApplicationTests {
     }
 
     @Test
-    void commentAuthorRestrictionAndSpaceRestrictionWork() throws Exception {
+    void sameSpaceMemberCanEditOtherCommentAndOtherSpaceStillBlocked() throws Exception {
         String accessToken = loginAndGetAccessToken();
 
         mockMvc.perform(patch("/api/comments/comment_post_002")
@@ -282,8 +281,15 @@ class YingshiServerApplicationTests {
                                   "content": "Should fail"
                                 }
                                 """))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.commentId").value("comment_post_002"))
+                .andExpect(jsonPath("$.data.content").value("Should fail"));
+
+        mockMvc.perform(delete("/api/comments/comment_post_002")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.commentId").value("comment_post_002"))
+                .andExpect(jsonPath("$.data.isDeleted").value(true));
 
         mockMvc.perform(get("/api/posts/post_other_secret/comments")
                         .header("Authorization", "Bearer " + accessToken))

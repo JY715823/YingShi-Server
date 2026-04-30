@@ -20,7 +20,7 @@ Request:
 
 ```json
 {
-  "fileName": "IMG_0001.JPG",
+  "fileName": "春日散步-01.jpg",
   "mimeType": "image/jpeg",
   "fileSizeBytes": 3145728,
   "mediaType": "image",
@@ -79,6 +79,7 @@ Response data:
 - upload success immediately creates one `Media` row
 - local files are written under the server-managed `local-storage` directory
 - later object-storage integration may change `provider`, but not the current local-dev contract
+- Android REAL import flow uses this upload result media id, then calls post create or add-media APIs
 
 ## Error Codes
 - `UPLOAD_NOT_FOUND`

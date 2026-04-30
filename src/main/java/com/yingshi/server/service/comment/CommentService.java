@@ -108,10 +108,10 @@ public class CommentService {
     @Transactional
     public CommentDto updateComment(String commentId, UpdateCommentRequest request, AuthenticatedUser currentUser) {
         CommentEntity comment = requireComment(commentId, currentUser.spaceId());
-        requireAuthor(comment, currentUser.userId());
         if (comment.getDeletedAt() != null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "Deleted comment cannot be edited.");
         }
+        // TODO: notify the original author when another member in the same space edits this comment.
         comment.setContent(request.content().trim());
         return toCommentDto(commentRepository.save(comment));
     }
@@ -119,8 +119,8 @@ public class CommentService {
     @Transactional
     public CommentDto deleteComment(String commentId, AuthenticatedUser currentUser) {
         CommentEntity comment = requireComment(commentId, currentUser.spaceId());
-        requireAuthor(comment, currentUser.userId());
         if (comment.getDeletedAt() == null) {
+            // TODO: notify the original author when another member in the same space deletes this comment.
             comment.setDeletedAt(Instant.now());
             comment.setContent(null);
             comment = commentRepository.save(comment);
@@ -186,12 +186,6 @@ public class CommentService {
     private void requireMedia(String mediaId, String spaceId) {
         if (mediaRepository.findByIdAndSpaceIdAndDeletedAtIsNull(mediaId, spaceId).isEmpty()) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Media target was not found.");
-        }
-    }
-
-    private void requireAuthor(CommentEntity comment, String userId) {
-        if (!comment.getAuthorId().equals(userId)) {
-            throw new ApiException(HttpStatus.FORBIDDEN, ErrorCode.FORBIDDEN, "Only the author can modify this comment.");
         }
     }
 }

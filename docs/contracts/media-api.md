@@ -32,6 +32,10 @@
 }
 ```
 
+Example meaning:
+- one shared media can belong to multiple posts
+- REAL seed examples now use Chinese albums/posts such as `日常`, `旅行`, `春日散步`
+
 ## Endpoints
 
 ### `GET /api/media/feed`
