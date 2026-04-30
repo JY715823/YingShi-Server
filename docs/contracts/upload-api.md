@@ -1,17 +1,20 @@
-# Upload API Draft
+# Upload API Contract
 
 ## Status
-- Server 5 local-dev implementation target
+- unified with current `yingshi-server` code
 - local filesystem storage only
 
-## Purpose
-Create a small upload flow that works in local development and immediately creates app-content media records.
+## Base Rules
+- base path: `/api/uploads`
+- bearer auth required for all endpoints
+- current backend is a two-step local upload flow:
+  1. create upload token
+  2. upload multipart file to `/file`
+- current backend does not expose `confirm`, `cancel`, or `status` endpoints
 
 ## Endpoints
 
 ### `POST /api/uploads/token`
-- use case: create one local upload task
-- auth: required
 
 Request:
 
@@ -28,63 +31,56 @@ Request:
 }
 ```
 
-Response:
+Response data:
 
 ```json
 {
-  "requestId": "req_upload_token",
-  "data": {
-    "uploadId": "upload_001",
-    "provider": "local",
-    "uploadUrl": "/api/uploads/upload_001/file",
-    "expireAtMillis": 1777417000000,
-    "state": "waiting"
-  }
+  "uploadId": "upload_001",
+  "provider": "local",
+  "uploadUrl": "/api/uploads/upload_001/file",
+  "expireAtMillis": 1777417000000,
+  "state": "waiting"
 }
 ```
 
 ### `POST /api/uploads/{uploadId}/file`
-- use case: upload one local multipart file and create one `Media`
-- auth: required
-- content type: `multipart/form-data`
-- form field:
-  - `file`
 
-Response:
+Request:
+- content type: `multipart/form-data`
+- form field name: `file`
+
+Response data:
 
 ```json
 {
-  "requestId": "req_upload_file",
-  "data": {
-    "uploadId": "upload_001",
-    "state": "success",
-    "media": {
-      "mediaId": "media_uploaded_001",
-      "mediaType": "image",
-      "url": "/api/media/files/media_uploaded_001",
-      "previewUrl": "/api/media/files/media_uploaded_001",
-      "originalUrl": "/api/media/files/media_uploaded_001",
-      "videoUrl": null,
-      "coverUrl": null,
-      "mimeType": "image/jpeg",
-      "sizeBytes": 3145728,
-      "width": 1440,
-      "height": 1920,
-      "aspectRatio": 0.75,
-      "durationMillis": null,
-      "displayTimeMillis": 1777416400000,
-      "postIds": []
-    }
+  "uploadId": "upload_001",
+  "state": "success",
+  "media": {
+    "mediaId": "media_uploaded_001",
+    "mediaType": "image",
+    "url": "/api/media/files/media_uploaded_001",
+    "previewUrl": "/api/media/files/media_uploaded_001",
+    "originalUrl": "/api/media/files/media_uploaded_001",
+    "videoUrl": null,
+    "coverUrl": null,
+    "mimeType": "image/jpeg",
+    "sizeBytes": 3145728,
+    "width": 1440,
+    "height": 1920,
+    "aspectRatio": 0.75,
+    "durationMillis": null,
+    "displayTimeMillis": 1777416400000,
+    "postIds": []
   }
 }
 ```
 
 ## Notes
-- local upload writes files under a server-managed dev directory
 - upload success immediately creates one `Media` row
-- later integration may replace `provider=local` with real object storage
+- local files are written under the server-managed `local-storage` directory
+- later object-storage integration may change `provider`, but not the current local-dev contract
 
-## Error Code Placeholders
+## Error Codes
 - `UPLOAD_NOT_FOUND`
 - `UPLOAD_ALREADY_COMPLETED`
 - `UPLOAD_FILE_MISMATCH`

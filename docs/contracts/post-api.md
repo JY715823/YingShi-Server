@@ -1,20 +1,61 @@
-# Post API Draft
+# Post API Contract
 
 ## Status
-- Server 5+6 local-dev implementation target
+- unified with current `yingshi-server` code
+- local-dev usable
 
-## Purpose
-Back post detail, post creation, post media edits, and post-level delete behavior with real space-scoped data.
+## Base Rules
+- base path: `/api/posts`
+- bearer auth required for all endpoints
+- current backend has no `GET /api/posts` list endpoint
+- create, update, cover update, media order update, and add-media all return the same `PostDetailDto`
+
+## Post Detail DTO
+
+```json
+{
+  "postId": "post_001",
+  "title": "Night Walk",
+  "summary": "A quiet walk home",
+  "contributorLabel": "Demo A and Demo B",
+  "displayTimeMillis": 1777412800000,
+  "albumIds": ["album_001"],
+  "coverMediaId": "media_001",
+  "mediaCount": 3,
+  "mediaItems": [
+    {
+      "sortOrder": 0,
+      "isCover": true,
+      "media": {
+        "mediaId": "media_001",
+        "mediaType": "image",
+        "url": "/api/media/files/media_001",
+        "previewUrl": "/api/media/files/media_001",
+        "originalUrl": "/api/media/files/media_001",
+        "videoUrl": null,
+        "coverUrl": null,
+        "mimeType": "image/jpeg",
+        "sizeBytes": 3145728,
+        "width": 1440,
+        "height": 1920,
+        "aspectRatio": 0.75,
+        "durationMillis": null,
+        "displayTimeMillis": 1777412800000,
+        "postIds": ["post_001"]
+      }
+    }
+  ]
+}
+```
 
 ## Endpoints
 
 ### `GET /api/posts/{postId}`
-- use case: fetch one active post detail
-- auth: required
+
+Response:
+- returns one `PostDetailDto`
 
 ### `POST /api/posts`
-- use case: create one post from existing media in the current space
-- auth: required
 
 Request:
 
@@ -30,9 +71,53 @@ Request:
 }
 ```
 
+Response:
+- returns one `PostDetailDto`
+
+### `PATCH /api/posts/{postId}`
+
+Request:
+
+```json
+{
+  "title": "Night Walk Updated",
+  "summary": "A quiet walk home with one more note",
+  "contributorLabel": "Demo A and Demo B",
+  "displayTimeMillis": 1777412800000,
+  "albumIds": ["album_001", "album_002"]
+}
+```
+
+Response:
+- returns one `PostDetailDto`
+
+### `PATCH /api/posts/{postId}/cover`
+
+Request:
+
+```json
+{
+  "coverMediaId": "media_002"
+}
+```
+
+Response:
+- returns one `PostDetailDto`
+
+### `PATCH /api/posts/{postId}/media-order`
+
+Request:
+
+```json
+{
+  "orderedMediaIds": ["media_002", "media_001", "media_003"]
+}
+```
+
+Response:
+- returns one `PostDetailDto`
+
 ### `POST /api/posts/{postId}/media`
-- use case: append one or more existing media items to one post
-- auth: required
 
 Request:
 
@@ -43,47 +128,29 @@ Request:
 }
 ```
 
-### `PATCH /api/posts/{postId}`
-- use case: update post basic fields and album membership
-- auth: required
-
-### `PATCH /api/posts/{postId}/cover`
-- use case: set post cover media
-- auth: required
-
-### `PATCH /api/posts/{postId}/media-order`
-- use case: update media order inside one post
-- auth: required
+Response:
+- returns one `PostDetailDto`
 
 ### `DELETE /api/posts/{postId}`
-- use case: delete one post into trash
-- auth: required
-- behavior:
-  - soft delete the post
-  - keep post-media and post comments restorable
-  - create one `postDeleted` trash item
-
-Response:
-- returns `TrashItemDto`
-
-### `DELETE /api/posts/{postId}/media/{mediaId}?deleteMode=directory|system`
-- use case: remove one media from one post
-- auth: required
 
 Behavior:
-- `directory`: only remove this `PostMedia` relation and create `mediaRemoved` trash item
-- `system`: system delete this media globally and create `mediaSystemDeleted` trash item
+- soft deletes the post
+- keeps relations and comments restorable
+- creates one trash item with `itemType = postDeleted`
 
 Response:
-- returns `TrashItemDto`
+- returns one `TrashItemDto`
 
-## Field Notes
-- one media can belong to multiple posts
-- media order is defined by `PostMedia.sortOrder`
-- deleted posts do not appear in active post APIs
-- system-deleted media does not appear in post detail until restored
+### `DELETE /api/posts/{postId}/media/{mediaId}?deleteMode=directory|system`
 
-## Error Code Placeholders
+Behavior:
+- `directory`: remove only this post-media relation and create `mediaRemoved`
+- `system`: system delete the media globally and create `mediaSystemDeleted`
+
+Response:
+- returns one `TrashItemDto`
+
+## Error Codes
 - `POST_NOT_FOUND`
 - `POST_ALREADY_DELETED`
 - `POST_MEDIA_ORDER_INVALID`

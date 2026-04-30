@@ -1,18 +1,16 @@
-# Media API Draft
+# Media API Contract
 
 ## Status
-- Server 5+6 local-dev implementation target
+- unified with current `yingshi-server` code
+- local-dev usable
 
-## Purpose
-Serve global media feed, local media file access, and media-level system delete behavior.
+## Base Rules
+- base path: `/api/media`
+- bearer auth required for all endpoints
+- media feed is deduplicated by media body, not repeated per post
+- there is no `GET /api/media/{mediaId}` JSON detail endpoint in current backend
 
-## Endpoints
-
-### `GET /api/media/feed`
-- use case: deduplicated global app-content media stream for the current space
-- auth: required
-
-Response item shape:
+## Media DTO
 
 ```json
 {
@@ -34,28 +32,35 @@ Response item shape:
 }
 ```
 
-### `GET /api/media/files/{mediaId}`
-- use case: fetch one locally stored file in dev
-- auth: required
+## Endpoints
 
-### `DELETE /api/media/{mediaId}`
-- use case: system delete one media from the current space
-- auth: required
-- behavior:
-  - hide media from global feed
-  - hide media from all posts
-  - create one `mediaSystemDeleted` trash item
+### `GET /api/media/feed`
+
+Response data:
+- array of `MediaDto`
+
+### `GET /api/media/files/{mediaId}`
 
 Response:
-- returns `TrashItemDto`
+- binary file stream
+- local dev currently serves stored files directly from server-managed local storage
 
-## Field Notes
-- `url` is the canonical file URL for this media
+### `DELETE /api/media/{mediaId}`
+
+Behavior:
+- system delete one media globally in the current space
+- hides it from feed and all posts
+- creates one trash item with `itemType = mediaSystemDeleted`
+
+Response:
+- returns one `TrashItemDto`
+
+## Notes
+- `url` is the canonical file URL
+- `postIds` only includes active posts
 - system-deleted media stays restorable through trash
-- media feed excludes system-deleted media
-- `postIds` only includes active posts in the current space
 
-## Error Code Placeholders
+## Error Codes
 - `MEDIA_NOT_FOUND`
 - `MEDIA_ALREADY_DELETED`
 - `TRASH_ITEM_NOT_FOUND`

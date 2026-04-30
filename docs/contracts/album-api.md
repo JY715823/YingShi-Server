@@ -1,68 +1,58 @@
-# Album API Draft
+# Album API Contract
 
 ## Status
-- Server 3 minimal implementation target
+- unified with current `yingshi-server` code
 - local-dev usable
 
-## Purpose
-Define the first working backend contract for album directory browsing and album-scoped post lists.
+## Base Rules
+- base path: `/api/albums`
+- bearer auth required for all endpoints
+- current backend does not paginate album APIs
+- album membership mutation is handled by `PATCH /api/posts/{postId}`, not a standalone album endpoint
 
 ## Endpoints
 
 ### `GET /api/albums`
-- use case: fetch album directory in the current space
-- auth: required
 
-Response:
+Response data:
 
 ```json
-{
-  "requestId": "req_albums",
-  "data": [
-    {
-      "albumId": "album_001",
-      "title": "Spring Window",
-      "subtitle": "Light and slow daily fragments",
-      "coverMediaId": "media_001",
-      "postCount": 2
-    }
-  ]
-}
+[
+  {
+    "albumId": "album_001",
+    "title": "Spring Window",
+    "subtitle": "Light and slow daily fragments",
+    "coverMediaId": "media_001",
+    "postCount": 2
+  }
+]
 ```
 
 ### `GET /api/albums/{albumId}/posts`
-- use case: fetch posts under one album in the current space
-- auth: required
 
-Response:
+Response data:
 
 ```json
-{
-  "requestId": "req_album_posts",
-  "data": [
-    {
-      "postId": "post_001",
-      "title": "Night Walk",
-      "summary": "A quiet walk home",
-      "contributorLabel": "Demo A and Demo B",
-      "displayTimeMillis": 1777412800000,
-      "albumIds": ["album_001", "album_002"],
-      "coverMediaId": "media_001",
-      "mediaCount": 3
-    }
-  ]
-}
+[
+  {
+    "postId": "post_001",
+    "title": "Night Walk",
+    "summary": "A quiet walk home",
+    "contributorLabel": "Demo A and Demo B",
+    "displayTimeMillis": 1777412800000,
+    "albumIds": ["album_001", "album_002"],
+    "coverMediaId": "media_001",
+    "mediaCount": 3
+  }
+]
 ```
 
-## Field Notes
-- every album row belongs to one `spaceId`
-- album APIs return post summaries, not full post detail media lists
-- post album membership is updated through `PATCH /api/posts/{postId}`
+## Notes
+- album APIs return summaries only
+- album detail media lists still belong to post detail
+- there is no `PATCH /api/posts/{postId}/albums` endpoint in current backend
 
-## Error Code Placeholders
+## Error Codes
 - `ALBUM_NOT_FOUND`
 - `POST_NOT_FOUND`
 - `AUTH_UNAUTHORIZED`
-
-## Server 3 Notes
-- no album create, rename, delete, or cover mutation in this stage
