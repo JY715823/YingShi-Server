@@ -20,8 +20,8 @@
   "state": "inTrash",
   "sourcePostId": "post_001",
   "sourceMediaId": null,
-  "title": "Night Walk",
-  "previewInfo": "Post deleted",
+  "title": "春日散步",
+  "previewInfo": "帖子已移入回收站",
   "deletedAtMillis": 1777412800000,
   "relatedPostIds": ["post_001"],
   "relatedMediaIds": ["media_001", "media_002"]
@@ -58,8 +58,8 @@ Response data:
       "state": "inTrash",
       "sourcePostId": "post_001",
       "sourceMediaId": null,
-      "title": "Night Walk",
-      "previewInfo": "Post deleted",
+      "title": "春日散步",
+      "previewInfo": "帖子已移入回收站",
       "deletedAtMillis": 1777412800000,
       "relatedPostIds": ["post_001"],
       "relatedMediaIds": ["media_001", "media_002"]
@@ -84,8 +84,8 @@ Response data:
     "state": "inTrash",
     "sourcePostId": "post_001",
     "sourceMediaId": null,
-    "title": "Night Walk",
-    "previewInfo": "Post deleted",
+    "title": "春日散步",
+    "previewInfo": "帖子已移入回收站",
     "deletedAtMillis": 1777412800000,
     "relatedPostIds": ["post_001"],
     "relatedMediaIds": ["media_001", "media_002"]
@@ -119,14 +119,18 @@ Response data:
     "state": "pendingCleanup",
     "sourcePostId": "post_001",
     "sourceMediaId": null,
-    "title": "Night Walk",
-    "previewInfo": "Post deleted",
+    "title": "春日散步",
+    "previewInfo": "帖子待彻底移出回收站",
     "deletedAtMillis": 1777412800000,
     "relatedPostIds": ["post_001"],
     "relatedMediaIds": ["media_001", "media_002"]
   }
 }
 ```
+
+Notes:
+- Android REAL mode maps `postDeleted` / `mediaRemoved` / `mediaSystemDeleted` directly from backend
+- `remove` means move to `pendingCleanup`, and `undo-remove` is the 24h撤销入口
 
 ### `POST /api/trash/items/{trashItemId}/undo-remove`
 

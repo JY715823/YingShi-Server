@@ -42,8 +42,8 @@ public class DevContentSeedDataInitializer {
             }
 
             String sharedSpaceId = DevAuthSeedDataInitializer.DEMO_SPACE_ID;
-            ensureSpace(spaceRepository, sharedSpaceId, "Yingshi Demo Space");
-            ensureSpace(spaceRepository, HIDDEN_SPACE_ID, "Private Hidden Space");
+            ensureSpace(spaceRepository, sharedSpaceId, "映世共享空间");
+            ensureSpace(spaceRepository, HIDDEN_SPACE_ID, "隐藏测试空间");
 
             seedSharedSpace(sharedSpaceId, albumRepository, postRepository, mediaRepository, postMediaRepository, postAlbumRepository);
             seedHiddenSpace(HIDDEN_SPACE_ID, albumRepository, postRepository, mediaRepository, postMediaRepository, postAlbumRepository);
@@ -65,13 +65,13 @@ public class DevContentSeedDataInitializer {
         mediaRepository.save(createImageMedia(spaceId, "media_005", "media_005", 1536, 2048, 1777412000000L));
         mediaRepository.save(createImageMedia(spaceId, "media_006", "media_006", 1440, 1440, 1777411800000L));
 
-        albumRepository.save(createAlbum(spaceId, "album_001", "Spring Window", "Light and slow daily fragments", "media_001"));
-        albumRepository.save(createAlbum(spaceId, "album_002", "Weekend Notes", "Walks, trains, and tiny stops", "media_004"));
-        albumRepository.save(createAlbum(spaceId, "album_003", "Gear Edit Picks", "Reusable frames for edit flows", "media_005"));
+        albumRepository.save(createAlbum(spaceId, "album_001", "日常", "窗边、散步和慢一点的下午", "media_001"));
+        albumRepository.save(createAlbum(spaceId, "album_002", "旅行", "路上经过的站台、车窗和风景", "media_004"));
+        albumRepository.save(createAlbum(spaceId, "album_003", "精选", "这阶段想反复翻看的几张图", "media_005"));
 
-        postRepository.save(createPost(spaceId, "post_001", "Night Walk", "A quiet walk home", "Demo A and Demo B", 1777412800000L, "media_001"));
-        postRepository.save(createPost(spaceId, "post_002", "Desk Light", "Small objects, warm lamp, late hour", "Demo A and Demo B", 1777412400000L, "media_005"));
-        postRepository.save(createPost(spaceId, "post_003", "Train Window", "Passing light and station blur", "Demo A and Demo B", 1777412000000L, "media_006"));
+        postRepository.save(createPost(spaceId, "post_001", "春日散步", "今天阳光很好，回家的那段路也安静下来。", "小雨 和 阿泽", 1777412800000L, "media_001"));
+        postRepository.save(createPost(spaceId, "post_002", "灯下小物", "夜里收桌前随手拍了几张，暖光把细节都留住了。", "小雨 和 阿泽", 1777412400000L, "media_005"));
+        postRepository.save(createPost(spaceId, "post_003", "车窗一瞬", "列车进站前的反光和站台虚影，很想单独留一篇。", "小雨 和 阿泽", 1777412000000L, "media_006"));
 
         postMediaRepository.save(createPostMedia(spaceId, "post_media_001", "post_001", "media_001", 1));
         postMediaRepository.save(createPostMedia(spaceId, "post_media_002", "post_001", "media_002", 2));
@@ -98,8 +98,8 @@ public class DevContentSeedDataInitializer {
             PostAlbumRepository postAlbumRepository
     ) {
         mediaRepository.save(createImageMedia(spaceId, "media_other_secret", "media_other_secret", 1200, 1200, 1777410000000L));
-        albumRepository.save(createAlbum(spaceId, "album_other_secret", "Hidden Album", "Should not be visible", "media_other_secret"));
-        postRepository.save(createPost(spaceId, "post_other_secret", "Hidden Post", "Should not be visible", "Hidden", 1777410000000L, "media_other_secret"));
+        albumRepository.save(createAlbum(spaceId, "album_other_secret", "隐藏相册", "用于跨空间可见性测试", "media_other_secret"));
+        postRepository.save(createPost(spaceId, "post_other_secret", "隐藏帖子", "用于跨空间可见性测试", "隐藏成员", 1777410000000L, "media_other_secret"));
         postMediaRepository.save(createPostMedia(spaceId, "post_media_other_secret", "post_other_secret", "media_other_secret", 1));
         postAlbumRepository.save(createPostAlbum(spaceId, "post_album_other_secret", "post_other_secret", "album_other_secret"));
     }
