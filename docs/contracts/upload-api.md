@@ -1,113 +1,93 @@
 # Upload API Draft
 
 ## Status
-- Stage 11.5 draft only
-- no live backend required
-- current app still defaults to fake upload tasks
+- Server 5 local-dev implementation target
+- local filesystem storage only
 
 ## Purpose
-Reserve the contract for future direct upload to OSS or object storage while making token creation, upload confirmation, cancellation, and status query boundaries explicit.
+Create a small upload flow that works in local development and immediately creates app-content media records.
 
 ## Endpoints
 
-### `POST /v1/uploads/token`
-- use case: request a direct-upload token and create an upload task
+### `POST /api/uploads/token`
+- use case: create one local upload task
 - auth: required
 
-Request draft:
+Request:
 
 ```json
 {
   "fileName": "IMG_0001.JPG",
   "mimeType": "image/jpeg",
   "fileSizeBytes": 3145728,
-  "mediaType": "image"
+  "mediaType": "image",
+  "width": 1440,
+  "height": 1920,
+  "durationMillis": null,
+  "displayTimeMillis": 1777416400000
 }
 ```
 
-Response draft:
+Response:
 
 ```json
 {
   "requestId": "req_upload_token",
   "data": {
     "uploadId": "upload_001",
-    "provider": "oss",
-    "bucket": "placeholder-bucket",
-    "objectKey": "uploads/2026/04/upload_001.jpg",
-    "uploadUrl": "https://placeholder-upload.example.com",
-    "accessKeyId": "placeholder-access-key",
-    "policy": "placeholder-policy",
-    "signature": "placeholder-signature",
-    "expireAtMillis": 1777416400000
+    "provider": "local",
+    "uploadUrl": "/api/uploads/upload_001/file",
+    "expireAtMillis": 1777417000000,
+    "state": "waiting"
   }
 }
 ```
 
-### `POST /v1/uploads/{uploadId}/confirm`
-- use case: tell the backend that upload completed successfully
+### `POST /api/uploads/{uploadId}/file`
+- use case: upload one local multipart file and create one `Media`
 - auth: required
+- content type: `multipart/form-data`
+- form field:
+  - `file`
 
-Request draft:
-
-```json
-{
-  "etag": "placeholder-etag",
-  "objectKey": "uploads/2026/04/upload_001.jpg"
-}
-```
-
-Response draft:
+Response:
 
 ```json
 {
-  "requestId": "req_confirm_upload",
+  "requestId": "req_upload_file",
   "data": {
     "uploadId": "upload_001",
-    "fileName": "IMG_0001.JPG",
-    "mediaType": "image",
-    "objectKey": "uploads/2026/04/upload_001.jpg",
     "state": "success",
-    "progressPercent": 100,
-    "errorMessage": null
+    "media": {
+      "mediaId": "media_uploaded_001",
+      "mediaType": "image",
+      "url": "/api/media/files/media_uploaded_001",
+      "previewUrl": "/api/media/files/media_uploaded_001",
+      "originalUrl": "/api/media/files/media_uploaded_001",
+      "videoUrl": null,
+      "coverUrl": null,
+      "mimeType": "image/jpeg",
+      "sizeBytes": 3145728,
+      "width": 1440,
+      "height": 1920,
+      "aspectRatio": 0.75,
+      "durationMillis": null,
+      "displayTimeMillis": 1777416400000,
+      "postIds": []
+    }
   }
 }
 ```
 
-### `POST /v1/uploads/{uploadId}/cancel`
-- use case: cancel one upload task
-- auth: required
-
-### `GET /v1/uploads/{uploadId}`
-- use case: query one upload task status
-- auth: required
-
-## Upload State Draft
-- `waiting`
-- `uploading`
-- `success`
-- `failure`
-- `cancelled`
-
-## Field Notes
-- `provider` is a placeholder and may later support `oss`, `s3`, or similar
-- upload token and upload task are separate DTO shapes
-- system media should only enter app-content media after confirm-upload success
+## Notes
+- local upload writes files under a server-managed dev directory
+- upload success immediately creates one `Media` row
+- later integration may replace `provider=local` with real object storage
 
 ## Error Code Placeholders
-- `UPLOAD_TOKEN_EXPIRED`
-- `UPLOAD_INVALID_MIME`
-- `UPLOAD_TOO_LARGE`
 - `UPLOAD_NOT_FOUND`
-- `UPLOAD_ALREADY_CONFIRMED`
-- `UPLOAD_CANCELLED`
-- `NOT_IMPLEMENTED`
-
-## Auth Placeholder
-- bearer token required in principle
-- no real token flow beyond placeholder structures in this stage
-
-## Stage 11.5 Draft-Only Notes
-- no real file transfer
-- no multipart chunk strategy yet
-- no resume or retry protocol yet
+- `UPLOAD_ALREADY_COMPLETED`
+- `UPLOAD_FILE_MISMATCH`
+- `UPLOAD_STORAGE_ERROR`
+- `VALIDATION_ERROR`
+- `AUTH_UNAUTHORIZED`

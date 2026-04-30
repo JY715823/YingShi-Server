@@ -29,3 +29,5 @@ app:
       issuer: yingshi-server
       access-token-ttl: PT30M
       refresh-token-ttl: P7D
+  storage:
+    local-root: local-storage

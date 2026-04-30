@@ -52,9 +52,13 @@ public class AlbumService {
     public List<AlbumDto> listAlbums(AuthenticatedUser currentUser) {
         String spaceId = currentUser.spaceId();
         List<AlbumEntity> albums = albumRepository.findBySpaceIdOrderByTitleAsc(spaceId);
-        Map<String, Long> postCountByAlbumId = postAlbumRepository.findAll()
+        Set<String> activePostIds = postRepository.findAll()
                 .stream()
-                .filter(relation -> spaceId.equals(relation.getSpaceId()))
+                .filter(post -> spaceId.equals(post.getSpaceId()) && post.getDeletedAt() == null)
+                .map(PostEntity::getId)
+                .collect(Collectors.toSet());
+        Map<String, Long> postCountByAlbumId = postAlbumRepository.findAll().stream()
+                .filter(relation -> spaceId.equals(relation.getSpaceId()) && activePostIds.contains(relation.getPostId()))
                 .collect(Collectors.groupingBy(PostAlbumEntity::getAlbumId, Collectors.counting()));
 
         List<AlbumDto> results = new ArrayList<>();
@@ -74,7 +78,7 @@ public class AlbumService {
             return List.of();
         }
 
-        List<PostEntity> posts = postRepository.findBySpaceIdAndIdIn(spaceId, postIds)
+        List<PostEntity> posts = postRepository.findBySpaceIdAndIdInAndDeletedAtIsNull(spaceId, postIds)
                 .stream()
                 .sorted(Comparator.comparing(PostEntity::getDisplayTimeMillis).reversed().thenComparing(PostEntity::getId))
                 .toList();
@@ -89,6 +93,7 @@ public class AlbumService {
             results.add(contentMapper.toPostSummaryDto(
                     post,
                     albumIdsByPostId.getOrDefault(post.getId(), List.of()),
+                    post.getCoverMediaId(),
                     mediaCountByPostId.getOrDefault(post.getId(), 0L)
             ));
         }

@@ -1,56 +1,66 @@
-# Current Task - Server 4 Comment Core
+# Current Task - Server 5+6 Upload and Trash Core
 
 ## Goal
-Implement backend comment APIs for post comments and media comments while strictly keeping the two streams separated.
+Implement local upload/media storage and delete/trash/restore core flows for posts and media.
 
-## In Scope
-- `Comment` entity with post/media target split
-- post comment list API
-- media comment list API
-- create comment API
-- update comment API
-- soft delete comment API
-- page / size pagination
-- latest-first ordering
-- DTO and mapper
-- minimal contract sync for `comment-api.md`
-- dev seed comments for current shared space
+## Scope
+- local upload token + local multipart upload
+- media record creation with storage metadata
+- create post with media
+- add media to existing post
+- post media reorder + cover
+- delete post
+- directory delete inside a post
+- system delete for media
+- trash list/detail/restore/remove/undo-remove
+- pending cleanup placeholder
+- minimal contract sync for `upload-api.md`, `media-api.md`, `trash-api.md`, `post-api.md`
 
 ## Product Intent
-- post comments and media comments must never mix into one stream
-- post comments are keyed by `postId`
-- media comments are keyed by `mediaId`
-- one `mediaId` keeps one shared media-comment flow across posts
-- comments belong to the authenticated user's `spaceId`
-- edit and delete should stay inside the author's own comment scope
+- uploaded local files should create usable app-content media
+- media belongs to one `spaceId` and may belong to multiple posts
+- directory delete only removes one `PostMedia` relation
+- system delete hides one media globally from app content
+- trash must distinguish `postDeleted`, `mediaRemoved`, `mediaSystemDeleted`
+- restore behavior depends on trash item type
 
-## Server 4 API Shape
-- `GET /api/posts/{postId}/comments`
-- `GET /api/media/{mediaId}/comments`
-- `POST /api/posts/{postId}/comments`
-- `POST /api/media/{mediaId}/comments`
-- `PATCH /api/comments/{commentId}`
-- `DELETE /api/comments/{commentId}`
+## API Shape
+- `POST /api/uploads/token`
+- `POST /api/uploads/{uploadId}/file`
+- `GET /api/media/feed`
+- `GET /api/media/files/{mediaId}`
+- `DELETE /api/media/{mediaId}`
+- `POST /api/posts`
+- `POST /api/posts/{postId}/media`
+- `PATCH /api/posts/{postId}`
+- `PATCH /api/posts/{postId}/cover`
+- `PATCH /api/posts/{postId}/media-order`
+- `DELETE /api/posts/{postId}`
+- `DELETE /api/posts/{postId}/media/{mediaId}`
+- `GET /api/trash/items`
+- `GET /api/trash/items/{trashItemId}`
+- `POST /api/trash/items/{trashItemId}/restore`
+- `POST /api/trash/items/{trashItemId}/remove`
+- `POST /api/trash/items/{trashItemId}/undo-remove`
+- `GET /api/trash/pending-cleanup`
 
 ## Local Dev Assumptions
-- authenticated requests use the existing Server 2 bearer token flow
-- comments live on top of the current Server 3 post/media data
-- soft delete is enough for this stage
-- default page size is `10`
+- storage is local filesystem only
+- no real OSS or signed CDN URLs
+- no real background cleanup worker
+- pending cleanup is a state placeholder only
+- comments stay in place and become visible again when their post/media target is restored
 
 ## Non-Goals
-- no replies
-- no nested threads
-- no quotes
-- no notifications
-- no likes
-- no rich text
+- no Android system media APIs
+- no permanent delete scheduler
+- no complex role/permission matrix
+- no transcoding, thumbnail pipeline, or EXIF parsing
 
 ## Done When
-- authenticated user can fetch post comments in current space
-- authenticated user can fetch media comments in current space
-- authenticated user can create comments in current space
-- authenticated user can edit own comments
-- authenticated user can soft delete own comments
-- post and media comment flows remain separated
-- project builds and tests pass
+- local upload creates media rows and stores files
+- uploaded media can create a new post or join an existing post
+- directory delete and system delete have different behavior
+- three trash item types can be listed and restored
+- remove from trash can be undone inside the placeholder window
+- server builds and tests pass

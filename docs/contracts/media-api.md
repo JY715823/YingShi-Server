@@ -1,11 +1,10 @@
 # Media API Draft
 
 ## Status
-- Server 3 minimal implementation target
-- local-dev usable
+- Server 5+6 local-dev implementation target
 
 ## Purpose
-Serve real app-content media metadata for the global photo stream.
+Serve global media feed, local media file access, and media-level system delete behavior.
 
 ## Endpoints
 
@@ -13,40 +12,51 @@ Serve real app-content media metadata for the global photo stream.
 - use case: deduplicated global app-content media stream for the current space
 - auth: required
 
-Response:
+Response item shape:
 
 ```json
 {
-  "requestId": "req_media_feed",
-  "data": [
-    {
-      "mediaId": "media_001",
-      "mediaType": "image",
-      "previewUrl": "https://demo.yingshi.local/media_001_preview.jpg",
-      "originalUrl": "https://demo.yingshi.local/media_001_original.jpg",
-      "videoUrl": null,
-      "coverUrl": null,
-      "width": 1440,
-      "height": 1920,
-      "aspectRatio": 0.75,
-      "displayTimeMillis": 1777412800000,
-      "postIds": ["post_001", "post_002"]
-    }
-  ]
+  "mediaId": "media_001",
+  "mediaType": "image",
+  "url": "/api/media/files/media_001",
+  "previewUrl": "/api/media/files/media_001",
+  "originalUrl": "/api/media/files/media_001",
+  "videoUrl": null,
+  "coverUrl": null,
+  "mimeType": "image/jpeg",
+  "sizeBytes": 3145728,
+  "width": 1440,
+  "height": 1920,
+  "aspectRatio": 0.75,
+  "durationMillis": null,
+  "displayTimeMillis": 1777412800000,
+  "postIds": ["post_001", "post_002"]
 }
 ```
 
+### `GET /api/media/files/{mediaId}`
+- use case: fetch one locally stored file in dev
+- auth: required
+
+### `DELETE /api/media/{mediaId}`
+- use case: system delete one media from the current space
+- auth: required
+- behavior:
+  - hide media from global feed
+  - hide media from all posts
+  - create one `mediaSystemDeleted` trash item
+
+Response:
+- returns `TrashItemDto`
+
 ## Field Notes
-- every media row belongs to one `spaceId`
-- one media item may appear in multiple posts
-- global media feed is deduplicated by `mediaId`
-- `postIds` lists the posts in the current space that reference the media
-- Server 3 does not include upload, delete, or single-media detail endpoints
+- `url` is the canonical file URL for this media
+- system-deleted media stays restorable through trash
+- media feed excludes system-deleted media
+- `postIds` only includes active posts in the current space
 
 ## Error Code Placeholders
 - `MEDIA_NOT_FOUND`
+- `MEDIA_ALREADY_DELETED`
+- `TRASH_ITEM_NOT_FOUND`
 - `AUTH_UNAUTHORIZED`
-
-## Server 3 Notes
-- URLs are local seed placeholders in this stage
-- no real CDN, signed URL, or upload-confirm flow is part of this stage
