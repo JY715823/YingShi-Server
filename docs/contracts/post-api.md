@@ -9,6 +9,8 @@
 - bearer auth required for all endpoints
 - current backend has no `GET /api/posts` list endpoint
 - create, update, cover update, media order update, and add-media all return the same `PostDetailDto`
+- Android REAL Gear Edit uses `PATCH /api/posts/{postId}`
+- Android REAL media management uses `PATCH /cover`, `PATCH /media-order`, and `DELETE /api/posts/{postId}/media/{mediaId}`
 
 ## Post Detail DTO
 
@@ -146,6 +148,7 @@ Response:
 Behavior:
 - `directory`: remove only this post-media relation and create `mediaRemoved`
 - `system`: system delete the media globally and create `mediaSystemDeleted`
+- current backend allows the post to remain with zero media after deletion; Android should refresh detail, feed, album, and trash state after the mutation
 
 Response:
 - returns one `TrashItemDto`

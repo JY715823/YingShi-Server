@@ -17,7 +17,7 @@ function Get-HttpMethod([string]$Method) {
     switch ($Method.ToUpperInvariant()) {
         "GET" { return [System.Net.Http.HttpMethod]::Get }
         "POST" { return [System.Net.Http.HttpMethod]::Post }
-        "PATCH" { return [System.Net.Http.HttpMethod]::Patch }
+        "PATCH" { return [System.Net.Http.HttpMethod]::new("PATCH") }
         "DELETE" { return [System.Net.Http.HttpMethod]::Delete }
         default { throw "Unsupported HTTP method: $Method" }
     }
@@ -181,12 +181,124 @@ try {
     } | Out-Null
 
     $postId = if ($albumPostsResponse -and @($albumPostsResponse.data).Count -gt 0) { $albumPostsResponse.data[0].postId } else { "post_001" }
+    $postDetailResponse = $null
     Invoke-Step "post detail" {
         if (-not $accessToken) {
             throw "missing access token from login step"
         }
-        $response = Invoke-ApiRequest -Method "GET" -Path "/api/posts/$postId" -Headers $authHeaders
-        "postId=$($response.data.postId), mediaCount=$($response.data.mediaCount)"
+        $script:postDetailResponse = Invoke-ApiRequest -Method "GET" -Path "/api/posts/$postId" -Headers $authHeaders
+        $mediaIds = @($script:postDetailResponse.data.mediaItems | ForEach-Object { $_.media.mediaId })
+        "postId=$($script:postDetailResponse.data.postId), mediaCount=$($mediaIds.Count)"
+    } | Out-Null
+
+    $originalTitle = if ($postDetailResponse) { [string]$postDetailResponse.data.title } else { "" }
+    $originalSummary = if ($postDetailResponse) { [string]$postDetailResponse.data.summary } else { "" }
+    $originalDisplayTimeMillis = if ($postDetailResponse) { [long]$postDetailResponse.data.displayTimeMillis } else { [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
+    $originalAlbumIds = if ($postDetailResponse) { @($postDetailResponse.data.albumIds) } else { @($albumId) }
+    $originalMediaIds = if ($postDetailResponse) { @($postDetailResponse.data.mediaItems | ForEach-Object { $_.media.mediaId }) } else { @() }
+    $originalCoverMediaId = if ($postDetailResponse) { [string]$postDetailResponse.data.coverMediaId } else { $null }
+    $managementPostId = $postId
+    $managementPostDetailResponse = $postDetailResponse
+
+    if (@($originalMediaIds).Count -lt 2 -and $albumsResponse) {
+        foreach ($album in @($albumsResponse.data)) {
+            $candidatePostsResponse = Invoke-ApiRequest -Method "GET" -Path "/api/albums/$($album.albumId)/posts" -Headers $authHeaders
+            foreach ($candidatePost in @($candidatePostsResponse.data)) {
+                $candidateDetail = Invoke-ApiRequest -Method "GET" -Path "/api/posts/$($candidatePost.postId)" -Headers $authHeaders
+                $candidateMediaIds = @($candidateDetail.data.mediaItems | ForEach-Object { $_.media.mediaId })
+                if ($candidateMediaIds.Count -ge 2) {
+                    $managementPostId = $candidatePost.postId
+                    $managementPostDetailResponse = $candidateDetail
+                    break
+                }
+            }
+            if ($managementPostId -ne $postId) {
+                break
+            }
+        }
+    }
+
+    if ($managementPostDetailResponse) {
+        $originalTitle = [string]$managementPostDetailResponse.data.title
+        $originalSummary = [string]$managementPostDetailResponse.data.summary
+        $originalDisplayTimeMillis = [long]$managementPostDetailResponse.data.displayTimeMillis
+        $originalAlbumIds = @($managementPostDetailResponse.data.albumIds)
+        $originalMediaIds = @($managementPostDetailResponse.data.mediaItems | ForEach-Object { $_.media.mediaId })
+        $originalCoverMediaId = [string]$managementPostDetailResponse.data.coverMediaId
+    }
+
+    Invoke-Step "post update" {
+        if (-not $accessToken) {
+            throw "missing access token from login step"
+        }
+        if (@($originalMediaIds).Count -lt 1) {
+            throw "missing seed media for temp post update test"
+        }
+        $created = Invoke-ApiRequest -Method "POST" -Path "/api/posts" -Headers $authHeaders -JsonBody @{
+            title = "联调临时帖子"
+            summary = "用于脚本验证帖子更新"
+            contributorLabel = $null
+            displayTimeMillis = $originalDisplayTimeMillis
+            albumIds = $originalAlbumIds
+            initialMediaIds = $originalMediaIds
+            coverMediaId = $originalMediaIds[0]
+        }
+        $tempPostId = Require-Value $created.data.postId "temp post create did not return postId"
+        $updatedTitle = "联调更新标题"
+        $updatedSummary = "联调脚本基础信息更新测试"
+        $updated = Invoke-ApiRequest -Method "PATCH" -Path "/api/posts/$tempPostId" -Headers $authHeaders -JsonBody @{
+            title = $updatedTitle
+            summary = $updatedSummary
+            contributorLabel = $null
+            displayTimeMillis = $originalDisplayTimeMillis
+            albumIds = $originalAlbumIds
+        }
+        if ($updated.data.title -ne $updatedTitle) {
+            throw "post title was not updated"
+        }
+        "postId=$tempPostId, titleUpdated=$updatedTitle"
+    } | Out-Null
+
+    Invoke-Step "post cover" {
+        if (-not $accessToken) {
+            throw "missing access token from login step"
+        }
+        if (@($originalMediaIds).Count -lt 2) {
+            return "skipped: mediaCount=$(@($originalMediaIds).Count)"
+        }
+        $newCoverMediaId = if ($originalCoverMediaId -eq $originalMediaIds[0]) { $originalMediaIds[1] } else { $originalMediaIds[0] }
+        $updated = Invoke-ApiRequest -Method "PATCH" -Path "/api/posts/$managementPostId/cover" -Headers $authHeaders -JsonBody @{
+            coverMediaId = $newCoverMediaId
+        }
+        if ($updated.data.coverMediaId -ne $newCoverMediaId) {
+            throw "coverMediaId was not updated"
+        }
+        [void](Invoke-ApiRequest -Method "PATCH" -Path "/api/posts/$managementPostId/cover" -Headers $authHeaders -JsonBody @{
+            coverMediaId = $originalCoverMediaId
+        })
+        "postId=$managementPostId, coverMediaId=$newCoverMediaId"
+    } | Out-Null
+
+    Invoke-Step "post media order" {
+        if (-not $accessToken) {
+            throw "missing access token from login step"
+        }
+        if (@($originalMediaIds).Count -lt 2) {
+            return "skipped: mediaCount=$(@($originalMediaIds).Count)"
+        }
+        $reorderedMediaIds = [string[]]$originalMediaIds.Clone()
+        [array]::Reverse($reorderedMediaIds)
+        $updated = Invoke-ApiRequest -Method "PATCH" -Path "/api/posts/$managementPostId/media-order" -Headers $authHeaders -JsonBody @{
+            orderedMediaIds = $reorderedMediaIds
+        }
+        $responseOrder = @($updated.data.mediaItems | ForEach-Object { $_.media.mediaId })
+        if (($responseOrder -join ",") -ne ($reorderedMediaIds -join ",")) {
+            throw "media order was not updated"
+        }
+        [void](Invoke-ApiRequest -Method "PATCH" -Path "/api/posts/$managementPostId/media-order" -Headers $authHeaders -JsonBody @{
+            orderedMediaIds = $originalMediaIds
+        })
+        "postId=$managementPostId, order=$($reorderedMediaIds -join ' > ')"
     } | Out-Null
 
     $mediaFeedResponse = $null
@@ -208,7 +320,7 @@ try {
         if (-not $accessToken) {
             throw "missing access token from login step"
         }
-        $response = Invoke-ApiRequest -Method "GET" -Path "/api/posts/post_001/comments?page=1&size=20" -Headers $authHeaders
+        $response = Invoke-ApiRequest -Method "GET" -Path "/api/posts/$managementPostId/comments?page=1&size=20" -Headers $authHeaders
         "count=$(@($response.data.comments).Count), hasMore=$($response.data.hasMore)"
     } | Out-Null
 
@@ -260,13 +372,17 @@ try {
         if (-not $accessToken) {
             throw "missing access token from login step"
         }
-        $deleteResponse = Invoke-ApiRequest -Method "DELETE" -Path "/api/posts/post_001/media/media_002?deleteMode=directory" -Headers $authHeaders
-        $script:trashItemId = Require-Value $deleteResponse.data.trashItemId "directory delete did not return trashItemId"
-        $listResponse = Invoke-ApiRequest -Method "GET" -Path "/api/trash/items?itemType=mediaRemoved&page=1&size=20" -Headers $authHeaders
+        $trashMediaId = if ($uploadCompleteResponse) { $uploadCompleteResponse.data.media.mediaId } else { $null }
+        if (-not $trashMediaId) {
+            throw "missing uploaded mediaId from local upload step"
+        }
+        $deleteResponse = Invoke-ApiRequest -Method "DELETE" -Path "/api/media/$trashMediaId" -Headers $authHeaders
+        $script:trashItemId = Require-Value $deleteResponse.data.trashItemId "system delete did not return trashItemId"
+        $listResponse = Invoke-ApiRequest -Method "GET" -Path "/api/trash/items?itemType=mediaSystemDeleted&page=1&size=20" -Headers $authHeaders
         $detailResponse = Invoke-ApiRequest -Method "GET" -Path "/api/trash/items/$trashItemId" -Headers $authHeaders
         $restoreResponse = Invoke-ApiRequest -Method "POST" -Path "/api/trash/items/$trashItemId/restore" -Headers $authHeaders
         $script:trashItemId = $null
-        "trashCount=$(@($listResponse.data.items).Count), trashItem=$($detailResponse.data.item.trashItemId), restoreState=$($restoreResponse.data.state)"
+        "trashCount=$(@($listResponse.data.items).Count), mediaId=$trashMediaId, trashItem=$($detailResponse.data.item.trashItemId), restoreState=$($restoreResponse.data.state)"
     } | Out-Null
 }
 finally {
