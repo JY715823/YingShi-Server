@@ -11,5 +11,9 @@ public interface PostRepository extends JpaRepository<PostEntity, String> {
 
     Optional<PostEntity> findByIdAndSpaceId(String id, String spaceId);
 
+    Optional<PostEntity> findByIdAndSpaceIdAndDeletedAtIsNull(String id, String spaceId);
+
     List<PostEntity> findBySpaceIdAndIdIn(String spaceId, Collection<String> ids);
+
+    List<PostEntity> findBySpaceIdAndIdInAndDeletedAtIsNull(String spaceId, Collection<String> ids);
 }

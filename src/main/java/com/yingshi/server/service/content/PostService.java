@@ -9,6 +9,7 @@ import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.domain.PostAlbumEntity;
 import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaEntity;
+import com.yingshi.server.dto.content.AddPostMediaRequest;
 import com.yingshi.server.dto.content.CreatePostRequest;
 import com.yingshi.server.dto.content.MediaDto;
 import com.yingshi.server.dto.content.PostDetailDto;
@@ -130,6 +131,44 @@ public class PostService {
     }
 
     @Transactional
+    public PostDetailDto addMediaToPost(String postId, AddPostMediaRequest request, AuthenticatedUser currentUser) {
+        String spaceId = currentUser.spaceId();
+        PostEntity post = requirePost(postId, spaceId);
+        validateDistinctIds(request.mediaIds(), ErrorCode.POST_MEDIA_ORDER_INVALID, "mediaIds contains duplicates.");
+        Map<String, MediaEntity> mediaById = requireMedia(spaceId, request.mediaIds());
+
+        List<PostMediaEntity> existingRelations = postMediaRepository.findBySpaceIdAndPostIdOrderBySortOrderAsc(spaceId, postId);
+        Set<String> existingMediaIds = existingRelations.stream().map(PostMediaEntity::getMediaId).collect(Collectors.toSet());
+        for (String mediaId : request.mediaIds()) {
+            if (existingMediaIds.contains(mediaId)) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.POST_MEDIA_ORDER_INVALID, "mediaIds must not include media already attached to the post.");
+            }
+            if (!mediaById.containsKey(mediaId)) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.MEDIA_NOT_FOUND, "One or more mediaIds do not exist in the current space.");
+            }
+        }
+
+        List<String> orderedMediaIds = new ArrayList<>(existingRelations.stream().map(PostMediaEntity::getMediaId).toList());
+        orderedMediaIds.addAll(request.mediaIds());
+        postMediaRepository.deleteAll(existingRelations);
+        postMediaRepository.flush();
+        savePostMediaRelations(postId, spaceId, orderedMediaIds);
+
+        if (request.coverMediaId() != null && !request.coverMediaId().isBlank()) {
+            if (!orderedMediaIds.contains(request.coverMediaId())) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.POST_COVER_INVALID, "coverMediaId must belong to the post.");
+            }
+            post.setCoverMediaId(request.coverMediaId());
+            postRepository.save(post);
+        } else if (post.getCoverMediaId() == null) {
+            post.setCoverMediaId(orderedMediaIds.get(0));
+            postRepository.save(post);
+        }
+
+        return buildPostDetail(post);
+    }
+
+    @Transactional
     public PostDetailDto updatePostCover(String postId, UpdatePostCoverRequest request, AuthenticatedUser currentUser) {
         String spaceId = currentUser.spaceId();
         PostEntity post = requirePost(postId, spaceId);
@@ -170,7 +209,7 @@ public class PostService {
     }
 
     private PostEntity requirePost(String postId, String spaceId) {
-        return postRepository.findByIdAndSpaceId(postId, spaceId)
+        return postRepository.findByIdAndSpaceIdAndDeletedAtIsNull(postId, spaceId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.POST_NOT_FOUND, "Post was not found."));
     }
 
@@ -183,7 +222,7 @@ public class PostService {
     }
 
     private Map<String, MediaEntity> requireMedia(String spaceId, Collection<String> mediaIds) {
-        List<MediaEntity> mediaItems = mediaRepository.findBySpaceIdAndIdIn(spaceId, mediaIds);
+        List<MediaEntity> mediaItems = mediaRepository.findBySpaceIdAndIdInAndDeletedAtIsNull(spaceId, mediaIds);
         if (mediaItems.size() != mediaIds.size()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.MEDIA_NOT_FOUND, "One or more mediaIds do not exist in the current space.");
         }
@@ -253,7 +292,9 @@ public class PostService {
 
         List<PostMediaEntity> mediaRelations = postMediaRepository.findBySpaceIdAndPostIdOrderBySortOrderAsc(spaceId, post.getId());
         List<String> mediaIds = mediaRelations.stream().map(PostMediaEntity::getMediaId).toList();
-        Map<String, MediaEntity> mediaById = mediaRepository.findBySpaceIdAndIdIn(spaceId, mediaIds)
+        Map<String, MediaEntity> mediaById = mediaIds.isEmpty()
+                ? Map.of()
+                : mediaRepository.findBySpaceIdAndIdInAndDeletedAtIsNull(spaceId, mediaIds)
                 .stream()
                 .collect(Collectors.toMap(MediaEntity::getId, media -> media));
 
@@ -261,12 +302,18 @@ public class PostService {
         for (PostMediaEntity relation : mediaRelations) {
             MediaEntity media = mediaById.get(relation.getMediaId());
             if (media == null) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.MEDIA_NOT_FOUND, "Post references missing media.");
+                continue;
             }
             MediaDto mediaDto = contentMapper.toMediaDto(media, null);
             mediaItems.add(contentMapper.toPostMediaDto(relation, mediaDto, relation.getMediaId().equals(post.getCoverMediaId())));
         }
 
-        return contentMapper.toPostDetailDto(post, albumIds, mediaItems.size(), mediaItems);
+        String resolvedCoverMediaId = mediaItems.stream()
+                .filter(PostMediaDto::isCover)
+                .map(item -> item.media().mediaId())
+                .findFirst()
+                .orElse(null);
+
+        return contentMapper.toPostDetailDto(post, albumIds, resolvedCoverMediaId, mediaItems.size(), mediaItems);
     }
 }

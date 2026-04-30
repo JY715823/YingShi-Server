@@ -7,6 +7,8 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
+import java.time.Instant;
+
 @Entity
 @Table(name = "media")
 public class MediaEntity extends SpaceScopedEntity {
@@ -17,6 +19,9 @@ public class MediaEntity extends SpaceScopedEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private MediaType mediaType;
+
+    @Column(nullable = false, length = 512)
+    private String url;
 
     @Column(nullable = false, length = 512)
     private String previewUrl;
@@ -30,6 +35,12 @@ public class MediaEntity extends SpaceScopedEntity {
     @Column(length = 512)
     private String coverUrl;
 
+    @Column(nullable = false, length = 120)
+    private String mimeType;
+
+    @Column(nullable = false)
+    private Long sizeBytes;
+
     @Column(nullable = false)
     private Integer width;
 
@@ -41,6 +52,15 @@ public class MediaEntity extends SpaceScopedEntity {
 
     @Column(nullable = false)
     private Long displayTimeMillis;
+
+    @Column
+    private Long durationMillis;
+
+    @Column(nullable = false, length = 512)
+    private String storagePath;
+
+    @Column
+    private Instant deletedAt;
 
     public String getId() {
         return id;
@@ -60,6 +80,14 @@ public class MediaEntity extends SpaceScopedEntity {
 
     public String getPreviewUrl() {
         return previewUrl;
+    }
+
+    public String getUrl() {
+        return url;
+    }
+
+    public void setUrl(String url) {
+        this.url = url;
     }
 
     public void setPreviewUrl(String previewUrl) {
@@ -88,6 +116,22 @@ public class MediaEntity extends SpaceScopedEntity {
 
     public void setCoverUrl(String coverUrl) {
         this.coverUrl = coverUrl;
+    }
+
+    public String getMimeType() {
+        return mimeType;
+    }
+
+    public void setMimeType(String mimeType) {
+        this.mimeType = mimeType;
+    }
+
+    public Long getSizeBytes() {
+        return sizeBytes;
+    }
+
+    public void setSizeBytes(Long sizeBytes) {
+        this.sizeBytes = sizeBytes;
     }
 
     public Integer getWidth() {
@@ -120,5 +164,29 @@ public class MediaEntity extends SpaceScopedEntity {
 
     public void setDisplayTimeMillis(Long displayTimeMillis) {
         this.displayTimeMillis = displayTimeMillis;
+    }
+
+    public Long getDurationMillis() {
+        return durationMillis;
+    }
+
+    public void setDurationMillis(Long durationMillis) {
+        this.durationMillis = durationMillis;
+    }
+
+    public String getStoragePath() {
+        return storagePath;
+    }
+
+    public void setStoragePath(String storagePath) {
+        this.storagePath = storagePath;
+    }
+
+    public Instant getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(Instant deletedAt) {
+        this.deletedAt = deletedAt;
     }
 }

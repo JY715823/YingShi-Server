@@ -5,6 +5,8 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
+import java.time.Instant;
+
 @Entity
 @Table(name = "posts")
 public class PostEntity extends SpaceScopedEntity {
@@ -26,6 +28,9 @@ public class PostEntity extends SpaceScopedEntity {
 
     @Column
     private String coverMediaId;
+
+    @Column
+    private Instant deletedAt;
 
     public String getId() {
         return id;
@@ -73,5 +78,13 @@ public class PostEntity extends SpaceScopedEntity {
 
     public void setCoverMediaId(String coverMediaId) {
         this.coverMediaId = coverMediaId;
+    }
+
+    public Instant getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(Instant deletedAt) {
+        this.deletedAt = deletedAt;
     }
 }

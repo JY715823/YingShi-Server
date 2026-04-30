@@ -8,13 +8,17 @@ import java.util.List;
 public record MediaDto(
         String mediaId,
         String mediaType,
+        String url,
         String previewUrl,
         String originalUrl,
         String videoUrl,
         String coverUrl,
+        String mimeType,
+        Long sizeBytes,
         Integer width,
         Integer height,
         Double aspectRatio,
+        Long durationMillis,
         Long displayTimeMillis,
         List<String> postIds
 ) {

@@ -37,3 +37,5 @@ app:
   auth:
     jwt:
       secret: dev-secret-key-for-yingshi-server-minimum-length-32
+  storage:
+    local-root: local-storage

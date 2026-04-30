@@ -149,14 +149,19 @@ public class DevContentSeedDataInitializer {
         media.setId(id);
         media.setSpaceId(spaceId);
         media.setMediaType(MediaType.IMAGE);
+        media.setUrl("https://demo.yingshi.local/" + slug + "_original.jpg");
         media.setPreviewUrl("https://demo.yingshi.local/" + slug + "_preview.jpg");
         media.setOriginalUrl("https://demo.yingshi.local/" + slug + "_original.jpg");
         media.setVideoUrl(null);
         media.setCoverUrl(null);
+        media.setMimeType("image/jpeg");
+        media.setSizeBytes(3_145_728L);
         media.setWidth(width);
         media.setHeight(height);
         media.setAspectRatio(((double) width) / height);
+        media.setDurationMillis(null);
         media.setDisplayTimeMillis(displayTimeMillis);
+        media.setStoragePath("seed/" + slug + ".jpg");
         return media;
     }
 
@@ -165,14 +170,19 @@ public class DevContentSeedDataInitializer {
         media.setId(id);
         media.setSpaceId(spaceId);
         media.setMediaType(MediaType.VIDEO);
+        media.setUrl("https://demo.yingshi.local/" + slug + ".mp4");
         media.setPreviewUrl("https://demo.yingshi.local/" + slug + "_cover.jpg");
         media.setOriginalUrl(null);
         media.setVideoUrl("https://demo.yingshi.local/" + slug + ".mp4");
         media.setCoverUrl("https://demo.yingshi.local/" + slug + "_cover.jpg");
+        media.setMimeType("video/mp4");
+        media.setSizeBytes(24_117_248L);
         media.setWidth(width);
         media.setHeight(height);
         media.setAspectRatio(((double) width) / height);
+        media.setDurationMillis(12_000L);
         media.setDisplayTimeMillis(displayTimeMillis);
+        media.setStoragePath("seed/" + slug + ".mp4");
         return media;
     }
 

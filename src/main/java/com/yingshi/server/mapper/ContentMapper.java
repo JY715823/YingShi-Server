@@ -27,7 +27,7 @@ public class ContentMapper {
         );
     }
 
-    public PostSummaryDto toPostSummaryDto(PostEntity post, List<String> albumIds, long mediaCount) {
+    public PostSummaryDto toPostSummaryDto(PostEntity post, List<String> albumIds, String coverMediaId, long mediaCount) {
         return new PostSummaryDto(
                 post.getId(),
                 post.getTitle(),
@@ -35,7 +35,7 @@ public class ContentMapper {
                 post.getContributorLabel(),
                 post.getDisplayTimeMillis(),
                 albumIds,
-                post.getCoverMediaId(),
+                coverMediaId,
                 mediaCount
         );
     }
@@ -43,6 +43,7 @@ public class ContentMapper {
     public PostDetailDto toPostDetailDto(
             PostEntity post,
             List<String> albumIds,
+            String coverMediaId,
             long mediaCount,
             List<PostMediaDto> mediaItems
     ) {
@@ -53,7 +54,7 @@ public class ContentMapper {
                 post.getContributorLabel(),
                 post.getDisplayTimeMillis(),
                 albumIds,
-                post.getCoverMediaId(),
+                coverMediaId,
                 mediaCount,
                 mediaItems
         );
@@ -71,13 +72,17 @@ public class ContentMapper {
         return new MediaDto(
                 media.getId(),
                 media.getMediaType().name().toLowerCase(Locale.ROOT),
+                media.getUrl(),
                 media.getPreviewUrl(),
                 media.getOriginalUrl(),
                 media.getVideoUrl(),
                 media.getCoverUrl(),
+                media.getMimeType(),
+                media.getSizeBytes(),
                 media.getWidth(),
                 media.getHeight(),
                 media.getAspectRatio(),
+                media.getDurationMillis(),
                 media.getDisplayTimeMillis(),
                 postIds
         );

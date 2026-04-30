@@ -7,11 +7,19 @@ import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.content.MediaDto;
 import com.yingshi.server.service.content.MediaService;
+import com.yingshi.server.service.content.MediaFilePayload;
+import com.yingshi.server.service.trash.TrashService;
+import com.yingshi.server.dto.trash.TrashItemDto;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.core.io.Resource;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -24,9 +32,11 @@ import java.util.List;
 public class MediaController {
 
     private final MediaService mediaService;
+    private final TrashService trashService;
 
-    public MediaController(MediaService mediaService) {
+    public MediaController(MediaService mediaService, TrashService trashService) {
         this.mediaService = mediaService;
+        this.trashService = trashService;
     }
 
     @Operation(summary = "Get deduplicated media feed", security = @SecurityRequirement(name = "bearerAuth"))
@@ -36,6 +46,28 @@ public class MediaController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), mediaService.getMediaFeed(currentUser));
+    }
+
+    @Operation(summary = "Get local media file", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping("/files/{mediaId}")
+    public ResponseEntity<Resource> getMediaFile(
+            @PathVariable String mediaId,
+            @CurrentUser AuthenticatedUser currentUser
+    ) {
+        MediaFilePayload payload = mediaService.loadMediaFile(mediaId, currentUser);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(payload.mimeType()))
+                .body(payload.resource());
+    }
+
+    @Operation(summary = "System delete media", security = @SecurityRequirement(name = "bearerAuth"))
+    @DeleteMapping("/{mediaId}")
+    public ApiResponse<TrashItemDto> deleteMedia(
+            @PathVariable String mediaId,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), trashService.systemDeleteMedia(mediaId, currentUser));
     }
 
     private String requestId(HttpServletRequest request) {

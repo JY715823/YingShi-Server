@@ -178,13 +178,13 @@ public class CommentService {
     }
 
     private void requirePost(String postId, String spaceId) {
-        if (postRepository.findByIdAndSpaceId(postId, spaceId).isEmpty()) {
+        if (postRepository.findByIdAndSpaceIdAndDeletedAtIsNull(postId, spaceId).isEmpty()) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Post target was not found.");
         }
     }
 
     private void requireMedia(String mediaId, String spaceId) {
-        if (mediaRepository.findByIdAndSpaceId(mediaId, spaceId).isEmpty()) {
+        if (mediaRepository.findByIdAndSpaceIdAndDeletedAtIsNull(mediaId, spaceId).isEmpty()) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Media target was not found.");
         }
     }

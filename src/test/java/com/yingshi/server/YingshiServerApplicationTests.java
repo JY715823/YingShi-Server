@@ -6,12 +6,17 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+
+import java.nio.charset.StandardCharsets;
 
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -20,6 +25,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @AutoConfigureMockMvc
 @SpringBootTest
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class YingshiServerApplicationTests {
 
     @Autowired
@@ -283,6 +289,207 @@ class YingshiServerApplicationTests {
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("COMMENT_TARGET_NOT_FOUND"));
+    }
+
+    @Test
+    void localUploadCreatesMediaAndCanBeAttachedToPost() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+        byte[] fileBytes = "fake-image-data".getBytes(StandardCharsets.UTF_8);
+
+        MvcResult tokenResult = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fileName": "upload-demo.jpg",
+                                  "mimeType": "image/jpeg",
+                                  "fileSizeBytes": 15,
+                                  "mediaType": "image",
+                                  "width": 800,
+                                  "height": 600,
+                                  "durationMillis": null,
+                                  "displayTimeMillis": 1777416600000
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.provider").value("local"))
+                .andExpect(jsonPath("$.data.state").value("waiting"))
+                .andReturn();
+
+        String uploadId = readField(tokenResult, "/data/uploadId");
+        MockMultipartFile multipartFile = new MockMultipartFile("file", "upload-demo.jpg", "image/jpeg", fileBytes);
+
+        MvcResult uploadResult = mockMvc.perform(multipart("/api/uploads/" + uploadId + "/file")
+                        .file(multipartFile)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("success"))
+                .andExpect(jsonPath("$.data.media.mimeType").value("image/jpeg"))
+                .andExpect(jsonPath("$.data.media.sizeBytes").value(15))
+                .andReturn();
+
+        String mediaId = readField(uploadResult, "/data/media/mediaId");
+
+        mockMvc.perform(get("/api/media/files/" + mediaId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "image/jpeg"));
+
+        mockMvc.perform(post("/api/posts/post_003/media")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "mediaIds": ["%s"],
+                                  "coverMediaId": "%s"
+                                }
+                                """.formatted(mediaId, mediaId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.coverMediaId").value(mediaId))
+                .andExpect(jsonPath("$.data.mediaItems.length()").value(3))
+                .andExpect(jsonPath("$.data.mediaItems[2].media.mediaId").value(mediaId));
+
+        mockMvc.perform(get("/api/media/feed")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].mediaId").value(mediaId))
+                .andExpect(jsonPath("$.data[0].postIds[0]").value("post_003"));
+    }
+
+    @Test
+    void directoryDeleteAndSystemDeleteHaveDifferentTrashBehavior() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        MvcResult directoryDeleteResult = mockMvc.perform(delete("/api/posts/post_001/media/media_002")
+                        .queryParam("deleteMode", "directory")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("mediaRemoved"))
+                .andReturn();
+
+        String mediaRemovedTrashId = readField(directoryDeleteResult, "/data/trashItemId");
+
+        mockMvc.perform(get("/api/posts/post_001")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mediaCount").value(2))
+                .andExpect(jsonPath("$.data.mediaItems[1].media.mediaId").value("media_004"));
+
+        mockMvc.perform(get("/api/trash/items/" + mediaRemovedTrashId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.canRestore").value(true))
+                .andExpect(jsonPath("$.data.item.itemType").value("mediaRemoved"));
+
+        mockMvc.perform(post("/api/trash/items/" + mediaRemovedTrashId + "/restore")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("restored"));
+
+        mockMvc.perform(get("/api/posts/post_001")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mediaCount").value(3))
+                .andExpect(jsonPath("$.data.mediaItems[1].media.mediaId").value("media_002"));
+
+        MvcResult systemDeleteResult = mockMvc.perform(delete("/api/media/media_001")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("mediaSystemDeleted"))
+                .andReturn();
+
+        String systemTrashId = readField(systemDeleteResult, "/data/trashItemId");
+
+        mockMvc.perform(get("/api/media/feed")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(5))
+                .andExpect(jsonPath("$.data[0].mediaId").value("media_002"));
+
+        mockMvc.perform(get("/api/posts/post_001")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mediaCount").value(2))
+                .andExpect(jsonPath("$.data.coverMediaId").value("media_002"));
+
+        mockMvc.perform(get("/api/media/media_001/comments")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("COMMENT_TARGET_NOT_FOUND"));
+
+        mockMvc.perform(post("/api/trash/items/" + systemTrashId + "/remove")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trashItemId").value(systemTrashId))
+                .andExpect(jsonPath("$.data.undoDeadlineMillis").isNumber());
+
+        mockMvc.perform(get("/api/trash/pending-cleanup")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].trashItemId").value(systemTrashId));
+
+        mockMvc.perform(post("/api/trash/items/" + systemTrashId + "/undo-remove")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("inTrash"));
+
+        mockMvc.perform(post("/api/trash/items/" + systemTrashId + "/restore")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("restored"));
+
+        mockMvc.perform(get("/api/posts/post_001")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mediaCount").value(3));
+
+        mockMvc.perform(get("/api/media/media_001/comments")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.comments.length()").value(2));
+    }
+
+    @Test
+    void deletedPostCanBeRestoredFromTrashWithCommentVisibility() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        MvcResult deleteResult = mockMvc.perform(delete("/api/posts/post_002")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("postDeleted"))
+                .andReturn();
+
+        String trashItemId = readField(deleteResult, "/data/trashItemId");
+
+        mockMvc.perform(get("/api/posts/post_002")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("POST_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/posts/post_002/comments")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("COMMENT_TARGET_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/albums/album_003/posts")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+
+        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/restore")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("restored"));
+
+        mockMvc.perform(get("/api/posts/post_002")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.postId").value("post_002"));
+
+        mockMvc.perform(get("/api/posts/post_002/comments")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.comments.length()").value(0));
     }
 
     private String loginAndGetAccessToken() throws Exception {
