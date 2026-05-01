@@ -52,6 +52,7 @@ The smoke script covers:
 - albums
 - album posts
 - post detail
+- post update
 - media feed
 - post comments
 - media comments
@@ -163,6 +164,8 @@ Current design:
 - app default stays on `FAKE`
 - runtime switch is stored in `BackendDebugConfig`
 - diagnostics page can flip `FAKE` / `REAL`
+- Android now rebuilds the REAL page session when `Repository mode` changes, so fake and real caches do not mix
+- Android now clears the current token when `Base URL` changes, so a backend switch always requires relogin
 
 Where it is implemented:
 - config state: `app/src/main/java/com/example/yingshi/data/remote/config/BackendDebugConfig.kt`
@@ -208,16 +211,17 @@ Use this exact sequence on a phone:
 9. Confirm `Last result` shows `[health] success`.
 10. Tap `Login and verify /me`.
 11. Confirm `Token state` changes to `Logged in`.
-12. Tap `Albums and post detail`.
-13. Confirm `Last result` includes `albums=` and `post=`.
-14. Tap `Media and comments`.
-15. Confirm `Last result` includes `media=`, `postComments=`, and `mediaComments=`.
-16. Tap `Trash`.
-17. Confirm `Last result` includes `trash=` and no failure text.
-18. Tap `Run all smoke actions`.
-19. Confirm `Last result` contains `health=UP`, `upload=success`, and `trash=`.
-20. If you want to verify future real repository wiring, switch mode to `REAL`, then reopen the relevant feature screen.
-21. After the pass, switch mode back to `FAKE`.
+12. If you change `Base URL`, log in again because Android clears the old token on base-url change.
+13. Tap `Albums and post detail`.
+14. Confirm `Last result` includes `albums=` and `post=`.
+15. Tap `Media and comments`.
+16. Confirm `Last result` includes `media=`, `postComments=`, and `mediaComments=`.
+17. Tap `Trash`.
+18. Confirm `Last result` includes `trash=` and no failure text.
+19. Tap `Run all smoke actions`.
+20. Confirm the diagnostics page lists each smoke item as `success` or `failed`, and the summary contains `health=UP`, `upload=success`, and `trash=`.
+21. If you want to verify future real repository wiring, switch mode to `REAL`, then reopen the relevant feature screen so it rebuilds under the new session.
+22. After the pass, switch mode back to `FAKE`.
 
 ## 11. Windows Firewall and Port 8080 Troubleshooting
 

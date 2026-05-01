@@ -160,6 +160,21 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.albumIds.length()").value(1))
                 .andExpect(jsonPath("$.data.albumIds[0]").value("album_002"));
 
+        mockMvc.perform(patch("/api/posts/" + postId)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Fresh Layout Stable",
+                                  "summary": "Updated summary again",
+                                  "albumIds": ["album_002"]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.title").value("Fresh Layout Stable"))
+                .andExpect(jsonPath("$.data.albumIds.length()").value(1))
+                .andExpect(jsonPath("$.data.albumIds[0]").value("album_002"));
+
         mockMvc.perform(patch("/api/posts/" + postId + "/cover")
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
