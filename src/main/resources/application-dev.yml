@@ -39,3 +39,8 @@ app:
       secret: dev-secret-key-for-yingshi-server-minimum-length-32
   storage:
     local-root: local-storage
+
+yingshi:
+  dev:
+    test-import:
+      enabled: true

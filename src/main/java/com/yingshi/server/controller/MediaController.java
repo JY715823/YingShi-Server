@@ -14,12 +14,14 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -52,12 +54,21 @@ public class MediaController {
     @GetMapping("/files/{mediaId}")
     public ResponseEntity<Resource> getMediaFile(
             @PathVariable String mediaId,
+            @RequestParam(defaultValue = "original") String variant,
             @CurrentUser AuthenticatedUser currentUser
     ) {
-        MediaFilePayload payload = mediaService.loadMediaFile(mediaId, currentUser);
-        return ResponseEntity.ok()
+        MediaFilePayload payload = mediaService.loadMediaFile(mediaId, variant, currentUser);
+        ResponseEntity.BodyBuilder responseBuilder = ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "private, max-age=2592000, immutable")
                 .contentType(MediaType.parseMediaType(payload.mimeType()))
-                .body(payload.resource());
+                .header(HttpHeaders.VARY, HttpHeaders.AUTHORIZATION);
+        if (payload.contentLength() != null && payload.contentLength() >= 0) {
+            responseBuilder.contentLength(payload.contentLength());
+        }
+        if (payload.lastModifiedMillis() != null && payload.lastModifiedMillis() > 0L) {
+            responseBuilder.lastModified(payload.lastModifiedMillis());
+        }
+        return responseBuilder.body(payload.resource());
     }
 
     @Operation(summary = "System delete media", security = @SecurityRequirement(name = "bearerAuth"))

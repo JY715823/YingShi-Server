@@ -32,6 +32,7 @@ public class MediaService {
     private final PostRepository postRepository;
     private final ContentMapper contentMapper;
     private final LocalMediaStorageService localMediaStorageService;
+    private static final int PREVIEW_MAX_DIMENSION = 720;
 
     public MediaService(
             MediaRepository mediaRepository,
@@ -79,18 +80,54 @@ public class MediaService {
 
         List<MediaDto> results = new ArrayList<>();
         for (MediaEntity media : mediaItems) {
-            results.add(contentMapper.toMediaDto(media, postIdsByMediaId.getOrDefault(media.getId(), List.of())));
+            List<String> postIds = postIdsByMediaId.getOrDefault(media.getId(), List.of());
+            if (!isRenderableMedia(media, postIds)) {
+                continue;
+            }
+            results.add(contentMapper.toMediaDto(media, postIds));
         }
         return results;
     }
 
-    public MediaFilePayload loadMediaFile(String mediaId, AuthenticatedUser currentUser) {
+    public MediaFilePayload loadMediaFile(String mediaId, String variant, AuthenticatedUser currentUser) {
         MediaEntity media = mediaRepository.findByIdAndSpaceIdAndDeletedAtIsNull(mediaId, currentUser.spaceId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Media was not found."));
-        if (media.getStoragePath() == null || media.getStoragePath().startsWith("seed/")) {
-            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Local file is not available for seeded media.");
+        if (media.getStoragePath() == null || media.getStoragePath().isBlank()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Local file is not available for this media.");
         }
-        Resource resource = localMediaStorageService.load(media.getStoragePath());
-        return new MediaFilePayload(resource, media.getMimeType());
+        Resource resource = resolveMediaResource(media, variant);
+        String mimeType = "preview".equalsIgnoreCase(variant) && media.getMediaType() == com.yingshi.server.domain.MediaType.IMAGE
+                ? "image/jpeg"
+                : media.getMimeType();
+        Long contentLength = null;
+        Long lastModifiedMillis = null;
+        try {
+            contentLength = resource.contentLength();
+        } catch (Exception ignored) {
+        }
+        try {
+            lastModifiedMillis = resource.lastModified();
+        } catch (Exception ignored) {
+        }
+        return new MediaFilePayload(resource, mimeType, contentLength, lastModifiedMillis);
+    }
+
+    private Resource resolveMediaResource(MediaEntity media, String variant) {
+        if ("preview".equalsIgnoreCase(variant) && media.getMediaType() == com.yingshi.server.domain.MediaType.IMAGE) {
+            try {
+                return localMediaStorageService.loadPreview(media.getStoragePath(), media.getId(), PREVIEW_MAX_DIMENSION);
+            } catch (ApiException exception) {
+                return localMediaStorageService.load(media.getStoragePath());
+            }
+        }
+        return localMediaStorageService.load(media.getStoragePath());
+    }
+
+    private boolean isRenderableMedia(MediaEntity media, List<String> postIds) {
+        Long sizeBytes = media.getSizeBytes();
+        if (sizeBytes != null && sizeBytes <= 1024L && postIds.isEmpty()) {
+            return false;
+        }
+        return true;
     }
 }
