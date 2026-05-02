@@ -231,22 +231,9 @@ try {
         if (-not $accessToken) {
             throw "missing access token from login step"
         }
-        if (@($originalMediaIds).Count -lt 1) {
-            throw "missing seed media for temp post update test"
-        }
-        $created = Invoke-ApiRequest -Method "POST" -Path "/api/posts" -Headers $authHeaders -JsonBody @{
-            title = "联调临时帖子"
-            summary = "用于脚本验证帖子更新"
-            contributorLabel = $null
-            displayTimeMillis = $originalDisplayTimeMillis
-            albumIds = $originalAlbumIds
-            initialMediaIds = $originalMediaIds
-            coverMediaId = $originalMediaIds[0]
-        }
-        $tempPostId = Require-Value $created.data.postId "temp post create did not return postId"
         $updatedTitle = "联调更新标题"
         $updatedSummary = "联调脚本基础信息更新测试"
-        $updated = Invoke-ApiRequest -Method "PATCH" -Path "/api/posts/$tempPostId" -Headers $authHeaders -JsonBody @{
+        $updated = Invoke-ApiRequest -Method "PATCH" -Path "/api/posts/$managementPostId" -Headers $authHeaders -JsonBody @{
             title = $updatedTitle
             summary = $updatedSummary
             contributorLabel = $null
@@ -256,7 +243,14 @@ try {
         if ($updated.data.title -ne $updatedTitle) {
             throw "post title was not updated"
         }
-        "postId=$tempPostId, titleUpdated=$updatedTitle"
+        [void](Invoke-ApiRequest -Method "PATCH" -Path "/api/posts/$managementPostId" -Headers $authHeaders -JsonBody @{
+            title = $originalTitle
+            summary = $originalSummary
+            contributorLabel = $null
+            displayTimeMillis = $originalDisplayTimeMillis
+            albumIds = $originalAlbumIds
+        })
+        "postId=$managementPostId, titleUpdated=$updatedTitle"
     } | Out-Null
 
     Invoke-Step "post cover" {

@@ -14,7 +14,7 @@ import org.springframework.core.annotation.Order;
 public class DevCommentSeedDataInitializer {
 
     @Bean
-    @Order(3)
+    @Order(4)
     ApplicationRunner commentSeedRunner(CommentRepository commentRepository) {
         return args -> {
             if (commentRepository.count() > 0) {
@@ -26,35 +26,35 @@ public class DevCommentSeedDataInitializer {
                     "space_demo_shared",
                     "user_demo_a",
                     "post_001",
-                    "今天阳光很好，散步回来心情也慢下来了。"
+                    "这组放在日常里很顺，光线也特别安静。"
             ));
             commentRepository.save(createPostComment(
                     "comment_post_002",
                     "space_demo_shared",
                     "user_demo_b",
                     "post_001",
-                    "这组放在日常里很顺，封面也选得刚刚好。"
+                    "封面选得很稳，整组顺序也读起来很舒服。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_001",
                     "space_demo_shared",
                     "user_demo_b",
                     "media_001",
-                    "这张单独留在全局照片流里也很好看。"
+                    "这张单独留在照片流里也很好看。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_002",
                     "space_demo_shared",
                     "user_demo_a",
                     "media_001",
-                    "同意，这个裁切放进两个帖子里都成立。"
+                    "同意，放进两个帖子里也还是成立。"
             ));
             commentRepository.save(createPostComment(
                     "comment_other_secret",
                     "space_private_other",
                     "user_demo_b",
                     "post_other_secret",
-                    "隐藏空间里的测试评论"
+                    "隐藏空间里的测试评论。"
             ));
         };
     }

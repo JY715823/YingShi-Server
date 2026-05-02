@@ -14,6 +14,7 @@ import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.SpaceRepository;
 import com.yingshi.server.service.auth.DevAuthSeedDataInitializer;
+import com.yingshi.server.service.upload.LocalMediaStorageService;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -34,7 +35,8 @@ public class DevContentSeedDataInitializer {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository
+            PostAlbumRepository postAlbumRepository,
+            LocalMediaStorageService localMediaStorageService
     ) {
         return args -> {
             if (albumRepository.count() > 0 || postRepository.count() > 0 || mediaRepository.count() > 0) {
@@ -45,8 +47,24 @@ public class DevContentSeedDataInitializer {
             ensureSpace(spaceRepository, sharedSpaceId, "映世共享空间");
             ensureSpace(spaceRepository, HIDDEN_SPACE_ID, "隐藏测试空间");
 
-            seedSharedSpace(sharedSpaceId, albumRepository, postRepository, mediaRepository, postMediaRepository, postAlbumRepository);
-            seedHiddenSpace(HIDDEN_SPACE_ID, albumRepository, postRepository, mediaRepository, postMediaRepository, postAlbumRepository);
+            seedSharedSpace(
+                    sharedSpaceId,
+                    albumRepository,
+                    postRepository,
+                    mediaRepository,
+                    postMediaRepository,
+                    postAlbumRepository,
+                    localMediaStorageService
+            );
+            seedHiddenSpace(
+                    HIDDEN_SPACE_ID,
+                    albumRepository,
+                    postRepository,
+                    mediaRepository,
+                    postMediaRepository,
+                    postAlbumRepository,
+                    localMediaStorageService
+            );
         };
     }
 
@@ -56,20 +74,21 @@ public class DevContentSeedDataInitializer {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository
+            PostAlbumRepository postAlbumRepository,
+            LocalMediaStorageService localMediaStorageService
     ) {
-        mediaRepository.save(createImageMedia(spaceId, "media_001", "media_001", 1440, 1920, 1777412800000L));
-        mediaRepository.save(createImageMedia(spaceId, "media_002", "media_002", 1600, 1200, 1777412600000L));
-        mediaRepository.save(createImageMedia(spaceId, "media_003", "media_003", 1280, 1706, 1777412400000L));
-        mediaRepository.save(createVideoMedia(spaceId, "media_004", "media_004", 1920, 1080, 1777412200000L));
-        mediaRepository.save(createImageMedia(spaceId, "media_005", "media_005", 1536, 2048, 1777412000000L));
-        mediaRepository.save(createImageMedia(spaceId, "media_006", "media_006", 1440, 1440, 1777411800000L));
+        mediaRepository.save(createImageMedia(spaceId, "media_001", 1440, 1920, 1777412800000L, localMediaStorageService.ensureSeedImage(spaceId, "media_001", 0)));
+        mediaRepository.save(createImageMedia(spaceId, "media_002", 1600, 1200, 1777412600000L, localMediaStorageService.ensureSeedImage(spaceId, "media_002", 1)));
+        mediaRepository.save(createImageMedia(spaceId, "media_003", 1280, 1706, 1777412400000L, localMediaStorageService.ensureSeedImage(spaceId, "media_003", 2)));
+        mediaRepository.save(createImageMedia(spaceId, "media_004", 1920, 1080, 1777412200000L, localMediaStorageService.ensureSeedImage(spaceId, "media_004", 3)));
+        mediaRepository.save(createImageMedia(spaceId, "media_005", 1536, 2048, 1777412000000L, localMediaStorageService.ensureSeedImage(spaceId, "media_005", 4)));
+        mediaRepository.save(createImageMedia(spaceId, "media_006", 1440, 1440, 1777411800000L, localMediaStorageService.ensureSeedImage(spaceId, "media_006", 5)));
 
         albumRepository.save(createAlbum(spaceId, "album_001", "日常", "窗边、散步和慢一点的下午", "media_001"));
-        albumRepository.save(createAlbum(spaceId, "album_002", "旅行", "路上经过的站台、车窗和风景", "media_004"));
-        albumRepository.save(createAlbum(spaceId, "album_003", "精选", "这阶段想反复翻看的几张图", "media_005"));
+        albumRepository.save(createAlbum(spaceId, "album_002", "路上", "站台、反光和经过时看到的风景", "media_004"));
+        albumRepository.save(createAlbum(spaceId, "album_003", "精选", "这一阶段想反复翻看的几张图", "media_005"));
 
-        postRepository.save(createPost(spaceId, "post_001", "春日散步", "今天阳光很好，回家的那段路也安静下来。", "小雨 和 阿泽", 1777412800000L, "media_001"));
+        postRepository.save(createPost(spaceId, "post_001", "春日下午", "回家的路安静下来，窗边的光也刚好慢了一点。", "小雨 和 阿泽", 1777412800000L, "media_001"));
         postRepository.save(createPost(spaceId, "post_002", "灯下小物", "夜里收桌前随手拍了几张，暖光把细节都留住了。", "小雨 和 阿泽", 1777412400000L, "media_005"));
         postRepository.save(createPost(spaceId, "post_003", "车窗一瞬", "列车进站前的反光和站台虚影，很想单独留一篇。", "小雨 和 阿泽", 1777412000000L, "media_006"));
 
@@ -95,9 +114,10 @@ public class DevContentSeedDataInitializer {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository
+            PostAlbumRepository postAlbumRepository,
+            LocalMediaStorageService localMediaStorageService
     ) {
-        mediaRepository.save(createImageMedia(spaceId, "media_other_secret", "media_other_secret", 1200, 1200, 1777410000000L));
+        mediaRepository.save(createImageMedia(spaceId, "media_other_secret", 1200, 1200, 1777410000000L, localMediaStorageService.ensureSeedImage(spaceId, "media_other_secret", 6)));
         albumRepository.save(createAlbum(spaceId, "album_other_secret", "隐藏相册", "用于跨空间可见性测试", "media_other_secret"));
         postRepository.save(createPost(spaceId, "post_other_secret", "隐藏帖子", "用于跨空间可见性测试", "隐藏成员", 1777410000000L, "media_other_secret"));
         postMediaRepository.save(createPostMedia(spaceId, "post_media_other_secret", "post_other_secret", "media_other_secret", 1));
@@ -144,14 +164,22 @@ public class DevContentSeedDataInitializer {
         return post;
     }
 
-    private MediaEntity createImageMedia(String spaceId, String id, String slug, int width, int height, long displayTimeMillis) {
+    private MediaEntity createImageMedia(
+            String spaceId,
+            String id,
+            int width,
+            int height,
+            long displayTimeMillis,
+            String storagePath
+    ) {
+        String mediaUrl = "/api/media/files/" + id;
         MediaEntity media = new MediaEntity();
         media.setId(id);
         media.setSpaceId(spaceId);
         media.setMediaType(MediaType.IMAGE);
-        media.setUrl("https://demo.yingshi.local/" + slug + "_original.jpg");
-        media.setPreviewUrl("https://demo.yingshi.local/" + slug + "_preview.jpg");
-        media.setOriginalUrl("https://demo.yingshi.local/" + slug + "_original.jpg");
+        media.setUrl(mediaUrl);
+        media.setPreviewUrl(mediaUrl);
+        media.setOriginalUrl(mediaUrl);
         media.setVideoUrl(null);
         media.setCoverUrl(null);
         media.setMimeType("image/jpeg");
@@ -161,28 +189,7 @@ public class DevContentSeedDataInitializer {
         media.setAspectRatio(((double) width) / height);
         media.setDurationMillis(null);
         media.setDisplayTimeMillis(displayTimeMillis);
-        media.setStoragePath("seed/" + slug + ".jpg");
-        return media;
-    }
-
-    private MediaEntity createVideoMedia(String spaceId, String id, String slug, int width, int height, long displayTimeMillis) {
-        MediaEntity media = new MediaEntity();
-        media.setId(id);
-        media.setSpaceId(spaceId);
-        media.setMediaType(MediaType.VIDEO);
-        media.setUrl("https://demo.yingshi.local/" + slug + ".mp4");
-        media.setPreviewUrl("https://demo.yingshi.local/" + slug + "_cover.jpg");
-        media.setOriginalUrl(null);
-        media.setVideoUrl("https://demo.yingshi.local/" + slug + ".mp4");
-        media.setCoverUrl("https://demo.yingshi.local/" + slug + "_cover.jpg");
-        media.setMimeType("video/mp4");
-        media.setSizeBytes(24_117_248L);
-        media.setWidth(width);
-        media.setHeight(height);
-        media.setAspectRatio(((double) width) / height);
-        media.setDurationMillis(12_000L);
-        media.setDisplayTimeMillis(displayTimeMillis);
-        media.setStoragePath("seed/" + slug + ".mp4");
+        media.setStoragePath(storagePath);
         return media;
     }
 

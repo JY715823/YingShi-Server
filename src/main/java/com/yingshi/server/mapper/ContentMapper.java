@@ -2,6 +2,7 @@ package com.yingshi.server.mapper;
 
 import com.yingshi.server.domain.AlbumEntity;
 import com.yingshi.server.domain.MediaEntity;
+import com.yingshi.server.domain.MediaType;
 import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.dto.content.AlbumDto;
@@ -69,14 +70,16 @@ public class ContentMapper {
     }
 
     public MediaDto toMediaDto(MediaEntity media, List<String> postIds) {
+        String localMediaUrl = localMediaUrl(media);
+        String previewMediaUrl = previewMediaUrl(media);
         return new MediaDto(
                 media.getId(),
                 media.getMediaType().name().toLowerCase(Locale.ROOT),
-                media.getUrl(),
-                media.getPreviewUrl(),
-                media.getOriginalUrl(),
-                media.getVideoUrl(),
-                media.getCoverUrl(),
+                localMediaUrl != null ? localMediaUrl : media.getUrl(),
+                previewMediaUrl != null ? previewMediaUrl : media.getPreviewUrl(),
+                media.getMediaType() == MediaType.IMAGE && localMediaUrl != null ? localMediaUrl : media.getOriginalUrl(),
+                media.getMediaType() == MediaType.VIDEO && localMediaUrl != null ? localMediaUrl : media.getVideoUrl(),
+                media.getMediaType() == MediaType.VIDEO && localMediaUrl != null ? localMediaUrl : media.getCoverUrl(),
                 media.getMimeType(),
                 media.getSizeBytes(),
                 media.getWidth(),
@@ -86,5 +89,24 @@ public class ContentMapper {
                 media.getDisplayTimeMillis(),
                 postIds
         );
+    }
+
+    private String localMediaUrl(MediaEntity media) {
+        String storagePath = media.getStoragePath();
+        if (storagePath == null || storagePath.isBlank()) {
+            return null;
+        }
+        return "/api/media/files/" + media.getId();
+    }
+
+    private String previewMediaUrl(MediaEntity media) {
+        String localMediaUrl = localMediaUrl(media);
+        if (localMediaUrl == null) {
+            return null;
+        }
+        if (media.getMediaType() == MediaType.IMAGE) {
+            return localMediaUrl + "?variant=preview";
+        }
+        return localMediaUrl;
     }
 }

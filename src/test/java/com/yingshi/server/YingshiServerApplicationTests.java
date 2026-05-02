@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @AutoConfigureMockMvc
-@SpringBootTest
+@SpringBootTest(properties = "yingshi.dev.test-import.enabled=false")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class YingshiServerApplicationTests {
 
@@ -109,14 +109,23 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.coverMediaId").value("media_001"))
                 .andExpect(jsonPath("$.data.mediaItems.length()").value(3))
                 .andExpect(jsonPath("$.data.mediaItems[0].sortOrder").value(1))
-                .andExpect(jsonPath("$.data.mediaItems[0].media.mediaId").value("media_001"));
+                .andExpect(jsonPath("$.data.mediaItems[0].media.mediaId").value("media_001"))
+                .andExpect(jsonPath("$.data.mediaItems[0].media.url").value("/api/media/files/media_001"))
+                .andExpect(jsonPath("$.data.mediaItems[0].media.previewUrl").value("/api/media/files/media_001?variant=preview"))
+                .andExpect(jsonPath("$.data.mediaItems[2].media.mediaType").value("image"));
 
         mockMvc.perform(get("/api/media/feed")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(6))
                 .andExpect(jsonPath("$.data[0].mediaId").value("media_001"))
+                .andExpect(jsonPath("$.data[0].url").value("/api/media/files/media_001"))
                 .andExpect(jsonPath("$.data[0].postIds.length()").value(2));
+
+        mockMvc.perform(get("/api/media/files/media_001")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "image/jpeg"));
     }
 
     @Test
@@ -157,6 +166,21 @@ class YingshiServerApplicationTests {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.title").value("Fresh Layout Updated"))
+                .andExpect(jsonPath("$.data.albumIds.length()").value(1))
+                .andExpect(jsonPath("$.data.albumIds[0]").value("album_002"));
+
+        mockMvc.perform(patch("/api/posts/" + postId)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Fresh Layout Stable",
+                                  "summary": "Updated summary again",
+                                  "albumIds": ["album_002"]
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.title").value("Fresh Layout Stable"))
                 .andExpect(jsonPath("$.data.albumIds.length()").value(1))
                 .andExpect(jsonPath("$.data.albumIds[0]").value("album_002"));
 

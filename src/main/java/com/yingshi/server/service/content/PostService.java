@@ -123,6 +123,7 @@ public class PostService {
             }
             List<AlbumEntity> albums = requireAlbums(spaceId, request.albumIds());
             postAlbumRepository.deleteAll(postAlbumRepository.findBySpaceIdAndPostId(spaceId, postId));
+            postAlbumRepository.flush();
             savePostAlbumRelations(postId, spaceId, albums.stream().map(AlbumEntity::getId).toList());
         }
 
