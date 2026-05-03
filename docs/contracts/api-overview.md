@@ -84,3 +84,7 @@ Error response draft:
 - Media feed 只面向已经进入内容主链路的媒体，未挂帖媒体不属于主照片流返回范围。
 - 删除媒体时如果会让帖子变成空帖，服务端返回 `409 DELETE_CONFLICT`，由客户端展示空帖保护提示。
 - 系统媒体批量导入属于“先上传、再挂帖”的两阶段动作，客户端应在第二阶段成功后再视为最终完成。
+## Stage 12.4 Client Cleanup Note
+
+- Stage 12.4 does not introduce server API changes.
+- Android now expects media URL normalization and media kind fallback to stay contract-compatible across `mediaType/type`, `url/mediaUrl`, `previewUrl/thumbnailUrl`, and `videoUrl/originalUrl`.
