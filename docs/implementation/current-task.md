@@ -3,43 +3,86 @@
 
 # 5. Server `current-task.md`
 
-## Stage 12.5 Sync Note
-
-- 本轮 Server 不改业务逻辑，只同步 Viewer 契约说明。
-- `postIds` 仍是 Android Viewer “所属帖子”跳转的最小稳定字段。
-- `originalUrl` 可以为空；客户端会在没有独立原图资源时隐藏“加载原图”动作。
-- `thumbnailUrl / previewUrl / coverUrl` 任一存在即可帮助 Viewer 在视频首开前先显示封面；全部缺失时客户端会退回统一视频占位。
-
 ```md
-# Current Task: Stage 12.5 - Viewer 产品化联调支持
+# Current Task: Stage 12.6 - 新增媒体 / 新增帖子联调支持
 
 ## 背景
 
-Android 进入 Stage 12.5，重点是 Viewer 原图、所属帖子、长图、视频封面和混合媒体体验收口。Server 默认不做大改，只在契约字段不足时做最小修正。
+Android 进入 Stage 12.6，目标是补全新增媒体和新增帖子闭环。Server 默认不做大重构，只在创建帖子、上传媒体、媒体关联、失败错误码、孤立媒体策略等契约不足时做最小修正。
 
 ## 目标
 
-检查 Viewer 需要的契约是否清晰：
+1. 创建帖子接口返回字段完整。
+2. 上传媒体接口返回字段完整。
+3. 加入已有帖子接口结果语义清晰。
+4. 上传成功但创建 / 关联失败的处理策略清晰。
+5. 失败错误码和错误信息支持 Android 做中文兜底。
+6. 查询接口能在新增后返回最新数据。
 
-1. thumbnailUrl / mediaUrl / originalUrl / videoUrl 语义清楚
-2. 没有原图资源时 originalUrl 不应伪装为完整原图
-3. 媒体所属帖子 postIds / relatedPosts 数据稳定
-4. 视频 mimeType / type / coverUrl 或 thumbnailUrl 稳定
-5. 查询详情后能返回 Viewer 需要的媒体字段
+## 检查范围
+
+### 1. 创建帖子
+
+检查：
+
+- 创建成功后是否返回 postId
+- 是否返回相册归属
+- 是否返回初始媒体
+- 是否返回封面字段
+- 查询详情是否能读到新帖子
+- 查询列表是否能读到新帖子
+
+### 2. 上传媒体
+
+检查：
+
+- 上传成功后是否返回 mediaId
+- 是否返回 thumbnailUrl / mediaUrl / originalUrl / videoUrl
+- 是否返回 mimeType / type
+- 上传失败错误码是否清晰
+
+### 3. 加入已有帖子
+
+检查：
+
+- 媒体关联是否幂等或有明确重复错误
+- 关联成功后帖子详情查询是否包含新媒体
+- 失败时是否不会产生半关系状态
+
+### 4. 孤立媒体
+
+检查并记录策略：
+
+- 上传成功但帖子创建失败
+- 上传成功但媒体关联失败
+- 用户取消创建流程
+- 是否需要保留为系统媒体
+- 是否需要进入待清理状态
 
 ## 不做内容
 
 - 不做 OSS
 - 不做转码
-- 不做复杂封面生成
+- 不做复杂离线任务
 - 不改权限体系
-- 不改回收站规则
-- 不做新大接口
+- 不改回收站业务规则
+- 不做 WebSocket / 推送
 
 ## 验收
 
-1. Viewer 所需媒体字段契约清晰。
-2. 所属帖子数据语义清晰。
-3. 视频封面字段语义清晰。
-4. 如修改 Server，mvnw test 通过。
-5. 如未修改 Server，最终说明 Server 未修改。
+1. 创建帖子接口返回字段完整。
+2. 上传媒体接口返回字段完整。
+3. 媒体关联接口语义清晰。
+4. 失败错误码支持 Android 兜底。
+5. 新增后查询接口返回最新数据。
+6. 如修改 Server，mvnw test 通过。
+
+## Stage 12.6 Server Sync Note
+
+- ?? Android ????????????????????????????????????????
+- Server ?????????????????
+  - `POST /api/uploads/token`
+  - `POST /api/uploads/{uploadId}/file`
+  - `POST /api/posts`
+  - `POST /api/posts/{postId}/media`
+- ??????????????????????????????????????????????????????
