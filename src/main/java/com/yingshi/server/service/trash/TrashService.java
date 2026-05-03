@@ -107,6 +107,12 @@ public class TrashService {
             return systemDeleteMediaInternal(mediaId, currentUser, Optional.of(post.getId()));
         }
 
+        assertPostKeepsVisibleMedia(
+                currentUser.spaceId(),
+                postId,
+                Set.of(mediaId)
+        );
+
         MediaEntity media = requireActiveMedia(mediaId, currentUser.spaceId());
         boolean wasCover = mediaId.equals(post.getCoverMediaId());
         int sortOrder = relation.getSortOrder();
@@ -255,6 +261,13 @@ public class TrashService {
         List<PostEntity> posts = relatedPostIds.isEmpty()
                 ? List.of()
                 : postRepository.findBySpaceIdAndIdIn(currentUser.spaceId(), relatedPostIds);
+        for (String relatedPostId : relatedPostIds) {
+            assertPostKeepsVisibleMedia(
+                    currentUser.spaceId(),
+                    relatedPostId,
+                    Set.of(mediaId)
+            );
+        }
         Set<String> coverPostIds = posts.stream()
                 .filter(post -> mediaId.equals(post.getCoverMediaId()))
                 .map(PostEntity::getId)
@@ -386,6 +399,27 @@ public class TrashService {
                 .filter(relation -> relation.getMediaId().equals(mediaId))
                 .findFirst()
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Media was not found in the current post."));
+    }
+
+    private void assertPostKeepsVisibleMedia(String spaceId, String postId, Set<String> removedMediaIds) {
+        Optional<PostEntity> maybePost = postRepository.findByIdAndSpaceId(postId, spaceId);
+        if (maybePost.isEmpty() || maybePost.get().getDeletedAt() != null) {
+            return;
+        }
+
+        long remainingVisibleMediaCount = postMediaRepository.findBySpaceIdAndPostIdOrderBySortOrderAsc(spaceId, postId)
+                .stream()
+                .map(PostMediaEntity::getMediaId)
+                .distinct()
+                .filter(mediaId -> !removedMediaIds.contains(mediaId))
+                .count();
+        if (remainingVisibleMediaCount <= 0) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    ErrorCode.DELETE_CONFLICT,
+                    "当前操作会让帖子变成空帖，请删除整个帖子或至少保留一张媒体。"
+            );
+        }
     }
 
     private void resequencePostMedia(String spaceId, String postId) {

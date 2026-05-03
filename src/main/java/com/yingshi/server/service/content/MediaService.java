@@ -124,10 +124,6 @@ public class MediaService {
     }
 
     private boolean isRenderableMedia(MediaEntity media, List<String> postIds) {
-        Long sizeBytes = media.getSizeBytes();
-        if (sizeBytes != null && sizeBytes <= 1024L && postIds.isEmpty()) {
-            return false;
-        }
-        return true;
+        return !postIds.isEmpty();
     }
 }
