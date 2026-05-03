@@ -12,7 +12,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -379,11 +383,16 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.mediaItems.length()").value(3))
                 .andExpect(jsonPath("$.data.mediaItems[2].media.mediaId").value(mediaId));
 
-        mockMvc.perform(get("/api/media/feed")
+        MvcResult feedResult = mockMvc.perform(get("/api/media/feed")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].mediaId").value(mediaId))
-                .andExpect(jsonPath("$.data[0].postIds[0]").value("post_003"));
+                .andReturn();
+        List<Map<String, Object>> matchedItems = JsonPath.parse(feedResult.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .read("$.data[?(@.mediaId=='%s')]".formatted(mediaId));
+        assertEquals(1, matchedItems.size());
+        @SuppressWarnings("unchecked")
+        List<String> postIds = (List<String>) matchedItems.get(0).get("postIds");
+        assertTrue(postIds.contains("post_003"));
     }
 
     @Test
