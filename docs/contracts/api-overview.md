@@ -9,6 +9,12 @@
 This document defines the first client-side API boundary for future backend integration.
 The goal is to keep UI models separate from transport models while preserving the current fake-first app flow.
 
+## Stage 12.5 Viewer Sync
+- Android Viewer 以 `thumbnailUrl -> mediaUrl -> originalUrl` 作为图片预览优先级。
+- `originalUrl` 为空，或与当前预览图地址相同，都视为“没有独立原图资源”，客户端会隐藏原图按钮。
+- `postIds` 仍是 Viewer 所属帖子跳转的最小后端契约。
+- 系统媒体 Viewer 不消费帖子评论、所属帖子、原图按钮等 app 内容专属字段。
+
 ## Base URL
 - placeholder only: `https://api-placeholder.yingshi.local/`
 - must be configurable
