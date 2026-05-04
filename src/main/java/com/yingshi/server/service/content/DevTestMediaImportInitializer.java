@@ -44,8 +44,8 @@ public class DevTestMediaImportInitializer {
 
     private static final String TEST_IMPORT_ROOT = "test";
     private static final String TEST_IMPORT_ALBUM_ID = "album_import_local_test_media";
-    private static final String TEST_IMPORT_ALBUM_TITLE = "测试导入";
-    private static final String TEST_IMPORT_CONTRIBUTOR_LABEL = "本地测试导入";
+    private static final String TEST_IMPORT_ALBUM_TITLE = "网络样例导入";
+    private static final String TEST_IMPORT_CONTRIBUTOR_LABEL = "local-storage 样例";
     private static final int DEFAULT_VIDEO_WIDTH = 1080;
     private static final int DEFAULT_VIDEO_HEIGHT = 1920;
     private static final long DEFAULT_VIDEO_DURATION_MILLIS = 15_000L;
@@ -99,7 +99,7 @@ public class DevTestMediaImportInitializer {
                 .orElseGet(() -> createImportAlbum(spaceId));
         album.setSpaceId(spaceId);
         album.setTitle(TEST_IMPORT_ALBUM_TITLE);
-        album.setSubtitle("自动导入 local-storage/" + spaceId + "/" + TEST_IMPORT_ROOT + " 下的真实媒体");
+        album.setSubtitle("扫描 local-storage/" + spaceId + "/" + TEST_IMPORT_ROOT + " 下的样例图片、长图和视频");
 
         String latestCoverMediaId = album.getCoverMediaId();
         long latestCoverTime = Long.MIN_VALUE;
@@ -134,8 +134,8 @@ public class DevTestMediaImportInitializer {
             PostEntity post = postRepository.findById(postId).orElseGet(PostEntity::new);
             post.setId(postId);
             post.setSpaceId(spaceId);
-            post.setTitle(truncate("测试导入 · " + humanizeBucketKey(bucketKey), 120));
-            post.setSummary(truncate("自动导入自 " + bucketKey, 1000));
+            post.setTitle(truncate("样例导入 · " + humanizeBucketKey(bucketKey), 120));
+            post.setSummary(truncate("自动导入自 local-storage 测试目录：" + bucketKey, 1000));
             post.setContributorLabel(TEST_IMPORT_CONTRIBUTOR_LABEL);
             post.setDisplayTimeMillis(postDisplayTimeMillis);
             post.setCoverMediaId(mediaIds.get(0));

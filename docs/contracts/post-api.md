@@ -163,3 +163,9 @@ Response:
 - `MEDIA_ALREADY_DELETED`
 - `VALIDATION_ERROR`
 - `AUTH_UNAUTHORIZED`
+
+## Stage 12.7-Hotfix Original Notes
+
+- Android post detail single-original and `加载全帖原图` actions are image-only.
+- Videos in nested post media are skipped by original-image loading and continue to use normal video playback source fallback.
+- Batch original loading reports loaded / skipped-no-original / failed counts and must not mark skipped videos as loaded.

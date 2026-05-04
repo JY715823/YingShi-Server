@@ -43,4 +43,4 @@ app:
 yingshi:
   dev:
     test-import:
-      enabled: true
+      enabled: false
