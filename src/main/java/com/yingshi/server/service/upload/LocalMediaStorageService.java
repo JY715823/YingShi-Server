@@ -84,6 +84,9 @@ public class LocalMediaStorageService {
         Path target = seedDirectory.resolve(seedName + ".jpg").normalize();
         try {
             Files.createDirectories(seedDirectory);
+            if (Files.exists(target) && Files.isRegularFile(target) && isReadableImageFile(target)) {
+                return rootPath.relativize(target).toString().replace(FileSystems.getDefault().getSeparator(), "/");
+            }
             List<Path> sourceImages = findSeedSourceImages(spacePath);
             if (sourceImages.isEmpty()) {
                 throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "No local seed images were found.");

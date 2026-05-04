@@ -48,6 +48,7 @@ Response data:
 Response:
 - binary file stream
 - local dev currently serves stored files directly from server-managed local storage
+- current-space deleted media may still be streamed by id so trash detail can render read-only original media previews
 
 ### `DELETE /api/media/{mediaId}`
 
@@ -63,6 +64,8 @@ Response:
 - `url` is the canonical file URL
 - `postIds` only includes active posts
 - system-deleted media stays restorable through trash
+- Import-only media is valid. `/api/media/feed` must still return active media when `postIds` is empty.
+- `GET /api/media/feed` and post detail APIs continue to hide deleted media. The binary file endpoint is allowed to read deleted current-space media only for preview / recovery surfaces such as trash detail.
 
 ## Error Codes
 - `MEDIA_NOT_FOUND`

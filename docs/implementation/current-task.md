@@ -1,88 +1,53 @@
-
+﻿
 ---
 
 # 5. Server `current-task.md`
 
 ```md
-# Current Task: Stage 12.6 - 新增媒体 / 新增帖子联调支持
+# Current Task: Stage 12.7 - 鍏ㄥ眬娴佺晠搴﹁仈璋冩敮鎸?
 
-## 背景
+## 鑳屾櫙
 
-Android 进入 Stage 12.6，目标是补全新增媒体和新增帖子闭环。Server 默认不做大重构，只在创建帖子、上传媒体、媒体关联、失败错误码、孤立媒体策略等契约不足时做最小修正。
+Android 杩涘叆 Stage 12.7锛岄噸鐐规槸鍏ㄥ眬娴佺晠搴﹀拰鍑忓皯閲嶅璇锋眰銆係erver 榛樿涓嶆敼涓氬姟閫昏緫锛屽彧鍦ㄦ帴鍙ｅ垎椤点€佹煡璇㈠瓧娈垫垨濂戠害璇存槑涓嶈冻瀵艰嚧 Android 杩囧害璇锋眰鏃跺仛鏈€灏忎慨姝ｆ垨鏂囨。璇存槑銆?
 
-## 目标
+## 鐩爣
 
-1. 创建帖子接口返回字段完整。
-2. 上传媒体接口返回字段完整。
-3. 加入已有帖子接口结果语义清晰。
-4. 上传成功但创建 / 关联失败的处理策略清晰。
-5. 失败错误码和错误信息支持 Android 做中文兜底。
-6. 查询接口能在新增后返回最新数据。
+1. 妫€鏌ュ垪琛ㄦ煡璇㈡槸鍚︽敮鎸?Android 褰撳墠鍒嗛〉 / 鍒嗘壒鍔犺浇闇€姹傘€?
+2. 妫€鏌ュ獟浣撶缉鐣ュ浘瀛楁鏄惁绋冲畾杩斿洖銆?
+3. 妫€鏌ュ笘瀛愯鎯呮槸鍚﹂伩鍏?Android 蹇呴』棰濆璇锋眰杩囧鏁版嵁銆?
+4. 妫€鏌ョ郴缁熷獟浣撶浉鍏冲绾﹁鏄庢槸鍚︽竻妤氥€?
+5. 濡傛棤蹇呰锛屼笉淇敼 Server 浠ｇ爜銆?
 
-## 检查范围
+## 涓嶅仛鍐呭
 
-### 1. 创建帖子
+- 涓嶅仛 OSS
+- 涓嶅仛杞爜
+- 涓嶅仛鏂板ぇ鎺ュ彛
+- 涓嶆敼鏉冮檺浣撶郴
+- 涓嶆敼涓氬姟瑙勫垯
+- 涓嶅仛 WebSocket / 鎺ㄩ€?
 
-检查：
+## 楠屾敹
 
-- 创建成功后是否返回 postId
-- 是否返回相册归属
-- 是否返回初始媒体
-- 是否返回封面字段
-- 查询详情是否能读到新帖子
-- 查询列表是否能读到新帖子
+1. 濂戠害鏂囨。鏀寔 Android 娴佺晠搴︿紭鍖栥€?
+2. 濡備慨鏀?Server锛宮vnw test 閫氳繃銆?
+3. 濡傛湭淇敼 Server锛屾渶缁堣鏄?Server 鏈慨鏀广€?
 
-### 2. 上传媒体
+## Stage 12.7 Server Sync Note
 
-检查：
+- No server business logic change is required in this pass.
+- Android now depends even more on stable preview-sized URLs for list surfaces, and comment mutations are expected to stay lightweight without implying a required full media-feed reload.
 
-- 上传成功后是否返回 mediaId
-- 是否返回 thumbnailUrl / mediaUrl / originalUrl / videoUrl
-- 是否返回 mimeType / type
-- 上传失败错误码是否清晰
+## Post-12.7 Media Ownership Sync
 
-### 3. 加入已有帖子
+- Server business logic was minimally adjusted because app media can now be imported without belonging to a post.
+- `/api/media/feed` returns all active media in the current space. `postIds` may be empty and still represents a valid photo-feed item.
+- Viewer “所属帖子” should only appear when `postIds` is non-empty; import-only media remains visible in the app photo feed.
 
-检查：
+## Post-12.7 Targeted Fix Follow-up
 
-- 媒体关联是否幂等或有明确重复错误
-- 关联成功后帖子详情查询是否包含新媒体
-- 失败时是否不会产生半关系状态
+- `/api/media/files/{mediaId}` may serve a deleted media file when the media id belongs to the current space. Android uses this to render read-only trash detail previews for `mediaRemoved`, `mediaSystemDeleted`, and `postDeleted` entries.
+- Normal feed and post APIs still filter deleted media through their existing repository queries; the file endpoint relaxation is only a binary-resource lookup and does not make deleted media reappear in active lists.
+- Local seed image preparation now reuses an existing readable seed file instead of always overwriting it. This avoids Windows file-lock failures when tests run while a dev server or image reader still has a seed file open.
 
-### 4. 孤立媒体
 
-检查并记录策略：
-
-- 上传成功但帖子创建失败
-- 上传成功但媒体关联失败
-- 用户取消创建流程
-- 是否需要保留为系统媒体
-- 是否需要进入待清理状态
-
-## 不做内容
-
-- 不做 OSS
-- 不做转码
-- 不做复杂离线任务
-- 不改权限体系
-- 不改回收站业务规则
-- 不做 WebSocket / 推送
-
-## 验收
-
-1. 创建帖子接口返回字段完整。
-2. 上传媒体接口返回字段完整。
-3. 媒体关联接口语义清晰。
-4. 失败错误码支持 Android 兜底。
-5. 新增后查询接口返回最新数据。
-6. 如修改 Server，mvnw test 通过。
-
-## Stage 12.6 Server Sync Note
-
-- ?? Android ????????????????????????????????????????
-- Server ?????????????????
-  - `POST /api/uploads/token`
-  - `POST /api/uploads/{uploadId}/file`
-  - `POST /api/posts`
-  - `POST /api/posts/{postId}/media`
-- ??????????????????????????????????????????????????????

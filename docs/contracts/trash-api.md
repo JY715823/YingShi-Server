@@ -131,6 +131,7 @@ Response data:
 Notes:
 - Android REAL mode maps `postDeleted` / `mediaRemoved` / `mediaSystemDeleted` directly from backend
 - `remove` means move to `pendingCleanup`, and `undo-remove` is the 24h撤销入口
+- Trash detail rows should be able to render original deleted content by using `sourceMediaId` and `relatedMediaIds` with `/api/media/files/{mediaId}`. Active lists still hide deleted media; this is a read-only trash preview path.
 
 ### `POST /api/trash/items/{trashItemId}/undo-remove`
 

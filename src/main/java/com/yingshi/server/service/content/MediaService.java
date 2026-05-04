@@ -90,7 +90,7 @@ public class MediaService {
     }
 
     public MediaFilePayload loadMediaFile(String mediaId, String variant, AuthenticatedUser currentUser) {
-        MediaEntity media = mediaRepository.findByIdAndSpaceIdAndDeletedAtIsNull(mediaId, currentUser.spaceId())
+        MediaEntity media = mediaRepository.findByIdAndSpaceId(mediaId, currentUser.spaceId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Media was not found."));
         if (media.getStoragePath() == null || media.getStoragePath().isBlank()) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Local file is not available for this media.");
@@ -124,6 +124,6 @@ public class MediaService {
     }
 
     private boolean isRenderableMedia(MediaEntity media, List<String> postIds) {
-        return !postIds.isEmpty();
+        return true;
     }
 }
