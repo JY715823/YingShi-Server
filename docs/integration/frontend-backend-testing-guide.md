@@ -188,6 +188,7 @@ Current entry path in the app:
 
 What the diagnostics page can do:
 - show and edit the active `baseUrl`
+- Stage 12.7-Hotfix original check: image original loading must succeed only after the original image request renders or downloads successfully; videos must not show `加载原图`.
 - switch `FAKE` / `REAL`
 - login with the seeded account
 - test `health`

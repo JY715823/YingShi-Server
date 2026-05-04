@@ -67,6 +67,12 @@ Response:
 - Import-only media is valid. `/api/media/feed` must still return active media when `postIds` is empty.
 - `GET /api/media/feed` and post detail APIs continue to hide deleted media. The binary file endpoint is allowed to read deleted current-space media only for preview / recovery surfaces such as trash detail.
 
+## Stage 12.7-Hotfix Original Contract
+
+- For local image media, `previewUrl` may point to `/api/media/files/{mediaId}?variant=preview`, while `originalUrl` / `mediaUrl` may point to `/api/media/files/{mediaId}`.
+- Android image preview priority is `thumbnailUrl -> mediaUrl`; image original priority is `originalUrl -> mediaUrl`, but the resolved original candidate must be non-empty and different from the current preview URL.
+- Video media must not be represented to users as `加载原图`. Video source fallback remains playback-only and is separate from image original loading.
+
 ## Error Codes
 - `MEDIA_NOT_FOUND`
 - `MEDIA_ALREADY_DELETED`

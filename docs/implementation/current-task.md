@@ -50,4 +50,10 @@ Android 杩涘叆 Stage 12.7锛岄噸鐐规槸鍏ㄥ眬娴佺晠搴﹀拰鍑忓�
 - Normal feed and post APIs still filter deleted media through their existing repository queries; the file endpoint relaxation is only a binary-resource lookup and does not make deleted media reappear in active lists.
 - Local seed image preparation now reuses an existing readable seed file instead of always overwriting it. This avoids Windows file-lock failures when tests run while a dev server or image reader still has a seed file open.
 
+## Stage 12.7-Hotfix Original Loading Contract
+
+- No server business logic change is required for this hotfix.
+- Local media DTOs may expose `/api/media/files/{mediaId}?variant=preview` as preview and `/api/media/files/{mediaId}` as original. Android must treat the two URLs as different render sources and must use original-size image requests for the latter.
+- Android hides the original action when there is no meaningful image original candidate. Videos do not show `加载原图`; they keep using video playback source fallback only.
+
 

@@ -26,35 +26,49 @@ public class DevCommentSeedDataInitializer {
                     "space_demo_shared",
                     "user_demo_a",
                     "post_001",
-                    "这组放在日常里很顺，光线也特别安静。"
+                    "这组现在用的是新下载的横图、竖图和方图，适合先检查照片流和帖子详情是否都换成了新素材。"
             ));
             commentRepository.save(createPostComment(
                     "comment_post_002",
                     "space_demo_shared",
                     "user_demo_b",
                     "post_001",
-                    "封面选得很稳，整组顺序也读起来很舒服。"
+                    "长图这一组要重点看查看态：默认预览不能糊成一团，加载原图后应该能明显切到完整资源。"
+            ));
+            commentRepository.save(createPostComment(
+                    "comment_post_003",
+                    "space_demo_shared",
+                    "user_demo_a",
+                    "post_003",
+                    "视频帖子只验证视频播放和封面稳定，不应该再出现“已加载原图”这种图片专属状态。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_001",
                     "space_demo_shared",
                     "user_demo_b",
                     "media_001",
-                    "这张单独留在照片流里也很好看。"
+                    "这张横图会同时出现在照片流和多个帖子里，用来验证共享媒体的评论、引用和删除恢复链路。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_002",
                     "space_demo_shared",
                     "user_demo_a",
                     "media_001",
-                    "同意，放进两个帖子里也还是成立。"
+                    "同一张媒体被复用时，原图加载和评论状态都应该按媒体本身稳定显示。"
+            ));
+            commentRepository.save(createMediaComment(
+                    "comment_media_003",
+                    "space_demo_shared",
+                    "user_demo_b",
+                    "media_004",
+                    "这张是 1400x3200 长图，适合专门验证长图阅读和原图加载。"
             ));
             commentRepository.save(createPostComment(
                     "comment_other_secret",
                     "space_private_other",
                     "user_demo_b",
                     "post_other_secret",
-                    "隐藏空间里的测试评论。"
+                    "隐藏空间里的测试评论，用于跨空间可见性验证。"
             ));
         };
     }
