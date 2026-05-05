@@ -16,6 +16,13 @@ public record UpdatePostRequest(
 
         Long displayTimeMillis,
 
+        Long eventStartedAtMillis,
+
+        Long eventEndedAtMillis,
+
+        @Size(max = 20, message = "displayTimeSource must be at most 20 characters.")
+        String displayTimeSource,
+
         List<String> albumIds
 ) {
 }

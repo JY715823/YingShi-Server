@@ -50,15 +50,15 @@ public class AlbumService {
     }
 
     public List<AlbumDto> listAlbums(AuthenticatedUser currentUser) {
-        String spaceId = currentUser.spaceId();
-        List<AlbumEntity> albums = albumRepository.findBySpaceIdOrderByTitleAsc(spaceId);
+        String libraryId = currentUser.libraryId();
+        List<AlbumEntity> albums = albumRepository.findByLibraryIdOrderByTitleAsc(libraryId);
         Set<String> activePostIds = postRepository.findAll()
                 .stream()
-                .filter(post -> spaceId.equals(post.getSpaceId()) && post.getDeletedAt() == null)
+                .filter(post -> libraryId.equals(post.getLibraryId()) && post.getDeletedAt() == null)
                 .map(PostEntity::getId)
                 .collect(Collectors.toSet());
         Map<String, Long> postCountByAlbumId = postAlbumRepository.findAll().stream()
-                .filter(relation -> spaceId.equals(relation.getSpaceId()) && activePostIds.contains(relation.getPostId()))
+                .filter(relation -> libraryId.equals(relation.getLibraryId()) && activePostIds.contains(relation.getPostId()))
                 .collect(Collectors.groupingBy(PostAlbumEntity::getAlbumId, Collectors.counting()));
 
         List<AlbumDto> results = new ArrayList<>();
@@ -69,22 +69,22 @@ public class AlbumService {
     }
 
     public List<PostSummaryDto> listAlbumPosts(String albumId, AuthenticatedUser currentUser) {
-        String spaceId = currentUser.spaceId();
-        requireAlbum(albumId, spaceId);
+        String libraryId = currentUser.libraryId();
+        requireAlbum(albumId, libraryId);
 
-        List<PostAlbumEntity> albumRelations = postAlbumRepository.findBySpaceIdAndAlbumId(spaceId, albumId);
+        List<PostAlbumEntity> albumRelations = postAlbumRepository.findByLibraryIdAndAlbumId(libraryId, albumId);
         Set<String> postIds = albumRelations.stream().map(PostAlbumEntity::getPostId).collect(Collectors.toSet());
         if (postIds.isEmpty()) {
             return List.of();
         }
 
-        List<PostEntity> posts = postRepository.findBySpaceIdAndIdInAndDeletedAtIsNull(spaceId, postIds)
+        List<PostEntity> posts = postRepository.findByLibraryIdAndIdInAndDeletedAtIsNull(libraryId, postIds)
                 .stream()
                 .sorted(Comparator.comparing(PostEntity::getDisplayTimeMillis).reversed().thenComparing(PostEntity::getId))
                 .toList();
 
-        Map<String, List<String>> albumIdsByPostId = groupAlbumIdsByPostId(postAlbumRepository.findBySpaceIdAndPostIdIn(spaceId, postIds));
-        Map<String, Long> mediaCountByPostId = postMediaRepository.findBySpaceIdAndPostIdIn(spaceId, postIds)
+        Map<String, List<String>> albumIdsByPostId = groupAlbumIdsByPostId(postAlbumRepository.findByLibraryIdAndPostIdIn(libraryId, postIds));
+        Map<String, Long> mediaCountByPostId = postMediaRepository.findByLibraryIdAndPostIdIn(libraryId, postIds)
                 .stream()
                 .collect(Collectors.groupingBy(PostMediaEntity::getPostId, Collectors.counting()));
 
@@ -100,8 +100,8 @@ public class AlbumService {
         return results;
     }
 
-    private void requireAlbum(String albumId, String spaceId) {
-        albumRepository.findByIdAndSpaceId(albumId, spaceId)
+    private void requireAlbum(String albumId, String libraryId) {
+        albumRepository.findByIdAndLibraryId(albumId, libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.ALBUM_NOT_FOUND, "Album was not found."));
     }
 

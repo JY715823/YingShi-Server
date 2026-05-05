@@ -3,6 +3,7 @@ package com.yingshi.server.service.upload;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.config.StorageProperties;
+import com.yingshi.server.domain.MediaType;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
@@ -19,6 +20,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -27,23 +31,31 @@ import java.util.stream.Stream;
 @Service
 public class LocalMediaStorageService {
 
+    private static final DateTimeFormatter STORAGE_MONTH_FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM");
+
     private final Path rootPath;
 
     public LocalMediaStorageService(StorageProperties storageProperties) {
         this.rootPath = Paths.get(storageProperties.localRoot()).toAbsolutePath().normalize();
     }
 
-    public StoredFile store(String spaceId, String uploadId, String originalFileName, MultipartFile file) {
-        String sanitizedName = sanitizeFileName(originalFileName);
-        Path directory = rootPath.resolve(spaceId).resolve(uploadId);
-        Path target = directory.resolve(sanitizedName).normalize();
+    public StoredFile storeOriginal(
+            String mediaId,
+            long displayTimeMillis,
+            MediaType mediaType,
+            String originalFileName,
+            MultipartFile file
+    ) {
+        String extension = resolveExtension(originalFileName, mediaType);
+        Path directory = rootPath.resolve("originals").resolve(monthBucket(displayTimeMillis)).normalize();
+        Path target = directory.resolve(mediaId + extension).normalize();
         try {
             Files.createDirectories(directory);
             file.transferTo(target);
         } catch (IOException exception) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to store uploaded file.");
         }
-        return new StoredFile(target.toString(), sanitizedName);
+        return new StoredFile(toRelativeStoragePath(target), target.getFileName().toString());
     }
 
     public Resource load(String storagePath) {
@@ -60,7 +72,7 @@ public class LocalMediaStorageService {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
         }
 
-        Path previewDirectory = rootPath.resolve("_derived").resolve("previews").normalize();
+        Path previewDirectory = previewDirectoryFor(sourcePath);
         Path previewPath = previewDirectory.resolve(cacheKey + "-" + maxDimension + ".jpg").normalize();
         try {
             if (shouldRegeneratePreview(sourcePath, previewPath)) {
@@ -78,16 +90,15 @@ public class LocalMediaStorageService {
         return new FileSystemResource(previewPath);
     }
 
-    public String ensureSeedImage(String spaceId, String seedName, int sourceOffset) {
-        Path spacePath = rootPath.resolve(spaceId).normalize();
-        Path seedDirectory = spacePath.resolve("seed").normalize();
+    public String ensureSeedImage(String seedName, int sourceOffset) {
+        Path seedDirectory = rootPath.resolve("seed").normalize();
         Path target = seedDirectory.resolve(seedName + ".jpg").normalize();
         try {
             Files.createDirectories(seedDirectory);
             if (Files.exists(target) && Files.isRegularFile(target) && isReadableImageFile(target)) {
                 return rootPath.relativize(target).toString().replace(FileSystems.getDefault().getSeparator(), "/");
             }
-            List<Path> sourceImages = findSeedSourceImages(spacePath);
+            List<Path> sourceImages = findSeedSourceImages();
             if (sourceImages.isEmpty()) {
                 throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "No local seed images were found.");
             }
@@ -99,8 +110,8 @@ public class LocalMediaStorageService {
         return rootPath.relativize(target).toString().replace(FileSystems.getDefault().getSeparator(), "/");
     }
 
-    public List<Path> listFilesRecursively(String spaceId, String relativeDirectory) {
-        Path directory = rootPath.resolve(spaceId).resolve(relativeDirectory).normalize();
+    public List<Path> listFilesRecursively(String relativeDirectory) {
+        Path directory = rootPath.resolve(relativeDirectory).normalize();
         if (!Files.exists(directory)) {
             return List.of();
         }
@@ -126,6 +137,32 @@ public class LocalMediaStorageService {
 
     private String sanitizeFileName(String fileName) {
         return fileName.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private String resolveExtension(String fileName, MediaType mediaType) {
+        String sanitizedName = sanitizeFileName(fileName == null ? "" : fileName);
+        int dotIndex = sanitizedName.lastIndexOf('.');
+        if (dotIndex >= 0 && dotIndex < sanitizedName.length() - 1) {
+            return sanitizedName.substring(dotIndex).toLowerCase(Locale.ROOT);
+        }
+        return mediaType == MediaType.VIDEO ? ".mp4" : ".jpg";
+    }
+
+    private String monthBucket(long displayTimeMillis) {
+        return Instant.ofEpochMilli(displayTimeMillis)
+                .atZone(ZoneId.systemDefault())
+                .format(STORAGE_MONTH_FORMATTER);
+    }
+
+    private Path previewDirectoryFor(Path sourcePath) {
+        Path relative = rootPath.relativize(sourcePath.toAbsolutePath().normalize());
+        if (relative.getNameCount() >= 3 && "originals".equals(relative.getName(0).toString())) {
+            return rootPath.resolve("previews")
+                    .resolve(relative.getName(1).toString())
+                    .resolve(relative.getName(2).toString())
+                    .normalize();
+        }
+        return rootPath.resolve("previews").normalize();
     }
 
     private Path resolveStoragePath(String storagePath) {
@@ -168,17 +205,13 @@ public class LocalMediaStorageService {
         return resized;
     }
 
-    private List<Path> findSeedSourceImages(Path spacePath) throws IOException {
-        Path seedRoot = spacePath.resolve("seed").normalize();
-        List<Path> preferredImages = collectImages(spacePath.resolve("test").normalize(), seedRoot);
+    private List<Path> findSeedSourceImages() throws IOException {
+        Path seedRoot = rootPath.resolve("seed").normalize();
+        List<Path> preferredImages = collectImages(rootPath.resolve("test").normalize(), seedRoot);
         if (!preferredImages.isEmpty()) {
             return preferJpegImages(preferredImages);
         }
 
-        List<Path> spaceImages = collectImages(spacePath, seedRoot);
-        if (!spaceImages.isEmpty()) {
-            return preferJpegImages(spaceImages);
-        }
         return preferJpegImages(collectImages(rootPath, seedRoot));
     }
 
@@ -239,6 +272,6 @@ public class LocalMediaStorageService {
         }
     }
 
-    public record StoredFile(String absolutePath, String storedFileName) {
+    public record StoredFile(String storagePath, String storedFileName) {
     }
 }

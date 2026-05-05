@@ -31,8 +31,8 @@ Response data:
   "userId": "user_demo_a",
   "account": "demo.a@yingshi.local",
   "displayName": "Demo A",
-  "spaceId": "space_demo_shared",
-  "spaceDisplayName": "Yingshi Demo Space",
+  "libraryId": "library_shared",
+  "libraryDisplayName": "YingShi Shared Library",
   "accessToken": "access-token-placeholder",
   "refreshToken": "refresh-token-placeholder",
   "accessTokenExpireAtMillis": 1777416400000,
@@ -50,8 +50,8 @@ Response data:
   "account": "demo.a@yingshi.local",
   "displayName": "Demo A",
   "avatarUrl": null,
-  "spaceId": "space_demo_shared",
-  "spaceDisplayName": "Yingshi Demo Space"
+  "libraryId": "library_shared",
+  "libraryDisplayName": "YingShi Shared Library"
 }
 ```
 

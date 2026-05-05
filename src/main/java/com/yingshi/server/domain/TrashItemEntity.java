@@ -12,7 +12,7 @@ import java.time.Instant;
 
 @Entity
 @Table(name = "trash_items")
-public class TrashItemEntity extends SpaceScopedEntity {
+public class TrashItemEntity extends LibraryScopedEntity {
 
     @Id
     private String id;

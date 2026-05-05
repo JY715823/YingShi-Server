@@ -8,9 +8,9 @@ import java.util.List;
 
 public interface PostAlbumRepository extends JpaRepository<PostAlbumEntity, String> {
 
-    List<PostAlbumEntity> findBySpaceIdAndAlbumId(String spaceId, String albumId);
+    List<PostAlbumEntity> findByLibraryIdAndAlbumId(String libraryId, String albumId);
 
-    List<PostAlbumEntity> findBySpaceIdAndPostId(String spaceId, String postId);
+    List<PostAlbumEntity> findByLibraryIdAndPostId(String libraryId, String postId);
 
-    List<PostAlbumEntity> findBySpaceIdAndPostIdIn(String spaceId, Collection<String> postIds);
+    List<PostAlbumEntity> findByLibraryIdAndPostIdIn(String libraryId, Collection<String> postIds);
 }

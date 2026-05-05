@@ -5,7 +5,7 @@ public record AuthCurrentUserResponse(
         String account,
         String displayName,
         String avatarUrl,
-        String spaceId,
-        String spaceDisplayName
+        String libraryId,
+        String libraryDisplayName
 ) {
 }

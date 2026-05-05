@@ -9,19 +9,19 @@ import java.util.Optional;
 
 public interface CommentRepository extends JpaRepository<CommentEntity, String> {
 
-    Page<CommentEntity> findBySpaceIdAndTargetTypeAndPostId(
-            String spaceId,
+    Page<CommentEntity> findByLibraryIdAndTargetTypeAndPostId(
+            String libraryId,
             CommentTargetType targetType,
             String postId,
             Pageable pageable
     );
 
-    Page<CommentEntity> findBySpaceIdAndTargetTypeAndMediaId(
-            String spaceId,
+    Page<CommentEntity> findByLibraryIdAndTargetTypeAndMediaId(
+            String libraryId,
             CommentTargetType targetType,
             String mediaId,
             Pageable pageable
     );
 
-    Optional<CommentEntity> findByIdAndSpaceId(String id, String spaceId);
+    Optional<CommentEntity> findByIdAndLibraryId(String id, String libraryId);
 }

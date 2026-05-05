@@ -11,7 +11,7 @@ import java.time.Instant;
 
 @Entity
 @Table(name = "media")
-public class MediaEntity extends SpaceScopedEntity {
+public class MediaEntity extends LibraryScopedEntity {
 
     @Id
     private String id;
@@ -52,6 +52,15 @@ public class MediaEntity extends SpaceScopedEntity {
 
     @Column(nullable = false)
     private Long displayTimeMillis;
+
+    @Column
+    private Long capturedAtMillis;
+
+    @Column(nullable = false)
+    private Long importedAtMillis;
+
+    @Column(nullable = false, length = 20)
+    private String displayTimeSource;
 
     @Column
     private Long durationMillis;
@@ -164,6 +173,30 @@ public class MediaEntity extends SpaceScopedEntity {
 
     public void setDisplayTimeMillis(Long displayTimeMillis) {
         this.displayTimeMillis = displayTimeMillis;
+    }
+
+    public Long getCapturedAtMillis() {
+        return capturedAtMillis;
+    }
+
+    public void setCapturedAtMillis(Long capturedAtMillis) {
+        this.capturedAtMillis = capturedAtMillis;
+    }
+
+    public Long getImportedAtMillis() {
+        return importedAtMillis;
+    }
+
+    public void setImportedAtMillis(Long importedAtMillis) {
+        this.importedAtMillis = importedAtMillis;
+    }
+
+    public String getDisplayTimeSource() {
+        return displayTimeSource;
+    }
+
+    public void setDisplayTimeSource(String displayTimeSource) {
+        this.displayTimeSource = displayTimeSource;
     }
 
     public Long getDurationMillis() {

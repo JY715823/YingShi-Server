@@ -54,7 +54,7 @@ public class JwtAuthenticationInterceptor implements HandlerInterceptor {
         }
 
         AuthenticatedUser tokenUser = jwtTokenService.parseAccessToken(token);
-        AuthenticatedUser currentUser = authenticatedUserLoader.loadCurrentUser(tokenUser.userId(), tokenUser.spaceId());
+        AuthenticatedUser currentUser = authenticatedUserLoader.loadCurrentUser(tokenUser.userId(), tokenUser.libraryId());
         request.setAttribute(CURRENT_USER_ATTRIBUTE, currentUser);
         return true;
     }

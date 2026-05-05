@@ -31,7 +31,7 @@ public class AlbumController {
         this.albumService = albumService;
     }
 
-    @Operation(summary = "List albums in the current space", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(summary = "List albums in the shared library", security = @SecurityRequirement(name = "bearerAuth"))
     @GetMapping
     public ApiResponse<List<AlbumDto>> listAlbums(
             @CurrentUser AuthenticatedUser currentUser,

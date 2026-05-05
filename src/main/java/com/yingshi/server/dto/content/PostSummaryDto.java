@@ -8,6 +8,9 @@ public record PostSummaryDto(
         String summary,
         String contributorLabel,
         Long displayTimeMillis,
+        Long eventStartedAtMillis,
+        Long eventEndedAtMillis,
+        String displayTimeSource,
         List<String> albumIds,
         String coverMediaId,
         long mediaCount

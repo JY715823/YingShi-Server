@@ -24,7 +24,7 @@
   "mediaId": null,
   "authorId": "user_demo_a",
   "authorName": "小雨",
-  "content": "今天阳光很好，散步回来心情也慢下来了。",
+  "content": "今天阳光很好，散步回来心情也慢下来了�?,
   "createdAtMillis": 1777412800000,
   "updatedAtMillis": 1777412860000,
   "isDeleted": false
@@ -37,7 +37,7 @@ Notes:
 - `mediaId` is only set for media comments
 - after soft delete, `isDeleted=true` and `content` may be `null`
 - comment create still records the real author
-- comment update/delete is currently allowed for any authenticated member inside the same `spaceId`
+- comment update/delete is currently allowed for any authenticated member inside the same `libraryId`
 - TODO: when a non-author edits/deletes a comment, notify the original author in a later stage
 
 ## Endpoints
@@ -57,7 +57,7 @@ Response data:
       "mediaId": null,
       "authorId": "user_demo_a",
       "authorName": "小雨",
-      "content": "今天阳光很好，散步回来心情也慢下来了。",
+      "content": "今天阳光很好，散步回来心情也慢下来了�?,
       "createdAtMillis": 1777412800000,
       "updatedAtMillis": 1777412860000,
       "isDeleted": false
@@ -77,7 +77,7 @@ Request:
 
 ```json
 {
-  "content": "这张照片让我想起那天的风。"
+  "content": "这张照片让我想起那天的风�?
 }
 ```
 
@@ -90,7 +90,7 @@ Request:
 
 ```json
 {
-  "content": "补一句，这个角度也很适合放进日常相册。"
+  "content": "补一句，这个角度也很适合放进日常相册�?
 }
 ```
 

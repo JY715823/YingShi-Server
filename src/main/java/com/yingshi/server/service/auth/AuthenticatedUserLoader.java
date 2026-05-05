@@ -4,7 +4,7 @@ import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.domain.UserEntity;
-import com.yingshi.server.repository.SpaceMemberRepository;
+import com.yingshi.server.repository.SharedLibraryMemberRepository;
 import com.yingshi.server.repository.UserRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -13,17 +13,17 @@ import org.springframework.stereotype.Service;
 public class AuthenticatedUserLoader {
 
     private final UserRepository userRepository;
-    private final SpaceMemberRepository spaceMemberRepository;
+    private final SharedLibraryMemberRepository libraryMemberRepository;
 
     public AuthenticatedUserLoader(
             UserRepository userRepository,
-            SpaceMemberRepository spaceMemberRepository
+            SharedLibraryMemberRepository libraryMemberRepository
     ) {
         this.userRepository = userRepository;
-        this.spaceMemberRepository = spaceMemberRepository;
+        this.libraryMemberRepository = libraryMemberRepository;
     }
 
-    public AuthenticatedUser loadCurrentUser(String userId, String spaceId) {
+    public AuthenticatedUser loadCurrentUser(String userId, String libraryId) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new ApiException(
                         HttpStatus.UNAUTHORIZED,
@@ -31,14 +31,14 @@ public class AuthenticatedUserLoader {
                         "Current user does not exist."
                 ));
 
-        if (!spaceMemberRepository.existsByUserIdAndSpaceId(userId, spaceId)) {
+        if (!libraryMemberRepository.existsByUserIdAndLibraryId(userId, libraryId)) {
             throw new ApiException(
                     HttpStatus.UNAUTHORIZED,
                     ErrorCode.AUTH_SESSION_INVALID,
-                    "Current user is not a member of the requested space."
+                    "Current user is not a member of the shared library."
             );
         }
 
-        return new AuthenticatedUser(user.getId(), user.getAccount(), user.getDisplayName(), spaceId);
+        return new AuthenticatedUser(user.getId(), user.getAccount(), user.getDisplayName(), libraryId);
     }
 }

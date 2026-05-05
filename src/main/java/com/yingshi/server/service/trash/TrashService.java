@@ -70,18 +70,18 @@ public class TrashService {
 
     @Transactional
     public TrashItemDto deletePost(String postId, AuthenticatedUser currentUser) {
-        PostEntity post = requireActivePost(postId, currentUser.spaceId());
+        PostEntity post = requireActivePost(postId, currentUser.libraryId());
         post.setDeletedAt(Instant.now());
         postRepository.save(post);
 
-        List<String> mediaIds = postMediaRepository.findBySpaceIdAndPostIdOrderBySortOrderAsc(currentUser.spaceId(), postId)
+        List<String> mediaIds = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(currentUser.libraryId(), postId)
                 .stream()
                 .map(PostMediaEntity::getMediaId)
                 .distinct()
                 .toList();
 
         TrashItemEntity item = createTrashItem(
-                currentUser.spaceId(),
+                currentUser.libraryId(),
                 TrashItemType.POST_DELETED,
                 postId,
                 null,
@@ -101,30 +101,30 @@ public class TrashService {
             PostMediaDeleteMode deleteMode,
             AuthenticatedUser currentUser
     ) {
-        PostEntity post = requireActivePost(postId, currentUser.spaceId());
-        PostMediaEntity relation = requireRelation(currentUser.spaceId(), postId, mediaId);
+        PostEntity post = requireActivePost(postId, currentUser.libraryId());
+        PostMediaEntity relation = requireRelation(currentUser.libraryId(), postId, mediaId);
         if (deleteMode == PostMediaDeleteMode.SYSTEM) {
             return systemDeleteMediaInternal(mediaId, currentUser, Optional.of(post.getId()));
         }
 
         assertPostKeepsVisibleMedia(
-                currentUser.spaceId(),
+                currentUser.libraryId(),
                 postId,
                 Set.of(mediaId)
         );
 
-        MediaEntity media = requireActiveMedia(mediaId, currentUser.spaceId());
+        MediaEntity media = requireActiveMedia(mediaId, currentUser.libraryId());
         boolean wasCover = mediaId.equals(post.getCoverMediaId());
         int sortOrder = relation.getSortOrder();
         postMediaRepository.delete(relation);
-        resequencePostMedia(currentUser.spaceId(), postId);
+        resequencePostMedia(currentUser.libraryId(), postId);
         if (wasCover) {
-            post.setCoverMediaId(resolveFirstVisibleMediaId(currentUser.spaceId(), postId).orElse(null));
+            post.setCoverMediaId(resolveFirstVisibleMediaId(currentUser.libraryId(), postId).orElse(null));
             postRepository.save(post);
         }
 
         TrashItemEntity item = createTrashItem(
-                currentUser.spaceId(),
+                currentUser.libraryId(),
                 TrashItemType.MEDIA_REMOVED,
                 postId,
                 mediaId,
@@ -153,9 +153,9 @@ public class TrashService {
         );
 
         Page<TrashItemEntity> items = itemType == null || itemType.isBlank()
-                ? trashItemRepository.findBySpaceIdAndState(currentUser.spaceId(), TrashItemState.IN_TRASH, pageRequest)
-                : trashItemRepository.findBySpaceIdAndStateAndItemType(
-                currentUser.spaceId(),
+                ? trashItemRepository.findByLibraryIdAndState(currentUser.libraryId(), TrashItemState.IN_TRASH, pageRequest)
+                : trashItemRepository.findByLibraryIdAndStateAndItemType(
+                currentUser.libraryId(),
                 TrashItemState.IN_TRASH,
                 parseItemType(itemType),
                 pageRequest
@@ -172,7 +172,7 @@ public class TrashService {
 
     @Transactional(readOnly = true)
     public TrashDetailDto getTrashDetail(String trashItemId, AuthenticatedUser currentUser) {
-        TrashItemEntity item = requireTrashItem(trashItemId, currentUser.spaceId());
+        TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
         TrashItemDto itemDto = toTrashItemDto(item);
         PendingCleanupDto pendingCleanup = item.getState() == TrashItemState.PENDING_CLEANUP
                 ? trashMapper.toPendingCleanupDto(itemDto, item.getRemovedAt(), item.getUndoDeadlineAt())
@@ -187,15 +187,15 @@ public class TrashService {
 
     @Transactional
     public TrashItemDto restoreTrashItem(String trashItemId, AuthenticatedUser currentUser) {
-        TrashItemEntity item = requireTrashItem(trashItemId, currentUser.spaceId());
+        TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
         if (item.getState() != TrashItemState.IN_TRASH) {
             throw new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "Only in-trash items can be restored.");
         }
 
         switch (item.getItemType()) {
-            case POST_DELETED -> restorePostDeleted(item, currentUser.spaceId());
-            case MEDIA_REMOVED -> restoreMediaRemoved(item, currentUser.spaceId());
-            case MEDIA_SYSTEM_DELETED -> restoreMediaSystemDeleted(item, currentUser.spaceId());
+            case POST_DELETED -> restorePostDeleted(item, currentUser.libraryId());
+            case MEDIA_REMOVED -> restoreMediaRemoved(item, currentUser.libraryId());
+            case MEDIA_SYSTEM_DELETED -> restoreMediaSystemDeleted(item, currentUser.libraryId());
             default -> throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.RESTORE_CONFLICT, "Unsupported trash item type.");
         }
 
@@ -207,7 +207,7 @@ public class TrashService {
 
     @Transactional
     public PendingCleanupDto moveOutOfTrash(String trashItemId, AuthenticatedUser currentUser) {
-        TrashItemEntity item = requireTrashItem(trashItemId, currentUser.spaceId());
+        TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
         if (item.getState() != TrashItemState.IN_TRASH) {
             throw new ApiException(HttpStatus.CONFLICT, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Only in-trash items can be moved to pending cleanup.");
         }
@@ -221,7 +221,7 @@ public class TrashService {
 
     @Transactional
     public TrashItemDto undoRemove(String trashItemId, AuthenticatedUser currentUser) {
-        TrashItemEntity item = requireTrashItem(trashItemId, currentUser.spaceId());
+        TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
         if (item.getState() != TrashItemState.PENDING_CLEANUP) {
             throw new ApiException(HttpStatus.CONFLICT, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Trash item is not pending cleanup.");
         }
@@ -237,15 +237,15 @@ public class TrashService {
 
     @Transactional(readOnly = true)
     public List<PendingCleanupDto> getPendingCleanup(AuthenticatedUser currentUser) {
-        return trashItemRepository.findBySpaceIdAndStateOrderByDeletedAtDesc(currentUser.spaceId(), TrashItemState.PENDING_CLEANUP)
+        return trashItemRepository.findByLibraryIdAndStateOrderByDeletedAtDesc(currentUser.libraryId(), TrashItemState.PENDING_CLEANUP)
                 .stream()
                 .map(item -> trashMapper.toPendingCleanupDto(toTrashItemDto(item), item.getRemovedAt(), item.getUndoDeadlineAt()))
                 .toList();
     }
 
     private TrashItemDto systemDeleteMediaInternal(String mediaId, AuthenticatedUser currentUser, Optional<String> requestedPostId) {
-        MediaEntity media = requireActiveMedia(mediaId, currentUser.spaceId());
-        List<PostMediaEntity> relations = postMediaRepository.findBySpaceIdAndMediaIdIn(currentUser.spaceId(), List.of(mediaId));
+        MediaEntity media = requireActiveMedia(mediaId, currentUser.libraryId());
+        List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndMediaIdIn(currentUser.libraryId(), List.of(mediaId));
         if (requestedPostId.isPresent() && relations.stream().noneMatch(relation -> relation.getPostId().equals(requestedPostId.get()))) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Media was not found in the current post.");
         }
@@ -260,10 +260,10 @@ public class TrashService {
 
         List<PostEntity> posts = relatedPostIds.isEmpty()
                 ? List.of()
-                : postRepository.findBySpaceIdAndIdIn(currentUser.spaceId(), relatedPostIds);
+                : postRepository.findByLibraryIdAndIdIn(currentUser.libraryId(), relatedPostIds);
         for (String relatedPostId : relatedPostIds) {
             assertPostKeepsVisibleMedia(
-                    currentUser.spaceId(),
+                    currentUser.libraryId(),
                     relatedPostId,
                     Set.of(mediaId)
             );
@@ -275,7 +275,7 @@ public class TrashService {
 
         postMediaRepository.deleteAll(relations);
         for (String postId : relatedPostIds) {
-            resequencePostMedia(currentUser.spaceId(), postId);
+            resequencePostMedia(currentUser.libraryId(), postId);
         }
 
         media.setDeletedAt(Instant.now());
@@ -283,13 +283,13 @@ public class TrashService {
 
         for (PostEntity post : posts) {
             if (mediaId.equals(post.getCoverMediaId())) {
-                post.setCoverMediaId(resolveFirstVisibleMediaId(currentUser.spaceId(), post.getId(), mediaId).orElse(null));
+                post.setCoverMediaId(resolveFirstVisibleMediaId(currentUser.libraryId(), post.getId(), mediaId).orElse(null));
                 postRepository.save(post);
             }
         }
 
         TrashItemEntity item = createTrashItem(
-                currentUser.spaceId(),
+                currentUser.libraryId(),
                 TrashItemType.MEDIA_SYSTEM_DELETED,
                 requestedPostId.orElse(null),
                 mediaId,
@@ -302,48 +302,48 @@ public class TrashService {
         return toTrashItemDto(item);
     }
 
-    private void restorePostDeleted(TrashItemEntity item, String spaceId) {
+    private void restorePostDeleted(TrashItemEntity item, String libraryId) {
         PostDeletedSnapshot snapshot = readSnapshot(item.getSnapshotJson(), PostDeletedSnapshot.class);
-        PostEntity post = postRepository.findByIdAndSpaceId(snapshot.postId(), spaceId)
+        PostEntity post = postRepository.findByIdAndLibraryId(snapshot.postId(), libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "Post can no longer be restored."));
         post.setDeletedAt(null);
         postRepository.save(post);
     }
 
-    private void restoreMediaRemoved(TrashItemEntity item, String spaceId) {
+    private void restoreMediaRemoved(TrashItemEntity item, String libraryId) {
         MediaRemovedSnapshot snapshot = readSnapshot(item.getSnapshotJson(), MediaRemovedSnapshot.class);
-        PostEntity post = requireActivePost(snapshot.postId(), spaceId);
-        requireActiveMedia(snapshot.mediaId(), spaceId);
-        if (!postMediaRepository.existsBySpaceIdAndPostIdAndMediaId(spaceId, snapshot.postId(), snapshot.mediaId())) {
-            restoreRelationOrder(spaceId, snapshot.postId(), snapshot.mediaId(), snapshot.sortOrder());
+        PostEntity post = requireActivePost(snapshot.postId(), libraryId);
+        requireActiveMedia(snapshot.mediaId(), libraryId);
+        if (!postMediaRepository.existsByLibraryIdAndPostIdAndMediaId(libraryId, snapshot.postId(), snapshot.mediaId())) {
+            restoreRelationOrder(libraryId, snapshot.postId(), snapshot.mediaId(), snapshot.sortOrder());
         }
         if (snapshot.wasCover()) {
             post.setCoverMediaId(snapshot.mediaId());
             postRepository.save(post);
         }
-        resequencePostMedia(spaceId, snapshot.postId());
+        resequencePostMedia(libraryId, snapshot.postId());
     }
 
-    private void restoreMediaSystemDeleted(TrashItemEntity item, String spaceId) {
+    private void restoreMediaSystemDeleted(TrashItemEntity item, String libraryId) {
         MediaSystemDeletedSnapshot snapshot = readSnapshot(item.getSnapshotJson(), MediaSystemDeletedSnapshot.class);
-        MediaEntity media = mediaRepository.findByIdAndSpaceId(snapshot.mediaId(), spaceId)
+        MediaEntity media = mediaRepository.findByIdAndLibraryId(snapshot.mediaId(), libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "Media can no longer be restored."));
         media.setDeletedAt(null);
         mediaRepository.save(media);
 
         for (MediaSystemRelationSnapshot relationSnapshot : snapshot.relations()) {
-            postRepository.findByIdAndSpaceIdAndDeletedAtIsNull(relationSnapshot.postId(), spaceId)
+            postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(relationSnapshot.postId(), libraryId)
                     .ifPresent(post -> {
-                        if (!postMediaRepository.existsBySpaceIdAndPostIdAndMediaId(spaceId, relationSnapshot.postId(), snapshot.mediaId())) {
-                            restoreRelationOrder(spaceId, relationSnapshot.postId(), snapshot.mediaId(), relationSnapshot.sortOrder());
+                        if (!postMediaRepository.existsByLibraryIdAndPostIdAndMediaId(libraryId, relationSnapshot.postId(), snapshot.mediaId())) {
+                            restoreRelationOrder(libraryId, relationSnapshot.postId(), snapshot.mediaId(), relationSnapshot.sortOrder());
                         }
                     });
         }
 
         for (String postId : snapshot.coverPostIds()) {
-            postRepository.findByIdAndSpaceIdAndDeletedAtIsNull(postId, spaceId)
+            postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(postId, libraryId)
                     .ifPresent(post -> {
-                        if (post.getCoverMediaId() == null && postMediaRepository.existsBySpaceIdAndPostIdAndMediaId(spaceId, postId, snapshot.mediaId())) {
+                        if (post.getCoverMediaId() == null && postMediaRepository.existsByLibraryIdAndPostIdAndMediaId(libraryId, postId, snapshot.mediaId())) {
                             post.setCoverMediaId(snapshot.mediaId());
                             postRepository.save(post);
                         }
@@ -352,7 +352,7 @@ public class TrashService {
     }
 
     private TrashItemEntity createTrashItem(
-            String spaceId,
+            String libraryId,
             TrashItemType itemType,
             String sourcePostId,
             String sourceMediaId,
@@ -364,7 +364,7 @@ public class TrashService {
     ) {
         TrashItemEntity item = new TrashItemEntity();
         item.setId(IdGenerator.newId("trash"));
-        item.setSpaceId(spaceId);
+        item.setLibraryId(libraryId);
         item.setItemType(itemType);
         item.setState(TrashItemState.IN_TRASH);
         item.setSourcePostId(sourcePostId);
@@ -378,96 +378,93 @@ public class TrashService {
         return trashItemRepository.save(item);
     }
 
-    private TrashItemEntity requireTrashItem(String trashItemId, String spaceId) {
-        return trashItemRepository.findByIdAndSpaceId(trashItemId, spaceId)
+    private void restoreRelationOrder(String libraryId, String postId, String mediaId, int sortOrder) {
+        int restoredSortOrder = Math.max(1, sortOrder);
+        List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, postId);
+        for (PostMediaEntity relation : relations) {
+            if (relation.getSortOrder() >= restoredSortOrder) {
+                relation.setSortOrder(relation.getSortOrder() + 1000);
+            }
+        }
+        postMediaRepository.saveAll(relations);
+        postMediaRepository.flush();
+
+        for (PostMediaEntity relation : relations) {
+            if (relation.getSortOrder() >= restoredSortOrder + 1000) {
+                relation.setSortOrder(relation.getSortOrder() - 999);
+            }
+        }
+        postMediaRepository.saveAll(relations);
+        postMediaRepository.flush();
+
+        PostMediaEntity restoredRelation = new PostMediaEntity();
+        restoredRelation.setId(IdGenerator.newId("post_media"));
+        restoredRelation.setLibraryId(libraryId);
+        restoredRelation.setPostId(postId);
+        restoredRelation.setMediaId(mediaId);
+        restoredRelation.setSortOrder(restoredSortOrder);
+        postMediaRepository.save(restoredRelation);
+    }
+
+    private TrashItemEntity requireTrashItem(String trashItemId, String libraryId) {
+        return trashItemRepository.findByIdAndLibraryId(trashItemId, libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.TRASH_ITEM_NOT_FOUND, "Trash item was not found."));
     }
 
-    private PostEntity requireActivePost(String postId, String spaceId) {
-        return postRepository.findByIdAndSpaceIdAndDeletedAtIsNull(postId, spaceId)
+    private PostEntity requireActivePost(String postId, String libraryId) {
+        return postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(postId, libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.POST_NOT_FOUND, "Post was not found."));
     }
 
-    private MediaEntity requireActiveMedia(String mediaId, String spaceId) {
-        return mediaRepository.findByIdAndSpaceIdAndDeletedAtIsNull(mediaId, spaceId)
+    private MediaEntity requireActiveMedia(String mediaId, String libraryId) {
+        return mediaRepository.findByIdAndLibraryIdAndDeletedAtIsNull(mediaId, libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Media was not found."));
     }
 
-    private PostMediaEntity requireRelation(String spaceId, String postId, String mediaId) {
-        return postMediaRepository.findBySpaceIdAndPostIdOrderBySortOrderAsc(spaceId, postId)
+    private PostMediaEntity requireRelation(String libraryId, String postId, String mediaId) {
+        return postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, postId)
                 .stream()
                 .filter(relation -> relation.getMediaId().equals(mediaId))
                 .findFirst()
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Media was not found in the current post."));
     }
 
-    private void assertPostKeepsVisibleMedia(String spaceId, String postId, Set<String> removedMediaIds) {
-        Optional<PostEntity> maybePost = postRepository.findByIdAndSpaceId(postId, spaceId);
+    private void assertPostKeepsVisibleMedia(String libraryId, String postId, Set<String> removedMediaIds) {
+        Optional<PostEntity> maybePost = postRepository.findByIdAndLibraryId(postId, libraryId);
         if (maybePost.isEmpty() || maybePost.get().getDeletedAt() != null) {
             return;
         }
 
-        long remainingVisibleMediaCount = postMediaRepository.findBySpaceIdAndPostIdOrderBySortOrderAsc(spaceId, postId)
+        long remainingVisibleMediaCount = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, postId)
                 .stream()
                 .map(PostMediaEntity::getMediaId)
                 .distinct()
                 .filter(mediaId -> !removedMediaIds.contains(mediaId))
                 .count();
         if (remainingVisibleMediaCount <= 0) {
-            throw new ApiException(
-                    HttpStatus.CONFLICT,
-                    ErrorCode.DELETE_CONFLICT,
-                    "当前操作会让帖子变成空帖，请删除整个帖子或至少保留一张媒体。"
-            );
+            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.DELETE_CONFLICT, "This action would leave the post empty; delete the whole post or keep at least one media item.");
         }
     }
 
-    private void resequencePostMedia(String spaceId, String postId) {
-        List<PostMediaEntity> relations = postMediaRepository.findBySpaceIdAndPostIdOrderBySortOrderAsc(spaceId, postId);
+    private void resequencePostMedia(String libraryId, String postId) {
+        List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, postId);
         for (int i = 0; i < relations.size(); i++) {
             relations.get(i).setSortOrder(i + 1);
         }
         postMediaRepository.saveAll(relations);
     }
 
-    private void restoreRelationOrder(String spaceId, String postId, String mediaId, int sortOrder) {
-        List<PostMediaEntity> existingRelations = postMediaRepository.findBySpaceIdAndPostIdOrderBySortOrderAsc(spaceId, postId);
-        List<String> orderedMediaIds = existingRelations.stream()
-                .map(PostMediaEntity::getMediaId)
-                .collect(Collectors.toCollection(ArrayList::new));
-        int insertIndex = Math.max(0, Math.min(sortOrder - 1, orderedMediaIds.size()));
-        orderedMediaIds.add(insertIndex, mediaId);
-
-        postMediaRepository.deleteAll(existingRelations);
-        postMediaRepository.flush();
-        savePostMediaRelations(spaceId, postId, orderedMediaIds);
+    private Optional<String> resolveFirstVisibleMediaId(String libraryId, String postId) {
+        return resolveFirstVisibleMediaId(libraryId, postId, null);
     }
 
-    private void savePostMediaRelations(String spaceId, String postId, List<String> mediaIds) {
-        List<PostMediaEntity> relations = new ArrayList<>();
-        for (int i = 0; i < mediaIds.size(); i++) {
-            PostMediaEntity relation = new PostMediaEntity();
-            relation.setId(IdGenerator.newId("post_media"));
-            relation.setSpaceId(spaceId);
-            relation.setPostId(postId);
-            relation.setMediaId(mediaIds.get(i));
-            relation.setSortOrder(i + 1);
-            relations.add(relation);
-        }
-        postMediaRepository.saveAll(relations);
-    }
-
-    private Optional<String> resolveFirstVisibleMediaId(String spaceId, String postId) {
-        return resolveFirstVisibleMediaId(spaceId, postId, null);
-    }
-
-    private Optional<String> resolveFirstVisibleMediaId(String spaceId, String postId, String excludedMediaId) {
-        List<PostMediaEntity> relations = postMediaRepository.findBySpaceIdAndPostIdOrderBySortOrderAsc(spaceId, postId);
+    private Optional<String> resolveFirstVisibleMediaId(String libraryId, String postId, String excludedMediaId) {
+        List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, postId);
         for (PostMediaEntity relation : relations) {
             if (excludedMediaId != null && excludedMediaId.equals(relation.getMediaId())) {
                 continue;
             }
-            if (mediaRepository.findByIdAndSpaceIdAndDeletedAtIsNull(relation.getMediaId(), spaceId).isPresent()) {
+            if (mediaRepository.findByIdAndLibraryIdAndDeletedAtIsNull(relation.getMediaId(), libraryId).isPresent()) {
                 return Optional.of(relation.getMediaId());
             }
         }

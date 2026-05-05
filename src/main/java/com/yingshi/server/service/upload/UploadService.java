@@ -49,9 +49,20 @@ public class UploadService {
 
     @Transactional
     public UploadTokenResponse createUploadToken(UploadTokenRequest request, AuthenticatedUser currentUser) {
+        long nowMillis = Instant.now().toEpochMilli();
+        Long capturedAtMillis = request.capturedAtMillis();
+        long importedAtMillis = request.importedAtMillis() != null ? request.importedAtMillis() : nowMillis;
+        long displayTimeMillis = request.displayTimeMillis() != null
+                ? request.displayTimeMillis()
+                : (capturedAtMillis != null ? capturedAtMillis : importedAtMillis);
+        String displayTimeSource = normalizeDisplayTimeSource(
+                request.displayTimeSource(),
+                capturedAtMillis != null ? "ORIGINAL" : "IMPORTED"
+        );
+
         UploadTaskEntity task = new UploadTaskEntity();
         task.setId(IdGenerator.newId("upload"));
-        task.setSpaceId(currentUser.spaceId());
+        task.setLibraryId(currentUser.libraryId());
         task.setFileName(request.fileName().trim());
         task.setMediaType(parseMediaType(request.mediaType()));
         task.setMimeType(request.mimeType().trim());
@@ -59,7 +70,10 @@ public class UploadService {
         task.setWidth(request.width());
         task.setHeight(request.height());
         task.setDurationMillis(request.durationMillis());
-        task.setDisplayTimeMillis(request.displayTimeMillis());
+        task.setDisplayTimeMillis(displayTimeMillis);
+        task.setCapturedAtMillis(capturedAtMillis);
+        task.setImportedAtMillis(importedAtMillis);
+        task.setDisplayTimeSource(displayTimeSource);
         task.setState(UploadState.WAITING);
         task.setExpireAt(Instant.now().plus(UPLOAD_TTL));
         uploadTaskRepository.save(task);
@@ -74,7 +88,7 @@ public class UploadService {
 
     @Transactional
     public UploadCompleteResponse uploadFile(String uploadId, MultipartFile file, AuthenticatedUser currentUser) {
-        UploadTaskEntity task = requireUploadTask(uploadId, currentUser.spaceId());
+        UploadTaskEntity task = requireUploadTask(uploadId, currentUser.libraryId());
         if (task.getState() != UploadState.WAITING) {
             throw new ApiException(HttpStatus.CONFLICT, ErrorCode.UPLOAD_ALREADY_COMPLETED, "Upload task has already been completed.");
         }
@@ -91,19 +105,21 @@ public class UploadService {
             throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_FILE_MISMATCH, "Uploaded file content type does not match the requested mimeType.");
         }
 
-        LocalMediaStorageService.StoredFile storedFile = localMediaStorageService.store(
-                currentUser.spaceId(),
-                uploadId,
+        String mediaId = IdGenerator.newId("media");
+        LocalMediaStorageService.StoredFile storedFile = localMediaStorageService.storeOriginal(
+                mediaId,
+                task.getDisplayTimeMillis(),
+                task.getMediaType(),
                 task.getFileName(),
                 file
         );
 
-        MediaEntity media = buildMediaFromTask(task, storedFile.absolutePath());
+        MediaEntity media = buildMediaFromTask(mediaId, task, storedFile.storagePath());
         mediaRepository.save(media);
 
         task.setState(UploadState.SUCCESS);
         task.setCompletedAt(Instant.now());
-        task.setStoredPath(storedFile.absolutePath());
+        task.setStoredPath(storedFile.storagePath());
         task.setMediaId(media.getId());
         uploadTaskRepository.save(task);
 
@@ -111,18 +127,17 @@ public class UploadService {
         return new UploadCompleteResponse(task.getId(), "success", mediaDto);
     }
 
-    private UploadTaskEntity requireUploadTask(String uploadId, String spaceId) {
-        return uploadTaskRepository.findByIdAndSpaceId(uploadId, spaceId)
+    private UploadTaskEntity requireUploadTask(String uploadId, String libraryId) {
+        return uploadTaskRepository.findByIdAndLibraryId(uploadId, libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.UPLOAD_NOT_FOUND, "Upload task was not found."));
     }
 
-    private MediaEntity buildMediaFromTask(UploadTaskEntity task, String storedPath) {
-        String mediaId = IdGenerator.newId("media");
+    private MediaEntity buildMediaFromTask(String mediaId, UploadTaskEntity task, String storedPath) {
         String mediaUrl = "/api/media/files/" + mediaId;
 
         MediaEntity media = new MediaEntity();
         media.setId(mediaId);
-        media.setSpaceId(task.getSpaceId());
+        media.setLibraryId(task.getLibraryId());
         media.setMediaType(task.getMediaType());
         media.setUrl(mediaUrl);
         media.setPreviewUrl(mediaUrl);
@@ -136,8 +151,22 @@ public class UploadService {
         media.setAspectRatio(((double) task.getWidth()) / task.getHeight());
         media.setDurationMillis(task.getDurationMillis());
         media.setDisplayTimeMillis(task.getDisplayTimeMillis());
+        media.setCapturedAtMillis(task.getCapturedAtMillis());
+        media.setImportedAtMillis(task.getImportedAtMillis());
+        media.setDisplayTimeSource(task.getDisplayTimeSource());
         media.setStoragePath(storedPath);
         return media;
+    }
+
+    private String normalizeDisplayTimeSource(String rawSource, String fallback) {
+        if (rawSource == null || rawSource.isBlank()) {
+            return fallback;
+        }
+        String normalized = rawSource.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "ORIGINAL", "IMPORTED", "MANUAL" -> normalized;
+            default -> fallback;
+        };
     }
 
     private MediaType parseMediaType(String mediaType) {

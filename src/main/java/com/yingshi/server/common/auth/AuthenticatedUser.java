@@ -4,6 +4,6 @@ public record AuthenticatedUser(
         String userId,
         String account,
         String displayName,
-        String spaceId
+        String libraryId
 ) {
 }

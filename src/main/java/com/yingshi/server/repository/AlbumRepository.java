@@ -9,9 +9,9 @@ import java.util.Optional;
 
 public interface AlbumRepository extends JpaRepository<AlbumEntity, String> {
 
-    List<AlbumEntity> findBySpaceIdOrderByTitleAsc(String spaceId);
+    List<AlbumEntity> findByLibraryIdOrderByTitleAsc(String libraryId);
 
-    Optional<AlbumEntity> findByIdAndSpaceId(String id, String spaceId);
+    Optional<AlbumEntity> findByIdAndLibraryId(String id, String libraryId);
 
-    List<AlbumEntity> findBySpaceIdAndIdIn(String spaceId, Collection<String> ids);
+    List<AlbumEntity> findByLibraryIdAndIdIn(String libraryId, Collection<String> ids);
 }

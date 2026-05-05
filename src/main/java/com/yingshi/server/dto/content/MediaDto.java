@@ -20,6 +20,9 @@ public record MediaDto(
         Double aspectRatio,
         Long durationMillis,
         Long displayTimeMillis,
+        Long capturedAtMillis,
+        Long importedAtMillis,
+        String displayTimeSource,
         List<String> postIds
 ) {
 }

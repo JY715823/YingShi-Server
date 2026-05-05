@@ -6,8 +6,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 @Entity
-@Table(name = "spaces")
-public class SpaceEntity extends BaseEntity {
+@Table(name = "shared_libraries")
+public class SharedLibraryEntity extends BaseEntity {
 
     @Id
     private String id;

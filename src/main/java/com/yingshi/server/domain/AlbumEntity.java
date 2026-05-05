@@ -7,7 +7,7 @@ import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "albums")
-public class AlbumEntity extends SpaceScopedEntity {
+public class AlbumEntity extends LibraryScopedEntity {
 
     @Id
     private String id;
