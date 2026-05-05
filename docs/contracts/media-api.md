@@ -78,3 +78,14 @@ Response:
 - `MEDIA_ALREADY_DELETED`
 - `TRASH_ITEM_NOT_FOUND`
 - `AUTH_UNAUTHORIZED`
+
+## Shared Library / Time Field Update
+
+- Media belongs to the private shared library (`libraryId`) and may have zero, one, or many related posts.
+- The media timeline should use `displayTimeMillis`.
+- Media DTOs may include:
+  - `capturedAtMillis`: the media's own original/captured time.
+  - `importedAtMillis`: when this file entered the app library.
+  - `displayTimeSource`: `ORIGINAL`, `IMPORTED`, or `MANUAL`.
+- `displayTimeMillis` is intentionally separate from `capturedAtMillis`; users can later adjust how a memory appears without losing the original file time.
+- System delete is scoped to the current shared library, not to a multi-tenant space.

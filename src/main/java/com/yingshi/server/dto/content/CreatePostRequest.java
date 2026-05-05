@@ -21,6 +21,13 @@ public record CreatePostRequest(
         @NotNull(message = "displayTimeMillis is required.")
         Long displayTimeMillis,
 
+        Long eventStartedAtMillis,
+
+        Long eventEndedAtMillis,
+
+        @Size(max = 20, message = "displayTimeSource must be at most 20 characters.")
+        String displayTimeSource,
+
         @NotEmpty(message = "albumIds is required.")
         List<@NotBlank(message = "albumId is required.") String> albumIds,
 

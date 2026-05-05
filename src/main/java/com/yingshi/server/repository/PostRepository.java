@@ -9,11 +9,11 @@ import java.util.Optional;
 
 public interface PostRepository extends JpaRepository<PostEntity, String> {
 
-    Optional<PostEntity> findByIdAndSpaceId(String id, String spaceId);
+    Optional<PostEntity> findByIdAndLibraryId(String id, String libraryId);
 
-    Optional<PostEntity> findByIdAndSpaceIdAndDeletedAtIsNull(String id, String spaceId);
+    Optional<PostEntity> findByIdAndLibraryIdAndDeletedAtIsNull(String id, String libraryId);
 
-    List<PostEntity> findBySpaceIdAndIdIn(String spaceId, Collection<String> ids);
+    List<PostEntity> findByLibraryIdAndIdIn(String libraryId, Collection<String> ids);
 
-    List<PostEntity> findBySpaceIdAndIdInAndDeletedAtIsNull(String spaceId, Collection<String> ids);
+    List<PostEntity> findByLibraryIdAndIdInAndDeletedAtIsNull(String libraryId, Collection<String> ids);
 }

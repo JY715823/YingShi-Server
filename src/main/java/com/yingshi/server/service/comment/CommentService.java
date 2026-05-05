@@ -57,9 +57,9 @@ public class CommentService {
 
     @Transactional(readOnly = true)
     public CommentPageResponse getPostComments(String postId, Integer page, Integer size, AuthenticatedUser currentUser) {
-        requirePost(postId, currentUser.spaceId());
-        Page<CommentEntity> comments = commentRepository.findBySpaceIdAndTargetTypeAndPostId(
-                currentUser.spaceId(),
+        requirePost(postId, currentUser.libraryId());
+        Page<CommentEntity> comments = commentRepository.findByLibraryIdAndTargetTypeAndPostId(
+                currentUser.libraryId(),
                 CommentTargetType.POST,
                 postId,
                 buildPageRequest(page, size)
@@ -69,9 +69,9 @@ public class CommentService {
 
     @Transactional(readOnly = true)
     public CommentPageResponse getMediaComments(String mediaId, Integer page, Integer size, AuthenticatedUser currentUser) {
-        requireMedia(mediaId, currentUser.spaceId());
-        Page<CommentEntity> comments = commentRepository.findBySpaceIdAndTargetTypeAndMediaId(
-                currentUser.spaceId(),
+        requireMedia(mediaId, currentUser.libraryId());
+        Page<CommentEntity> comments = commentRepository.findByLibraryIdAndTargetTypeAndMediaId(
+                currentUser.libraryId(),
                 CommentTargetType.MEDIA,
                 mediaId,
                 buildPageRequest(page, size)
@@ -81,10 +81,10 @@ public class CommentService {
 
     @Transactional
     public CommentDto createPostComment(String postId, CreateCommentRequest request, AuthenticatedUser currentUser) {
-        requirePost(postId, currentUser.spaceId());
+        requirePost(postId, currentUser.libraryId());
         CommentEntity comment = new CommentEntity();
         comment.setId(IdGenerator.newId("comment"));
-        comment.setSpaceId(currentUser.spaceId());
+        comment.setLibraryId(currentUser.libraryId());
         comment.setAuthorId(currentUser.userId());
         comment.setTargetType(CommentTargetType.POST);
         comment.setPostId(postId);
@@ -94,10 +94,10 @@ public class CommentService {
 
     @Transactional
     public CommentDto createMediaComment(String mediaId, CreateCommentRequest request, AuthenticatedUser currentUser) {
-        requireMedia(mediaId, currentUser.spaceId());
+        requireMedia(mediaId, currentUser.libraryId());
         CommentEntity comment = new CommentEntity();
         comment.setId(IdGenerator.newId("comment"));
-        comment.setSpaceId(currentUser.spaceId());
+        comment.setLibraryId(currentUser.libraryId());
         comment.setAuthorId(currentUser.userId());
         comment.setTargetType(CommentTargetType.MEDIA);
         comment.setMediaId(mediaId);
@@ -107,20 +107,20 @@ public class CommentService {
 
     @Transactional
     public CommentDto updateComment(String commentId, UpdateCommentRequest request, AuthenticatedUser currentUser) {
-        CommentEntity comment = requireComment(commentId, currentUser.spaceId());
+        CommentEntity comment = requireComment(commentId, currentUser.libraryId());
         if (comment.getDeletedAt() != null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "Deleted comment cannot be edited.");
         }
-        // TODO: notify the original author when another member in the same space edits this comment.
+        // TODO: notify the original author when another member in the same shared library edits this comment.
         comment.setContent(request.content().trim());
         return toCommentDto(commentRepository.save(comment));
     }
 
     @Transactional
     public CommentDto deleteComment(String commentId, AuthenticatedUser currentUser) {
-        CommentEntity comment = requireComment(commentId, currentUser.spaceId());
+        CommentEntity comment = requireComment(commentId, currentUser.libraryId());
         if (comment.getDeletedAt() == null) {
-            // TODO: notify the original author when another member in the same space deletes this comment.
+            // TODO: notify the original author when another member in the same shared library deletes this comment.
             comment.setDeletedAt(Instant.now());
             comment.setContent(null);
             comment = commentRepository.save(comment);
@@ -172,19 +172,19 @@ public class CommentService {
         return Math.min(size, MAX_SIZE);
     }
 
-    private CommentEntity requireComment(String commentId, String spaceId) {
-        return commentRepository.findByIdAndSpaceId(commentId, spaceId)
+    private CommentEntity requireComment(String commentId, String libraryId) {
+        return commentRepository.findByIdAndLibraryId(commentId, libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_NOT_FOUND, "Comment was not found."));
     }
 
-    private void requirePost(String postId, String spaceId) {
-        if (postRepository.findByIdAndSpaceIdAndDeletedAtIsNull(postId, spaceId).isEmpty()) {
+    private void requirePost(String postId, String libraryId) {
+        if (postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(postId, libraryId).isEmpty()) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Post target was not found.");
         }
     }
 
-    private void requireMedia(String mediaId, String spaceId) {
-        if (mediaRepository.findByIdAndSpaceIdAndDeletedAtIsNull(mediaId, spaceId).isEmpty()) {
+    private void requireMedia(String mediaId, String libraryId) {
+        if (mediaRepository.findByIdAndLibraryIdAndDeletedAtIsNull(mediaId, libraryId).isEmpty()) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Media target was not found.");
         }
     }

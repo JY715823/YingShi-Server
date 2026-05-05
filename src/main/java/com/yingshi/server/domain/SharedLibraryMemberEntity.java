@@ -10,23 +10,23 @@ import jakarta.persistence.UniqueConstraint;
 
 @Entity
 @Table(
-        name = "space_members",
-        uniqueConstraints = @UniqueConstraint(name = "uk_space_member_space_user", columnNames = {"spaceId", "userId"})
+        name = "shared_library_members",
+        uniqueConstraints = @UniqueConstraint(name = "uk_shared_library_member_library_user", columnNames = {"libraryId", "userId"})
 )
-public class SpaceMemberEntity extends BaseEntity {
+public class SharedLibraryMemberEntity extends BaseEntity {
 
     @Id
     private String id;
 
     @Column(nullable = false)
-    private String spaceId;
+    private String libraryId;
 
     @Column(nullable = false)
     private String userId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private SpaceRole role;
+    private SharedLibraryRole role;
 
     public String getId() {
         return id;
@@ -36,12 +36,12 @@ public class SpaceMemberEntity extends BaseEntity {
         this.id = id;
     }
 
-    public String getSpaceId() {
-        return spaceId;
+    public String getLibraryId() {
+        return libraryId;
     }
 
-    public void setSpaceId(String spaceId) {
-        this.spaceId = spaceId;
+    public void setLibraryId(String libraryId) {
+        this.libraryId = libraryId;
     }
 
     public String getUserId() {
@@ -52,11 +52,11 @@ public class SpaceMemberEntity extends BaseEntity {
         this.userId = userId;
     }
 
-    public SpaceRole getRole() {
+    public SharedLibraryRole getRole() {
         return role;
     }
 
-    public void setRole(SpaceRole role) {
+    public void setRole(SharedLibraryRole role) {
         this.role = role;
     }
 }

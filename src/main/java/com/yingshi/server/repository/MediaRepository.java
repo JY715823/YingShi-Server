@@ -9,15 +9,15 @@ import java.util.Optional;
 
 public interface MediaRepository extends JpaRepository<MediaEntity, String> {
 
-    Optional<MediaEntity> findByIdAndSpaceId(String id, String spaceId);
+    Optional<MediaEntity> findByIdAndLibraryId(String id, String libraryId);
 
-    Optional<MediaEntity> findByIdAndSpaceIdAndDeletedAtIsNull(String id, String spaceId);
+    Optional<MediaEntity> findByIdAndLibraryIdAndDeletedAtIsNull(String id, String libraryId);
 
-    List<MediaEntity> findBySpaceId(String spaceId);
+    List<MediaEntity> findByLibraryId(String libraryId);
 
-    List<MediaEntity> findBySpaceIdAndDeletedAtIsNull(String spaceId);
+    List<MediaEntity> findByLibraryIdAndDeletedAtIsNull(String libraryId);
 
-    List<MediaEntity> findBySpaceIdAndIdIn(String spaceId, Collection<String> ids);
+    List<MediaEntity> findByLibraryIdAndIdIn(String libraryId, Collection<String> ids);
 
-    List<MediaEntity> findBySpaceIdAndIdInAndDeletedAtIsNull(String spaceId, Collection<String> ids);
+    List<MediaEntity> findByLibraryIdAndIdInAndDeletedAtIsNull(String libraryId, Collection<String> ids);
 }

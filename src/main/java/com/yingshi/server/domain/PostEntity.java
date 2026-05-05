@@ -9,7 +9,7 @@ import java.time.Instant;
 
 @Entity
 @Table(name = "posts")
-public class PostEntity extends SpaceScopedEntity {
+public class PostEntity extends LibraryScopedEntity {
 
     @Id
     private String id;
@@ -22,6 +22,15 @@ public class PostEntity extends SpaceScopedEntity {
 
     @Column(nullable = false)
     private Long displayTimeMillis;
+
+    @Column
+    private Long eventStartedAtMillis;
+
+    @Column
+    private Long eventEndedAtMillis;
+
+    @Column(nullable = false, length = 20)
+    private String displayTimeSource;
 
     @Column(length = 120)
     private String contributorLabel;
@@ -62,6 +71,30 @@ public class PostEntity extends SpaceScopedEntity {
 
     public void setDisplayTimeMillis(Long displayTimeMillis) {
         this.displayTimeMillis = displayTimeMillis;
+    }
+
+    public Long getEventStartedAtMillis() {
+        return eventStartedAtMillis;
+    }
+
+    public void setEventStartedAtMillis(Long eventStartedAtMillis) {
+        this.eventStartedAtMillis = eventStartedAtMillis;
+    }
+
+    public Long getEventEndedAtMillis() {
+        return eventEndedAtMillis;
+    }
+
+    public void setEventEndedAtMillis(Long eventEndedAtMillis) {
+        this.eventEndedAtMillis = eventEndedAtMillis;
+    }
+
+    public String getDisplayTimeSource() {
+        return displayTimeSource;
+    }
+
+    public void setDisplayTimeSource(String displayTimeSource) {
+        this.displayTimeSource = displayTimeSource;
     }
 
     public String getContributorLabel() {

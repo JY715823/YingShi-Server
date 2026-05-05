@@ -25,7 +25,7 @@ public class UserEntity extends BaseEntity {
     private String avatarUrl;
 
     @Column(nullable = false)
-    private String defaultSpaceId;
+    private String defaultLibraryId;
 
     public String getId() {
         return id;
@@ -67,11 +67,11 @@ public class UserEntity extends BaseEntity {
         this.avatarUrl = avatarUrl;
     }
 
-    public String getDefaultSpaceId() {
-        return defaultSpaceId;
+    public String getDefaultLibraryId() {
+        return defaultLibraryId;
     }
 
-    public void setDefaultSpaceId(String defaultSpaceId) {
-        this.defaultSpaceId = defaultSpaceId;
+    public void setDefaultLibraryId(String defaultLibraryId) {
+        this.defaultLibraryId = defaultLibraryId;
     }
 }

@@ -35,6 +35,9 @@ public class ContentMapper {
                 post.getSummary(),
                 post.getContributorLabel(),
                 post.getDisplayTimeMillis(),
+                post.getEventStartedAtMillis(),
+                post.getEventEndedAtMillis(),
+                post.getDisplayTimeSource(),
                 albumIds,
                 coverMediaId,
                 mediaCount
@@ -54,6 +57,9 @@ public class ContentMapper {
                 post.getSummary(),
                 post.getContributorLabel(),
                 post.getDisplayTimeMillis(),
+                post.getEventStartedAtMillis(),
+                post.getEventEndedAtMillis(),
+                post.getDisplayTimeSource(),
                 albumIds,
                 coverMediaId,
                 mediaCount,
@@ -87,6 +93,9 @@ public class ContentMapper {
                 media.getAspectRatio(),
                 media.getDurationMillis(),
                 media.getDisplayTimeMillis(),
+                media.getCapturedAtMillis(),
+                media.getImportedAtMillis(),
+                media.getDisplayTimeSource(),
                 postIds
         );
     }

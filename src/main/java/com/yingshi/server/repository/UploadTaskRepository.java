@@ -7,5 +7,5 @@ import java.util.Optional;
 
 public interface UploadTaskRepository extends JpaRepository<UploadTaskEntity, String> {
 
-    Optional<UploadTaskEntity> findByIdAndSpaceId(String id, String spaceId);
+    Optional<UploadTaskEntity> findByIdAndLibraryId(String id, String libraryId);
 }

@@ -91,3 +91,20 @@ Response data:
 - `UPLOAD_STORAGE_ERROR`
 - `VALIDATION_ERROR`
 - `AUTH_UNAUTHORIZED`
+
+## Shared Library / Storage Update
+
+- The old product-level `spaceId` concept is removed from the public contract. Authenticated requests are scoped by `libraryId`, which represents the private shared library for the two users.
+- Import-only media is valid and does not require a post relationship.
+- `POST /api/uploads/token` accepts optional time metadata:
+  - `capturedAtMillis`: the media's own capture/create time when known.
+  - `importedAtMillis`: when the app imported the file; server defaults to now.
+  - `displayTimeMillis`: the timeline time shown in the app.
+  - `displayTimeSource`: `ORIGINAL`, `IMPORTED`, or `MANUAL`.
+- If `displayTimeMillis` is omitted, the server uses `capturedAtMillis`, then `importedAtMillis`.
+- Local files now use this layout:
+  - `local-storage/originals/yyyy/MM/{mediaId}.{ext}`
+  - `local-storage/previews/yyyy/MM/{mediaId}-720.jpg`
+  - `local-storage/test/...` for seed/demo media
+  - `local-storage/tmp/uploads/...` for temporary upload work
+  - `local-storage/videos/posters/...` for generated video posters

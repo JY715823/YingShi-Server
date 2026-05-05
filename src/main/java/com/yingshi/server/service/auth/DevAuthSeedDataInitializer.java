@@ -1,11 +1,11 @@
 package com.yingshi.server.service.auth;
 
-import com.yingshi.server.domain.SpaceEntity;
-import com.yingshi.server.domain.SpaceMemberEntity;
-import com.yingshi.server.domain.SpaceRole;
+import com.yingshi.server.domain.SharedLibraryEntity;
+import com.yingshi.server.domain.SharedLibraryMemberEntity;
+import com.yingshi.server.domain.SharedLibraryRole;
 import com.yingshi.server.domain.UserEntity;
-import com.yingshi.server.repository.SpaceMemberRepository;
-import com.yingshi.server.repository.SpaceRepository;
+import com.yingshi.server.repository.SharedLibraryMemberRepository;
+import com.yingshi.server.repository.SharedLibraryRepository;
 import com.yingshi.server.repository.UserRepository;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
@@ -18,34 +18,34 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 @Profile("dev")
 public class DevAuthSeedDataInitializer {
 
-    public static final String DEMO_SPACE_ID = "space_demo_shared";
+    public static final String DEMO_LIBRARY_ID = "library_shared";
     private static final String DEMO_PASSWORD = "demo123456";
 
     @Bean
     @Order(1)
     ApplicationRunner authSeedRunner(
             UserRepository userRepository,
-            SpaceRepository spaceRepository,
-            SpaceMemberRepository spaceMemberRepository,
+            SharedLibraryRepository libraryRepository,
+            SharedLibraryMemberRepository libraryMemberRepository,
             PasswordEncoder passwordEncoder
     ) {
         return args -> {
-            if (userRepository.count() > 0 || spaceRepository.count() > 0 || spaceMemberRepository.count() > 0) {
+            if (userRepository.count() > 0 || libraryRepository.count() > 0 || libraryMemberRepository.count() > 0) {
                 return;
             }
 
-            SpaceEntity space = new SpaceEntity();
-            space.setId(DEMO_SPACE_ID);
-            space.setDisplayName("映世共享空间");
-            spaceRepository.save(space);
+            SharedLibraryEntity library = new SharedLibraryEntity();
+            library.setId(DEMO_LIBRARY_ID);
+            library.setDisplayName("YingShi Shared Library");
+            libraryRepository.save(library);
 
-            UserEntity demoA = createUser("user_demo_a", "demo.a@yingshi.local", "小雨", passwordEncoder);
-            UserEntity demoB = createUser("user_demo_b", "demo.b@yingshi.local", "阿泽", passwordEncoder);
+            UserEntity demoA = createUser("user_demo_a", "demo.a@yingshi.local", "Demo A", passwordEncoder);
+            UserEntity demoB = createUser("user_demo_b", "demo.b@yingshi.local", "Demo B", passwordEncoder);
             userRepository.save(demoA);
             userRepository.save(demoB);
 
-            spaceMemberRepository.save(createMember("member_demo_a", DEMO_SPACE_ID, demoA.getId(), SpaceRole.OWNER));
-            spaceMemberRepository.save(createMember("member_demo_b", DEMO_SPACE_ID, demoB.getId(), SpaceRole.MEMBER));
+            libraryMemberRepository.save(createMember("member_demo_a", DEMO_LIBRARY_ID, demoA.getId(), SharedLibraryRole.OWNER));
+            libraryMemberRepository.save(createMember("member_demo_b", DEMO_LIBRARY_ID, demoB.getId(), SharedLibraryRole.MEMBER));
         };
     }
 
@@ -55,14 +55,14 @@ public class DevAuthSeedDataInitializer {
         user.setAccount(account);
         user.setDisplayName(displayName);
         user.setPasswordHash(passwordEncoder.encode(DEMO_PASSWORD));
-        user.setDefaultSpaceId(DEMO_SPACE_ID);
+        user.setDefaultLibraryId(DEMO_LIBRARY_ID);
         return user;
     }
 
-    private SpaceMemberEntity createMember(String id, String spaceId, String userId, SpaceRole role) {
-        SpaceMemberEntity member = new SpaceMemberEntity();
+    private SharedLibraryMemberEntity createMember(String id, String libraryId, String userId, SharedLibraryRole role) {
+        SharedLibraryMemberEntity member = new SharedLibraryMemberEntity();
         member.setId(id);
-        member.setSpaceId(spaceId);
+        member.setLibraryId(libraryId);
         member.setUserId(userId);
         member.setRole(role);
         return member;

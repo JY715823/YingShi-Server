@@ -23,7 +23,7 @@ public class JwtTokenService {
     private static final String TOKEN_TYPE_CLAIM = "tokenType";
     private static final String ACCOUNT_CLAIM = "account";
     private static final String DISPLAY_NAME_CLAIM = "displayName";
-    private static final String SPACE_ID_CLAIM = "spaceId";
+    private static final String LIBRARY_ID_CLAIM = "libraryId";
 
     private final AuthProperties authProperties;
     private final SecretKey secretKey;
@@ -63,7 +63,7 @@ public class JwtTokenService {
                 claims.getSubject(),
                 claims.get(ACCOUNT_CLAIM, String.class),
                 claims.get(DISPLAY_NAME_CLAIM, String.class),
-                claims.get(SPACE_ID_CLAIM, String.class)
+                claims.get(LIBRARY_ID_CLAIM, String.class)
         );
     }
 
@@ -79,7 +79,7 @@ public class JwtTokenService {
                 .claim(TOKEN_TYPE_CLAIM, tokenType.name())
                 .claim(ACCOUNT_CLAIM, authenticatedUser.account())
                 .claim(DISPLAY_NAME_CLAIM, authenticatedUser.displayName())
-                .claim(SPACE_ID_CLAIM, authenticatedUser.spaceId())
+                .claim(LIBRARY_ID_CLAIM, authenticatedUser.libraryId())
                 .issuedAt(Date.from(issuedAt))
                 .expiration(Date.from(expireAt))
                 .signWith(secretKey)

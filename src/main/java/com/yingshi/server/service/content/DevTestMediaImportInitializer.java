@@ -44,8 +44,8 @@ public class DevTestMediaImportInitializer {
 
     private static final String TEST_IMPORT_ROOT = "test";
     private static final String TEST_IMPORT_ALBUM_ID = "album_import_local_test_media";
-    private static final String TEST_IMPORT_ALBUM_TITLE = "网络样例导入";
-    private static final String TEST_IMPORT_CONTRIBUTOR_LABEL = "local-storage 样例";
+    private static final String TEST_IMPORT_ALBUM_TITLE = "Local Sample Import";
+    private static final String TEST_IMPORT_CONTRIBUTOR_LABEL = "local-storage sample";
     private static final int DEFAULT_VIDEO_WIDTH = 1080;
     private static final int DEFAULT_VIDEO_HEIGHT = 1920;
     private static final long DEFAULT_VIDEO_DURATION_MILLIS = 15_000L;
@@ -61,7 +61,7 @@ public class DevTestMediaImportInitializer {
             LocalMediaStorageService localMediaStorageService
     ) {
         return args -> importTestMedia(
-                DevAuthSeedDataInitializer.DEMO_SPACE_ID,
+                DevAuthSeedDataInitializer.DEMO_LIBRARY_ID,
                 albumRepository,
                 postRepository,
                 mediaRepository,
@@ -72,7 +72,7 @@ public class DevTestMediaImportInitializer {
     }
 
     private void importTestMedia(
-            String spaceId,
+            String libraryId,
             AlbumRepository albumRepository,
             PostRepository postRepository,
             MediaRepository mediaRepository,
@@ -80,10 +80,10 @@ public class DevTestMediaImportInitializer {
             PostAlbumRepository postAlbumRepository,
             LocalMediaStorageService localMediaStorageService
     ) {
-        List<ImportCandidate> candidates = localMediaStorageService.listFilesRecursively(spaceId, TEST_IMPORT_ROOT)
+        List<ImportCandidate> candidates = localMediaStorageService.listFilesRecursively(TEST_IMPORT_ROOT)
                 .stream()
                 .filter(this::isSupportedMediaFile)
-                .map(path -> toImportCandidate(spaceId, path, localMediaStorageService))
+                .map(path -> toImportCandidate(libraryId, path, localMediaStorageService))
                 .filter(candidate -> candidate != null)
                 .filter(candidate -> candidate.sizeBytes() > 0L)
                 .sorted(Comparator
@@ -96,10 +96,10 @@ public class DevTestMediaImportInitializer {
         }
 
         AlbumEntity album = albumRepository.findById(TEST_IMPORT_ALBUM_ID)
-                .orElseGet(() -> createImportAlbum(spaceId));
-        album.setSpaceId(spaceId);
+                .orElseGet(() -> createImportAlbum(libraryId));
+        album.setLibraryId(libraryId);
         album.setTitle(TEST_IMPORT_ALBUM_TITLE);
-        album.setSubtitle("扫描 local-storage/" + spaceId + "/" + TEST_IMPORT_ROOT + " 下的样例图片、长图和视频");
+        album.setSubtitle("Scanned sample photos, long images, and videos from local-storage/" + TEST_IMPORT_ROOT);
 
         String latestCoverMediaId = album.getCoverMediaId();
         long latestCoverTime = Long.MIN_VALUE;
@@ -120,7 +120,7 @@ public class DevTestMediaImportInitializer {
             long postDisplayTimeMillis = Long.MIN_VALUE;
 
             for (ImportCandidate candidate : bucketCandidates) {
-                MediaEntity media = upsertMedia(spaceId, candidate);
+                MediaEntity media = upsertMedia(libraryId, candidate);
                 mediaRepository.save(media);
                 mediaIds.add(media.getId());
                 postDisplayTimeMillis = Math.max(postDisplayTimeMillis, candidate.displayTimeMillis());
@@ -133,23 +133,26 @@ public class DevTestMediaImportInitializer {
             String postId = postIdForBucket(bucketKey);
             PostEntity post = postRepository.findById(postId).orElseGet(PostEntity::new);
             post.setId(postId);
-            post.setSpaceId(spaceId);
-            post.setTitle(truncate("样例导入 · " + humanizeBucketKey(bucketKey), 120));
-            post.setSummary(truncate("自动导入自 local-storage 测试目录：" + bucketKey, 1000));
+            post.setLibraryId(libraryId);
+            post.setTitle(truncate("Sample import - " + humanizeBucketKey(bucketKey), 120));
+            post.setSummary(truncate("Auto-imported from local-storage test directory: " + bucketKey, 1000));
             post.setContributorLabel(TEST_IMPORT_CONTRIBUTOR_LABEL);
             post.setDisplayTimeMillis(postDisplayTimeMillis);
+            post.setEventStartedAtMillis(postDisplayTimeMillis);
+            post.setEventEndedAtMillis(null);
+            post.setDisplayTimeSource("ORIGINAL");
             post.setCoverMediaId(mediaIds.get(0));
             post.setDeletedAt(null);
             postRepository.save(post);
 
             PostAlbumEntity postAlbum = postAlbumRepository.findById(postAlbumIdForPost(postId)).orElseGet(PostAlbumEntity::new);
             postAlbum.setId(postAlbumIdForPost(postId));
-            postAlbum.setSpaceId(spaceId);
+            postAlbum.setLibraryId(libraryId);
             postAlbum.setPostId(postId);
             postAlbum.setAlbumId(TEST_IMPORT_ALBUM_ID);
             postAlbumRepository.save(postAlbum);
 
-            attachMediaToPost(spaceId, postId, mediaIds, postMediaRepository);
+            attachMediaToPost(libraryId, postId, mediaIds, postMediaRepository);
         }
 
         album.setCoverMediaId(latestCoverMediaId);
@@ -157,12 +160,12 @@ public class DevTestMediaImportInitializer {
     }
 
     private void attachMediaToPost(
-            String spaceId,
+            String libraryId,
             String postId,
             List<String> mediaIds,
             PostMediaRepository postMediaRepository
     ) {
-        List<PostMediaEntity> existingRelations = postMediaRepository.findBySpaceIdAndPostIdOrderBySortOrderAsc(spaceId, postId);
+        List<PostMediaEntity> existingRelations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, postId);
         Map<String, PostMediaEntity> existingByMediaId = new LinkedHashMap<>();
         int maxSortOrder = 0;
         for (PostMediaEntity relation : existingRelations) {
@@ -177,7 +180,7 @@ public class DevTestMediaImportInitializer {
             }
             PostMediaEntity relation = new PostMediaEntity();
             relation.setId(postMediaIdForRelation(postId, mediaId));
-            relation.setSpaceId(spaceId);
+            relation.setLibraryId(libraryId);
             relation.setPostId(postId);
             relation.setMediaId(mediaId);
             relation.setSortOrder(nextSortOrder++);
@@ -185,21 +188,21 @@ public class DevTestMediaImportInitializer {
         }
     }
 
-    private AlbumEntity createImportAlbum(String spaceId) {
+    private AlbumEntity createImportAlbum(String libraryId) {
         AlbumEntity album = new AlbumEntity();
         album.setId(TEST_IMPORT_ALBUM_ID);
-        album.setSpaceId(spaceId);
+        album.setLibraryId(libraryId);
         album.setTitle(TEST_IMPORT_ALBUM_TITLE);
         return album;
     }
 
-    private MediaEntity upsertMedia(String spaceId, ImportCandidate candidate) {
+    private MediaEntity upsertMedia(String libraryId, ImportCandidate candidate) {
         String mediaId = mediaIdForStoragePath(candidate.storagePath());
         String mediaUrl = "/api/media/files/" + mediaId;
 
         MediaEntity media = new MediaEntity();
         media.setId(mediaId);
-        media.setSpaceId(spaceId);
+        media.setLibraryId(libraryId);
         media.setMediaType(candidate.mediaType());
         media.setUrl(mediaUrl);
         media.setPreviewUrl(mediaUrl);
@@ -213,18 +216,21 @@ public class DevTestMediaImportInitializer {
         media.setAspectRatio(((double) candidate.width()) / candidate.height());
         media.setDurationMillis(candidate.durationMillis());
         media.setDisplayTimeMillis(candidate.displayTimeMillis());
+        media.setCapturedAtMillis(candidate.displayTimeMillis());
+        media.setImportedAtMillis(candidate.displayTimeMillis());
+        media.setDisplayTimeSource("ORIGINAL");
         media.setStoragePath(candidate.storagePath());
         media.setDeletedAt(null);
         return media;
     }
 
     private ImportCandidate toImportCandidate(
-            String spaceId,
+            String libraryId,
             Path path,
             LocalMediaStorageService localMediaStorageService
     ) {
         String storagePath = localMediaStorageService.toRelativeStoragePath(path);
-        String bucketKey = bucketKeyForStoragePath(spaceId, storagePath);
+        String bucketKey = bucketKeyForStoragePath(storagePath);
         MediaType mediaType = mediaTypeForPath(path);
         String mimeType = mimeTypeForPath(path, mediaType);
         long displayTimeMillis = lastModifiedTimeMillis(path);
@@ -368,9 +374,9 @@ public class DevTestMediaImportInitializer {
         }
     }
 
-    private String bucketKeyForStoragePath(String spaceId, String storagePath) {
+    private String bucketKeyForStoragePath(String storagePath) {
         Path path = Paths.get(storagePath.replace("/", java.io.File.separator));
-        Path expectedRoot = Paths.get(spaceId, TEST_IMPORT_ROOT);
+        Path expectedRoot = Paths.get(TEST_IMPORT_ROOT);
         Path parent = path.getParent();
         if (parent == null) {
             return TEST_IMPORT_ROOT;
@@ -385,7 +391,7 @@ public class DevTestMediaImportInitializer {
     private String humanizeBucketKey(String bucketKey) {
         String normalized = bucketKey.replace('\\', '/');
         if (normalized.isBlank() || TEST_IMPORT_ROOT.equals(normalized)) {
-            return "test 根目录";
+            return "test root";
         }
         return normalized.replace("/", " / ");
     }

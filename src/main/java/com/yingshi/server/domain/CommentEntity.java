@@ -10,7 +10,7 @@ import java.time.Instant;
 
 @Entity
 @Table(name = "comments")
-public class CommentEntity extends SpaceScopedEntity {
+public class CommentEntity extends LibraryScopedEntity {
 
     @Id
     private String id;

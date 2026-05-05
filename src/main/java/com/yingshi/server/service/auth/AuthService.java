@@ -3,13 +3,13 @@ package com.yingshi.server.service.auth;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
-import com.yingshi.server.domain.SpaceEntity;
+import com.yingshi.server.domain.SharedLibraryEntity;
 import com.yingshi.server.domain.UserEntity;
 import com.yingshi.server.dto.auth.AuthCurrentUserResponse;
 import com.yingshi.server.dto.auth.AuthLoginRequest;
 import com.yingshi.server.dto.auth.AuthLoginResponse;
 import com.yingshi.server.dto.auth.AuthLogoutResponse;
-import com.yingshi.server.repository.SpaceRepository;
+import com.yingshi.server.repository.SharedLibraryRepository;
 import com.yingshi.server.repository.UserRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -19,18 +19,18 @@ import org.springframework.stereotype.Service;
 public class AuthService {
 
     private final UserRepository userRepository;
-    private final SpaceRepository spaceRepository;
+    private final SharedLibraryRepository libraryRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
 
     public AuthService(
             UserRepository userRepository,
-            SpaceRepository spaceRepository,
+            SharedLibraryRepository libraryRepository,
             PasswordEncoder passwordEncoder,
             JwtTokenService jwtTokenService
     ) {
         this.userRepository = userRepository;
-        this.spaceRepository = spaceRepository;
+        this.libraryRepository = libraryRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
     }
@@ -43,12 +43,12 @@ public class AuthService {
             throw invalidCredentials();
         }
 
-        SpaceEntity space = getSpace(user.getDefaultSpaceId());
+        SharedLibraryEntity library = getLibrary(user.getDefaultLibraryId());
         AuthenticatedUser authenticatedUser = new AuthenticatedUser(
                 user.getId(),
                 user.getAccount(),
                 user.getDisplayName(),
-                space.getId()
+                library.getId()
         );
         JwtTokenBundle tokenBundle = jwtTokenService.issueTokens(authenticatedUser);
 
@@ -56,8 +56,8 @@ public class AuthService {
                 user.getId(),
                 user.getAccount(),
                 user.getDisplayName(),
-                space.getId(),
-                space.getDisplayName(),
+                library.getId(),
+                library.getDisplayName(),
                 tokenBundle.accessToken(),
                 tokenBundle.refreshToken(),
                 tokenBundle.accessTokenExpireAtMillis(),
@@ -72,15 +72,15 @@ public class AuthService {
                         ErrorCode.AUTH_UNAUTHORIZED,
                         "Current user does not exist."
                 ));
-        SpaceEntity space = getSpace(currentUser.spaceId());
+        SharedLibraryEntity library = getLibrary(currentUser.libraryId());
 
         return new AuthCurrentUserResponse(
                 user.getId(),
                 user.getAccount(),
                 user.getDisplayName(),
                 user.getAvatarUrl(),
-                space.getId(),
-                space.getDisplayName()
+                library.getId(),
+                library.getDisplayName()
         );
     }
 
@@ -88,12 +88,12 @@ public class AuthService {
         return new AuthLogoutResponse(true);
     }
 
-    private SpaceEntity getSpace(String spaceId) {
-        return spaceRepository.findById(spaceId)
+    private SharedLibraryEntity getLibrary(String libraryId) {
+        return libraryRepository.findById(libraryId)
                 .orElseThrow(() -> new ApiException(
                         HttpStatus.UNAUTHORIZED,
                         ErrorCode.AUTH_SESSION_INVALID,
-                        "Current space does not exist."
+                        "Current shared library does not exist."
                 ));
     }
 

@@ -32,6 +32,13 @@ public record UploadTokenRequest(
         Long durationMillis,
 
         @NotNull(message = "displayTimeMillis is required.")
-        Long displayTimeMillis
+        Long displayTimeMillis,
+
+        Long capturedAtMillis,
+
+        Long importedAtMillis,
+
+        @Size(max = 20, message = "displayTimeSource must be at most 20 characters.")
+        String displayTimeSource
 ) {
 }

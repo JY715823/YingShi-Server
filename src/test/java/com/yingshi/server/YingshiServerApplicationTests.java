@@ -62,7 +62,7 @@ class YingshiServerApplicationTests {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.userId").value("user_demo_a"))
-                .andExpect(jsonPath("$.data.spaceId").value("space_demo_shared"))
+                .andExpect(jsonPath("$.data.libraryId").value("library_shared"))
                 .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
                 .andExpect(jsonPath("$.data.refreshToken").isNotEmpty())
                 .andReturn();
@@ -74,7 +74,7 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.userId").value("user_demo_a"))
                 .andExpect(jsonPath("$.data.account").value("demo.a@yingshi.local"))
-                .andExpect(jsonPath("$.data.spaceId").value("space_demo_shared"));
+                .andExpect(jsonPath("$.data.libraryId").value("library_shared"));
     }
 
     @Test
@@ -298,7 +298,7 @@ class YingshiServerApplicationTests {
     }
 
     @Test
-    void sameSpaceMemberCanEditOtherCommentAndOtherSpaceStillBlocked() throws Exception {
+    void sameLibraryMemberCanEditOtherCommentAndOtherLibraryStillBlocked() throws Exception {
         String accessToken = loginAndGetAccessToken();
 
         mockMvc.perform(patch("/api/comments/comment_post_002")

@@ -10,11 +10,11 @@ import jakarta.persistence.UniqueConstraint;
 @Table(
         name = "post_media",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_post_media_post_media", columnNames = {"spaceId", "postId", "mediaId"}),
-                @UniqueConstraint(name = "uk_post_media_post_sort", columnNames = {"spaceId", "postId", "sortOrder"})
+                @UniqueConstraint(name = "uk_post_media_post_media", columnNames = {"libraryId", "postId", "mediaId"}),
+                @UniqueConstraint(name = "uk_post_media_post_sort", columnNames = {"libraryId", "postId", "sortOrder"})
         }
 )
-public class PostMediaEntity extends SpaceScopedEntity {
+public class PostMediaEntity extends LibraryScopedEntity {
 
     @Id
     private String id;

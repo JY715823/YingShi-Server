@@ -12,16 +12,16 @@ import java.util.Optional;
 
 public interface TrashItemRepository extends JpaRepository<TrashItemEntity, String> {
 
-    Optional<TrashItemEntity> findByIdAndSpaceId(String id, String spaceId);
+    Optional<TrashItemEntity> findByIdAndLibraryId(String id, String libraryId);
 
-    Page<TrashItemEntity> findBySpaceIdAndState(String spaceId, TrashItemState state, Pageable pageable);
+    Page<TrashItemEntity> findByLibraryIdAndState(String libraryId, TrashItemState state, Pageable pageable);
 
-    Page<TrashItemEntity> findBySpaceIdAndStateAndItemType(
-            String spaceId,
+    Page<TrashItemEntity> findByLibraryIdAndStateAndItemType(
+            String libraryId,
             TrashItemState state,
             TrashItemType itemType,
             Pageable pageable
     );
 
-    List<TrashItemEntity> findBySpaceIdAndStateOrderByDeletedAtDesc(String spaceId, TrashItemState state);
+    List<TrashItemEntity> findByLibraryIdAndStateOrderByDeletedAtDesc(String libraryId, TrashItemState state);
 }

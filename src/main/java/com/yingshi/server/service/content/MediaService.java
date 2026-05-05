@@ -49,8 +49,8 @@ public class MediaService {
     }
 
     public List<MediaDto> getMediaFeed(AuthenticatedUser currentUser) {
-        String spaceId = currentUser.spaceId();
-        List<MediaEntity> mediaItems = mediaRepository.findBySpaceIdAndDeletedAtIsNull(spaceId)
+        String libraryId = currentUser.libraryId();
+        List<MediaEntity> mediaItems = mediaRepository.findByLibraryIdAndDeletedAtIsNull(libraryId)
                 .stream()
                 .sorted(Comparator.comparing(MediaEntity::getDisplayTimeMillis).reversed().thenComparing(MediaEntity::getId))
                 .toList();
@@ -59,13 +59,13 @@ public class MediaService {
         }
 
         Set<String> activePostIds = postRepository.findAll().stream()
-                .filter(post -> spaceId.equals(post.getSpaceId()) && post.getDeletedAt() == null)
+                .filter(post -> libraryId.equals(post.getLibraryId()) && post.getDeletedAt() == null)
                 .map(PostEntity::getId)
                 .collect(java.util.stream.Collectors.toCollection(HashSet::new));
 
         Map<String, List<String>> postIdsByMediaId = new LinkedHashMap<>();
-        for (PostMediaEntity relation : postMediaRepository.findBySpaceIdAndMediaIdIn(
-                spaceId,
+        for (PostMediaEntity relation : postMediaRepository.findByLibraryIdAndMediaIdIn(
+                libraryId,
                 mediaItems.stream().map(MediaEntity::getId).toList()
         )) {
             if (!activePostIds.contains(relation.getPostId())) {
@@ -90,7 +90,7 @@ public class MediaService {
     }
 
     public MediaFilePayload loadMediaFile(String mediaId, String variant, AuthenticatedUser currentUser) {
-        MediaEntity media = mediaRepository.findByIdAndSpaceId(mediaId, currentUser.spaceId())
+        MediaEntity media = mediaRepository.findByIdAndLibraryId(mediaId, currentUser.libraryId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Media was not found."));
         if (media.getStoragePath() == null || media.getStoragePath().isBlank()) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Local file is not available for this media.");

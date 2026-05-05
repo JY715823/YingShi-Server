@@ -274,3 +274,13 @@ Physical-device checks for upload/import:
 4. In System Media, multi-select local media and run `导入到 App`; verify the same task panel, same logs, and same photo-feed refresh behavior.
 5. For failures, check logcat tag `SystemMediaUpload`; DEBUG logs should include source uri, mime type, display name, file size, upload id, returned media id, URLs, or server error body.
 6. Large local photos/videos require server multipart limits from Stage 12.7 (`200MB` file, `220MB` request).
+
+## Stage 12.8 Shared Library / Storage Checks
+
+1. Log in with `demo.a@yingshi.local` and confirm `/api/auth/me` returns `libraryId=library_shared`.
+2. Confirm Android does not read or send `spaceId`.
+3. Upload one image from bottom `+ -> upload media`; confirm the returned media appears in photo feed with empty `postIds` allowed.
+4. Confirm the server writes the original under `local-storage/originals/yyyy/MM` and any generated preview under `local-storage/previews/yyyy/MM`.
+5. Confirm seed/demo media lives under `local-storage/test/photos`, `local-storage/test/long`, or `local-storage/test/videos`, not under an old space directory.
+6. Confirm uploaded media keeps `capturedAtMillis`, `importedAtMillis`, and `displayTimeSource` when those values are available.
+7. Create or edit one post and confirm the request/response tolerates `eventStartedAtMillis`, `eventEndedAtMillis`, and `displayTimeSource`.

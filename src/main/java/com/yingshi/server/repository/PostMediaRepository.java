@@ -8,11 +8,11 @@ import java.util.List;
 
 public interface PostMediaRepository extends JpaRepository<PostMediaEntity, String> {
 
-    List<PostMediaEntity> findBySpaceIdAndPostIdOrderBySortOrderAsc(String spaceId, String postId);
+    List<PostMediaEntity> findByLibraryIdAndPostIdOrderBySortOrderAsc(String libraryId, String postId);
 
-    List<PostMediaEntity> findBySpaceIdAndPostIdIn(String spaceId, Collection<String> postIds);
+    List<PostMediaEntity> findByLibraryIdAndPostIdIn(String libraryId, Collection<String> postIds);
 
-    List<PostMediaEntity> findBySpaceIdAndMediaIdIn(String spaceId, Collection<String> mediaIds);
+    List<PostMediaEntity> findByLibraryIdAndMediaIdIn(String libraryId, Collection<String> mediaIds);
 
-    boolean existsBySpaceIdAndPostIdAndMediaId(String spaceId, String postId, String mediaId);
+    boolean existsByLibraryIdAndPostIdAndMediaId(String libraryId, String postId, String mediaId);
 }

@@ -9,9 +9,9 @@ import jakarta.persistence.UniqueConstraint;
 @Entity
 @Table(
         name = "post_albums",
-        uniqueConstraints = @UniqueConstraint(name = "uk_post_album_post_album", columnNames = {"spaceId", "postId", "albumId"})
+        uniqueConstraints = @UniqueConstraint(name = "uk_post_album_post_album", columnNames = {"libraryId", "postId", "albumId"})
 )
-public class PostAlbumEntity extends SpaceScopedEntity {
+public class PostAlbumEntity extends LibraryScopedEntity {
 
     @Id
     private String id;
