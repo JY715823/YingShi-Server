@@ -3,6 +3,10 @@ spring:
     name: yingshi-server
   profiles:
     default: dev
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 220MB
   mvc:
     throw-exception-if-no-handler-found: true
 
