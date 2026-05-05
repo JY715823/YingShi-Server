@@ -191,3 +191,9 @@ You can treat the device pass as accepted when all of these are true:
 - trash request succeeds
 - combined smoke action succeeds
 - no cleartext or network security error appears in the debug app
+## Stage 12.7 Upload / Import Smoke
+
+- Bottom `+ -> 上传媒体` and System Media `导入到 App` should both create REAL upload tasks, not fake placeholders.
+- A successful upload must return a `mediaId` and refresh `/api/media/feed`; the media can be opened in Viewer even when it has no post.
+- A failed upload must show a Chinese failure reason and log details under Android logcat tag `SystemMediaUpload`.
+- If a physical-device photo/video fails before reaching the controller, confirm server uses multipart limits `spring.servlet.multipart.max-file-size=200MB` and `max-request-size=220MB`.

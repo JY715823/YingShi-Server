@@ -264,3 +264,13 @@ Smoke script upload keeps adding media
 Trash restore fails
 - the backend data was already changed by an earlier partial test
 - restart the backend and rerun the smoke script from a clean dev state
+## Stage 12.7 Upload / Import Acceptance
+
+Physical-device checks for upload/import:
+
+1. Switch Android to REAL mode and set baseUrl to the LAN server address.
+2. Use bottom `+ -> 上传媒体`, select one image and one video through the system picker, and confirm that root upload tasks move from waiting/uploading to success or a clear failure.
+3. After success, open the app photo feed and verify returned media appears without reinstalling or fake placeholders.
+4. In System Media, multi-select local media and run `导入到 App`; verify the same task panel, same logs, and same photo-feed refresh behavior.
+5. For failures, check logcat tag `SystemMediaUpload`; DEBUG logs should include source uri, mime type, display name, file size, upload id, returned media id, URLs, or server error body.
+6. Large local photos/videos require server multipart limits from Stage 12.7 (`200MB` file, `220MB` request).

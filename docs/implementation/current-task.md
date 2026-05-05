@@ -1,59 +1,97 @@
 ﻿
 ---
 
-# 5. Server `current-task.md`
+# 4. Server `current-task.md`
 
 ```md
-# Current Task: Stage 12.7 - 鍏ㄥ眬娴佺晠搴﹁仈璋冩敮鎸?
+# Current Task: Stage 12.7-Hotfix - 上传媒体 / 导入到 App 联调支持
 
-## 鑳屾櫙
+## 背景
 
-Android 杩涘叆 Stage 12.7锛岄噸鐐规槸鍏ㄥ眬娴佺晠搴﹀拰鍑忓皯閲嶅璇锋眰銆係erver 榛樿涓嶆敼涓氬姟閫昏緫锛屽彧鍦ㄦ帴鍙ｅ垎椤点€佹煡璇㈠瓧娈垫垨濂戠害璇存槑涓嶈冻瀵艰嚧 Android 杩囧害璇锋眰鏃跺仛鏈€灏忎慨姝ｆ垨鏂囨。璇存槑銆?
+Android 当前上传媒体和系统媒体导入到 App 链路不可用。底部加号上传提示后台加载但照片流不出现，系统媒体导入到 App 提示上传失败。Server 本阶段只做上传 / 导入契约所需的最小修正。
 
-## 鐩爣
+## 目标
 
-1. 妫€鏌ュ垪琛ㄦ煡璇㈡槸鍚︽敮鎸?Android 褰撳墠鍒嗛〉 / 鍒嗘壒鍔犺浇闇€姹傘€?
-2. 妫€鏌ュ獟浣撶缉鐣ュ浘瀛楁鏄惁绋冲畾杩斿洖銆?
-3. 妫€鏌ュ笘瀛愯鎯呮槸鍚﹂伩鍏?Android 蹇呴』棰濆璇锋眰杩囧鏁版嵁銆?
-4. 妫€鏌ョ郴缁熷獟浣撶浉鍏冲绾﹁鏄庢槸鍚︽竻妤氥€?
-5. 濡傛棤蹇呰锛屼笉淇敼 Server 浠ｇ爜銆?
+1. 支持 Android 从 contentUri 读取后 multipart 上传。
+2. 支持导入到 App 媒体库，不强依赖 postId。
+3. 上传成功后返回完整 Media DTO。
+4. 上传失败时返回清晰错误码和错误信息。
+5. 查询照片流能返回新上传媒体。
+6. 新上传媒体可以后续关联帖子、删除、恢复、评论。
 
-## 涓嶅仛鍐呭
+## 检查范围
 
-- 涓嶅仛 OSS
-- 涓嶅仛杞爜
-- 涓嶅仛鏂板ぇ鎺ュ彛
-- 涓嶆敼鏉冮檺浣撶郴
-- 涓嶆敼涓氬姟瑙勫垯
-- 涓嶅仛 WebSocket / 鎺ㄩ€?
+### 1. 上传接口
 
-## 楠屾敹
+检查：
 
-1. 濂戠害鏂囨。鏀寔 Android 娴佺晠搴︿紭鍖栥€?
-2. 濡備慨鏀?Server锛宮vnw test 閫氳繃銆?
-3. 濡傛湭淇敼 Server锛屾渶缁堣鏄?Server 鏈慨鏀广€?
+- multipart field name 是否和 Android 一致
+- 是否支持 image/*
+- 是否支持 video/*
+- 是否支持无 postId 的 App 媒体库导入
+- 是否保存 mimeType
+- 是否保存文件大小
+- 是否生成或返回 mediaUrl / thumbnailUrl / originalUrl / videoUrl
+- 是否能通过真机 baseUrl 访问
 
-## Stage 12.7 Server Sync Note
+### 2. 返回 DTO
 
-- No server business logic change is required in this pass.
-- Android now depends even more on stable preview-sized URLs for list surfaces, and comment mutations are expected to stay lightweight without implying a required full media-feed reload.
+Media DTO 至少检查：
 
-## Post-12.7 Media Ownership Sync
+- mediaId
+- type
+- mimeType
+- thumbnailUrl
+- mediaUrl
+- originalUrl
+- videoUrl
+- width
+- height
+- duration
+- createdAt
+- postIds / relatedPosts
 
-- Server business logic was minimally adjusted because app media can now be imported without belonging to a post.
-- `/api/media/feed` returns all active media in the current space. `postIds` may be empty and still represents a valid photo-feed item.
-- Viewer “所属帖子” should only appear when `postIds` is non-empty; import-only media remains visible in the app photo feed.
+### 3. 照片流查询
 
-## Post-12.7 Targeted Fix Follow-up
+检查：
 
-- `/api/media/files/{mediaId}` may serve a deleted media file when the media id belongs to the current space. Android uses this to render read-only trash detail previews for `mediaRemoved`, `mediaSystemDeleted`, and `postDeleted` entries.
-- Normal feed and post APIs still filter deleted media through their existing repository queries; the file endpoint relaxation is only a binary-resource lookup and does not make deleted media reappear in active lists.
-- Local seed image preparation now reuses an existing readable seed file instead of always overwriting it. This avoids Windows file-lock failures when tests run while a dev server or image reader still has a seed file open.
+- 新导入媒体是否进入照片流
+- 孤立媒体是否允许进入照片流
+- 删除 / 恢复状态是否正确过滤
 
-## Stage 12.7-Hotfix Original Loading Contract
+### 4. 后续关系
 
-- No server business logic change is required for this hotfix.
-- Local media DTOs may expose `/api/media/files/{mediaId}?variant=preview` as preview and `/api/media/files/{mediaId}` as original. Android must treat the two URLs as different render sources and must use original-size image requests for the latter.
-- Android hides the original action when there is no meaningful image original candidate. Videos do not show `加载原图`; they keep using video playback source fallback only.
+检查：
 
+- 新上传媒体能加入已有帖子
+- 新上传媒体能发成新帖子
+- 新上传媒体能删除 / 恢复
+- 评论接口如支持媒体级评论，需要能处理无帖子归属媒体
 
+## 不做内容
+
+- 不做 OSS
+- 不做转码
+- 不做复杂后台任务
+- 不改权限体系
+- 不改回收站业务规则
+- 不做 WebSocket / 推送
+
+## 验收
+
+1. Android 上传图片成功。
+2. Android 上传视频成功或返回明确不支持错误。
+3. 导入到 App 不强依赖 postId。
+4. 上传成功返回完整 Media DTO。
+5. 上传失败返回清晰错误信息。
+6. 照片流查询能看到新上传媒体。
+7. 新上传媒体可关联帖子。
+8. 新上传媒体可删除 / 恢复。
+9. 如修改 Server，mvnw test 通过。
+## Stage 12.7 Hotfix Update - 2026-05-05
+
+- Server upload remains a two-step local multipart flow: `POST /api/uploads/token`, then `POST /api/uploads/{uploadId}/file` with multipart field name `file`.
+- Import-to-App does not require `postId`; upload success creates one orphan-capable `Media` row and `/api/media/feed` can return it.
+- `application.yml` now raises multipart limits to `max-file-size: 200MB` and `max-request-size: 220MB`, fixing physical-device photo/video uploads that exceeded Spring defaults.
+- Upload success returns a complete `MediaDto` with `mediaId`, type, mimeType, preview/media/original/video URLs, dimensions, duration, display time, and `postIds`.
+- Server `mvnw test` passed after this update.

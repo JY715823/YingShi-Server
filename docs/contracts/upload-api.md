@@ -80,6 +80,9 @@ Response data:
 - local files are written under the server-managed `local-storage` directory
 - later object-storage integration may change `provider`, but not the current local-dev contract
 - Android REAL import flow uses this upload result media id, then calls post create or add-media APIs
+- Stage 12.7: `导入到 App` and bottom `上传媒体` use the same upload contract and do not require `postId`.
+- Stage 12.7: Android must send multipart field name `file`; server accepts local dev uploads up to 200MB per file / 220MB per request.
+- Stage 12.7: upload failure must surface an error state; clients must not insert fake media when token or multipart upload fails.
 
 ## Error Codes
 - `UPLOAD_NOT_FOUND`
