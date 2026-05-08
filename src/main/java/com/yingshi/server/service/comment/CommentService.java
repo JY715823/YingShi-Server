@@ -109,7 +109,7 @@ public class CommentService {
     public CommentDto updateComment(String commentId, UpdateCommentRequest request, AuthenticatedUser currentUser) {
         CommentEntity comment = requireComment(commentId, currentUser.libraryId());
         if (comment.getDeletedAt() != null) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "Deleted comment cannot be edited.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "已删除的评论不能编辑。");
         }
         // TODO: notify the original author when another member in the same shared library edits this comment.
         comment.setContent(request.content().trim());
@@ -174,18 +174,18 @@ public class CommentService {
 
     private CommentEntity requireComment(String commentId, String libraryId) {
         return commentRepository.findByIdAndLibraryId(commentId, libraryId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_NOT_FOUND, "Comment was not found."));
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_NOT_FOUND, "评论未找到。"));
     }
 
     private void requirePost(String postId, String libraryId) {
         if (postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(postId, libraryId).isEmpty()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Post target was not found.");
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "帖子目标未找到。");
         }
     }
 
     private void requireMedia(String mediaId, String libraryId) {
         if (mediaRepository.findByIdAndLibraryIdAndDeletedAtIsNull(mediaId, libraryId).isEmpty()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Media target was not found.");
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "媒体目标未找到。");
         }
     }
 }

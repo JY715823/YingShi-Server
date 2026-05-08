@@ -42,5 +42,7 @@ app:
 
 yingshi:
   dev:
+    local-media-recovery:
+      enabled: true
     test-import:
       enabled: false

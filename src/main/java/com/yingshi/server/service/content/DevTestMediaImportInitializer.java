@@ -44,8 +44,8 @@ public class DevTestMediaImportInitializer {
 
     private static final String TEST_IMPORT_ROOT = "test";
     private static final String TEST_IMPORT_ALBUM_ID = "album_import_local_test_media";
-    private static final String TEST_IMPORT_ALBUM_TITLE = "Local Sample Import";
-    private static final String TEST_IMPORT_CONTRIBUTOR_LABEL = "local-storage sample";
+    private static final String TEST_IMPORT_ALBUM_TITLE = "本地示例导入";
+    private static final String TEST_IMPORT_CONTRIBUTOR_LABEL = "local-storage 示例";
     private static final int DEFAULT_VIDEO_WIDTH = 1080;
     private static final int DEFAULT_VIDEO_HEIGHT = 1920;
     private static final long DEFAULT_VIDEO_DURATION_MILLIS = 15_000L;
@@ -99,7 +99,7 @@ public class DevTestMediaImportInitializer {
                 .orElseGet(() -> createImportAlbum(libraryId));
         album.setLibraryId(libraryId);
         album.setTitle(TEST_IMPORT_ALBUM_TITLE);
-        album.setSubtitle("Scanned sample photos, long images, and videos from local-storage/" + TEST_IMPORT_ROOT);
+        album.setSubtitle("从 local-storage/" + TEST_IMPORT_ROOT + " 扫描到的示例图片、长图和视频");
 
         String latestCoverMediaId = album.getCoverMediaId();
         long latestCoverTime = Long.MIN_VALUE;
@@ -134,8 +134,8 @@ public class DevTestMediaImportInitializer {
             PostEntity post = postRepository.findById(postId).orElseGet(PostEntity::new);
             post.setId(postId);
             post.setLibraryId(libraryId);
-            post.setTitle(truncate("Sample import - " + humanizeBucketKey(bucketKey), 120));
-            post.setSummary(truncate("Auto-imported from local-storage test directory: " + bucketKey, 1000));
+            post.setTitle(truncate("示例导入 - " + humanizeBucketKey(bucketKey), 120));
+            post.setSummary(truncate("从 local-storage 测试目录自动导入：" + bucketKey, 1000));
             post.setContributorLabel(TEST_IMPORT_CONTRIBUTOR_LABEL);
             post.setDisplayTimeMillis(postDisplayTimeMillis);
             post.setEventStartedAtMillis(postDisplayTimeMillis);
@@ -391,7 +391,7 @@ public class DevTestMediaImportInitializer {
     private String humanizeBucketKey(String bucketKey) {
         String normalized = bucketKey.replace('\\', '/');
         if (normalized.isBlank() || TEST_IMPORT_ROOT.equals(normalized)) {
-            return "test root";
+            return "测试根目录";
         }
         return normalized.replace("/", " / ");
     }

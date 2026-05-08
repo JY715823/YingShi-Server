@@ -1,40 +1,35 @@
-# Current Task: Stage 12.8 - Shared Library, Time Fields, Local Storage Layout
+﻿
+---
 
-## Background
+# 4. Server `current-task.md`
 
-YingShi is now treated as a private two-person shared app, not a multi-space product. The old public-facing `spaceId` concept is removed from the contract and replaced by `libraryId`, which represents the one shared library used by both seed users.
+```md
+# Current Task: Stage 12.7-Hotfix - 传输中心与媒体交互文档同步
 
-Media and posts also need two separate time ideas:
+## 背景
 
-- intrinsic time: when the media was captured, or when the post/memory happened
-- display time: where the item appears in the app timeline
+Android 本轮修正传输中心 badge、上传汇总提示、时间滑条、系统媒体分区、帖子中文化和回收站入口。Server 默认不改业务逻辑，但需要同步文档并确保上传接口、媒体查询和回收站契约说明与 Android 当前行为一致。
 
-## Scope
+## 目标
 
-1. Replace backend space domain naming with shared-library naming.
-2. Keep request scoping through the authenticated `libraryId`.
-3. Add media time metadata: `capturedAtMillis`, `importedAtMillis`, `displayTimeSource`.
-4. Add post event time metadata: `eventStartedAtMillis`, `eventEndedAtMillis`, `displayTimeSource`.
-5. Reorganize local storage into stable type/year/month buckets.
-6. Keep FAKE and REAL architecture intact.
+1. 上传接口契约保持可用。
+2. Media DTO 继续支持传输中心缩略图展示。
+3. 系统媒体按时间分区所需 createdAt / takenAt 字段语义清晰。
+4. 回收站 24h 可撤销分类语义清晰。
+5. 同步 current-task 和相关联调文档。
 
-## Local Storage Layout
+## 不做内容
 
-```text
-local-storage/
-  originals/yyyy/MM/{mediaId}.{ext}
-  previews/yyyy/MM/{mediaId}-720.jpg
-  test/photos|long|videos/...
-  tmp/uploads/...
-  videos/posters/...
-```
+- 不做 OSS
+- 不做云端存储
+- 不做新大接口
+- 不改上传业务规则
+- 不改回收站业务规则
+- 不做转码
 
-The old `local-storage/space_demo_shared` and `local-storage/_derived` directories are retired.
+## 验收
 
-## Acceptance
-
-1. Auth responses expose `libraryId` and `libraryDisplayName`.
-2. Uploads create media under `originals/yyyy/MM` and generated previews under `previews/yyyy/MM`.
-3. Import-only media remains valid with empty `postIds`.
-4. Media and post DTOs expose the new time fields without breaking existing clients.
-5. `mvnw test` passes.
+1. createdAt / takenAt 字段契约说明清晰。
+2. 回收站 24h 可撤销分类说明清晰。
+3. 上传 Media DTO 契约说明清晰。
+4. mvnw test 通过。

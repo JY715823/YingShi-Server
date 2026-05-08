@@ -28,7 +28,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @AutoConfigureMockMvc
-@SpringBootTest(properties = "yingshi.dev.test-import.enabled=false")
+@SpringBootTest(properties = {
+        "yingshi.dev.test-import.enabled=false",
+        "yingshi.dev.local-media-recovery.enabled=false"
+})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class YingshiServerApplicationTests {
 

@@ -26,49 +26,49 @@ public class DevCommentSeedDataInitializer {
                     "library_shared",
                     "user_demo_a",
                     "post_001",
-                    "This post uses the refreshed local sample media for photo feed and post-detail checks."
+                    "这条帖子用了更新后的本地示例媒体，方便验证照片流和帖子详情的展示。"
             ));
             commentRepository.save(createPostComment(
                     "comment_post_002",
                     "library_shared",
                     "user_demo_b",
                     "post_001",
-                    "Long images should keep preview safe and switch to original only when the real file loads."
+                    "长图应保持预览加载稳定，只在真实文件载入后才切换到原图。"
             ));
             commentRepository.save(createPostComment(
                     "comment_post_003",
                     "library_shared",
                     "user_demo_a",
                     "post_003",
-                    "Video posts validate playback and poster stability, not image-original state."
+                    "视频帖子主要验证播放和封面稳定性，不涉及图片原图加载逻辑。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_001",
                     "library_shared",
                     "user_demo_b",
                     "media_001",
-                    "Shared media can appear in the feed and multiple posts while keeping comments isolated by mediaId."
+                    "共享媒体可以出现在照片流和多个帖子中，但评论按 mediaId 隔离。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_002",
                     "library_shared",
                     "user_demo_a",
                     "media_001",
-                    "Original loading and comment state should follow this media item itself."
+                    "原图加载和评论状态应跟随这条媒体本身。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_003",
                     "library_shared",
                     "user_demo_b",
                     "media_004",
-                    "This 1400x3200 long image is useful for vertical reading and original-loading checks."
+                    "这张 1400x3200 的长图适合纵向浏览和原图加载验证。"
             ));
             commentRepository.save(createPostComment(
                     "comment_other_secret",
                     "library_private_other",
                     "user_demo_b",
                     "post_other_secret",
-                    "Internal isolation fixture for shared-library access checks."
+                    "内部隔离用例，用于共享库访问权限验证。"
             ));
         };
     }

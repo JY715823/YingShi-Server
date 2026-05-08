@@ -6,6 +6,15 @@
 - current backend smoke script: `scripts/integration-smoke.ps1`
 - current Android diagnostics entry: `Settings -> Backend integration diagnostics`
 
+## Stage 12.7 Hotfix
+
+Android side now expects these current behaviors during backend-linked smoke checks:
+
+1. Transfer center badge counts unfinished upload / import tasks.
+2. Batch uploads emit one completion summary instead of per-item spam.
+3. Trash `24h可撤销` is a same-page chip filter, not a full-screen route.
+4. System media is grouped by time on Android, while backend media DTOs still need stable time fields and URLs.
+
 ## Seed Account
 - account: `demo.a@yingshi.local`
 - password: `demo123456`
