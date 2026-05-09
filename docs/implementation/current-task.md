@@ -1,40 +1,27 @@
-# Current Task: Stage 12.8 - Shared Library, Time Fields, Local Storage Layout
+# Current Task: Media File Range Streaming
 
 ## Background
 
-YingShi is now treated as a private two-person shared app, not a multi-space product. The old public-facing `spaceId` concept is removed from the contract and replaced by `libraryId`, which represents the one shared library used by both seed users.
-
-Media and posts also need two separate time ideas:
-
-- intrinsic time: when the media was captured, or when the post/memory happened
-- display time: where the item appears in the app timeline
+App remote videos are served through `GET /api/media/files/{mediaId}`. Smooth network playback and seek need standard HTTP Range support so the Android player can request byte ranges instead of waiting on full-file reads after scrubbing.
 
 ## Scope
 
-1. Replace backend space domain naming with shared-library naming.
-2. Keep request scoping through the authenticated `libraryId`.
-3. Add media time metadata: `capturedAtMillis`, `importedAtMillis`, `displayTimeSource`.
-4. Add post event time metadata: `eventStartedAtMillis`, `eventEndedAtMillis`, `displayTimeSource`.
-5. Reorganize local storage into stable type/year/month buckets.
-6. Keep FAKE and REAL architecture intact.
+1. Keep existing media metadata and storage layout unchanged.
+2. Add `Accept-Ranges: bytes` to media file responses.
+3. Support single-range requests on `/api/media/files/{mediaId}` with `206 Partial Content`.
+4. Preserve auth, cache control, content type, last-modified, and preview/original variant behavior.
+5. Add backend test coverage for partial media file responses.
 
-## Local Storage Layout
+## Non Goals
 
-```text
-local-storage/
-  originals/yyyy/MM/{mediaId}.{ext}
-  previews/yyyy/MM/{mediaId}-720.jpg
-  test/photos|long|videos/...
-  tmp/uploads/...
-  videos/posters/...
-```
-
-The old `local-storage/space_demo_shared` and `local-storage/_derived` directories are retired.
+- No transcoding.
+- No HLS / DASH packaging.
+- No object storage migration.
+- No upload flow or post/trash/comment API changes.
 
 ## Acceptance
 
-1. Auth responses expose `libraryId` and `libraryDisplayName`.
-2. Uploads create media under `originals/yyyy/MM` and generated previews under `previews/yyyy/MM`.
-3. Import-only media remains valid with empty `postIds`.
-4. Media and post DTOs expose the new time fields without breaking existing clients.
-5. `mvnw test` passes.
+1. Normal file requests still return `200 OK`.
+2. Range requests return `206 Partial Content` with `Content-Range`.
+3. Existing media API tests pass.
+4. `mvnw test` passes.

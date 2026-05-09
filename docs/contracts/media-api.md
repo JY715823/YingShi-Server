@@ -49,6 +49,9 @@ Response:
 - binary file stream
 - local dev currently serves stored files directly from server-managed local storage
 - current-space deleted media may still be streamed by id so trash detail can render read-only original media previews
+- supports standard single HTTP byte ranges through `Range: bytes=start-end`
+- full responses include `Accept-Ranges: bytes`
+- valid range responses return `206 Partial Content`, `Content-Range`, and the requested byte length
 
 ### `DELETE /api/media/{mediaId}`
 

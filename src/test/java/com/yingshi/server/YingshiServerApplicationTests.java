@@ -18,6 +18,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.hamcrest.Matchers.nullValue;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -129,7 +130,16 @@ class YingshiServerApplicationTests {
         mockMvc.perform(get("/api/media/files/media_001")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(header().string("Content-Type", "image/jpeg"));
+                .andExpect(header().string("Content-Type", "image/jpeg"))
+                .andExpect(header().string("Accept-Ranges", "bytes"));
+
+        mockMvc.perform(get("/api/media/files/media_006")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .header("Range", "bytes=0-99"))
+                .andExpect(status().isPartialContent())
+                .andExpect(header().string("Accept-Ranges", "bytes"))
+                .andExpect(header().string("Content-Range", startsWith("bytes 0-99/")))
+                .andExpect(header().longValue("Content-Length", 100L));
     }
 
     @Test
