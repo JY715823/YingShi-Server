@@ -39,6 +39,9 @@ public record UploadTokenRequest(
         Long importedAtMillis,
 
         @Size(max = 20, message = "displayTimeSource must be at most 20 characters.")
-        String displayTimeSource
+        String displayTimeSource,
+
+        @Size(max = 128, message = "sourceFingerprint must be at most 128 characters.")
+        String sourceFingerprint
 ) {
 }

@@ -68,6 +68,9 @@ public class MediaEntity extends LibraryScopedEntity {
     @Column(nullable = false, length = 512)
     private String storagePath;
 
+    @Column(length = 128)
+    private String sourceFingerprint;
+
     @Column
     private Instant deletedAt;
 
@@ -213,6 +216,14 @@ public class MediaEntity extends LibraryScopedEntity {
 
     public void setStoragePath(String storagePath) {
         this.storagePath = storagePath;
+    }
+
+    public String getSourceFingerprint() {
+        return sourceFingerprint;
+    }
+
+    public void setSourceFingerprint(String sourceFingerprint) {
+        this.sourceFingerprint = sourceFingerprint;
     }
 
     public Instant getDeletedAt() {

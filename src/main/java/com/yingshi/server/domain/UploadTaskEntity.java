@@ -66,6 +66,9 @@ public class UploadTaskEntity extends LibraryScopedEntity {
     @Column(length = 255)
     private String mediaId;
 
+    @Column(length = 128)
+    private String sourceFingerprint;
+
     public String getId() {
         return id;
     }
@@ -200,5 +203,13 @@ public class UploadTaskEntity extends LibraryScopedEntity {
 
     public void setMediaId(String mediaId) {
         this.mediaId = mediaId;
+    }
+
+    public String getSourceFingerprint() {
+        return sourceFingerprint;
+    }
+
+    public void setSourceFingerprint(String sourceFingerprint) {
+        this.sourceFingerprint = sourceFingerprint;
     }
 }

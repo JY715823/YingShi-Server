@@ -20,4 +20,27 @@ public interface MediaRepository extends JpaRepository<MediaEntity, String> {
     List<MediaEntity> findByLibraryIdAndIdIn(String libraryId, Collection<String> ids);
 
     List<MediaEntity> findByLibraryIdAndIdInAndDeletedAtIsNull(String libraryId, Collection<String> ids);
+
+    Optional<MediaEntity> findFirstByLibraryIdAndSourceFingerprintAndDeletedAtIsNull(String libraryId, String sourceFingerprint);
+
+    Optional<MediaEntity> findFirstByLibraryIdAndMediaTypeAndMimeTypeAndSizeBytesAndDisplayTimeMillisAndWidthAndHeightAndDurationMillisAndDeletedAtIsNull(
+            String libraryId,
+            com.yingshi.server.domain.MediaType mediaType,
+            String mimeType,
+            Long sizeBytes,
+            Long displayTimeMillis,
+            Integer width,
+            Integer height,
+            Long durationMillis
+    );
+
+    Optional<MediaEntity> findFirstByLibraryIdAndMediaTypeAndMimeTypeAndSizeBytesAndDisplayTimeMillisAndWidthAndHeightAndDurationMillisIsNullAndDeletedAtIsNull(
+            String libraryId,
+            com.yingshi.server.domain.MediaType mediaType,
+            String mimeType,
+            Long sizeBytes,
+            Long displayTimeMillis,
+            Integer width,
+            Integer height
+    );
 }

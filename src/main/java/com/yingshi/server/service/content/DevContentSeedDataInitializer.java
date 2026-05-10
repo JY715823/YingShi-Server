@@ -48,8 +48,8 @@ public class DevContentSeedDataInitializer {
             }
 
             String sharedLibraryId = DevAuthSeedDataInitializer.DEMO_LIBRARY_ID;
-            ensureLibrary(libraryRepository, sharedLibraryId, "YingShi Shared Library");
-            ensureLibrary(libraryRepository, HIDDEN_LIBRARY_ID, "Internal Test Library");
+            ensureLibrary(libraryRepository, sharedLibraryId, "映时共享相册");
+            ensureLibrary(libraryRepository, HIDDEN_LIBRARY_ID, "内部测试相册");
 
             seedSharedLibrary(
                     sharedLibraryId,
@@ -85,34 +85,34 @@ public class DevContentSeedDataInitializer {
         mediaRepository.save(createImageMedia(libraryId, "media_005", 1200, 3600, 1777412000000L, SAMPLE_TALL_PATH, 744_380L));
         mediaRepository.save(createVideoMedia(libraryId, "media_006", 1080, 1920, 1777411800000L, SAMPLE_VIDEO_PATH, 887_988L, 15_000L));
 
-        albumRepository.save(createAlbum(libraryId, "album_001", "Sample Images", "Landscape, portrait, square, and long-image sample data", "media_001"));
-        albumRepository.save(createAlbum(libraryId, "album_002", "Video Checks", "Sample video data for poster, playback, and import checks", "media_006"));
-        albumRepository.save(createAlbum(libraryId, "album_003", "Long Images", "Long-image preview, viewer, and original-loading checks", "media_005"));
+        albumRepository.save(createAlbum(libraryId, "album_001", "示例照片", "横图、竖图、方图和长图的本地示例数据", "media_001"));
+        albumRepository.save(createAlbum(libraryId, "album_002", "视频检查", "用于视频封面、播放和导入检查的本地示例数据", "media_006"));
+        albumRepository.save(createAlbum(libraryId, "album_003", "长图检查", "用于长图预览、Viewer 阅读和原图加载检查", "media_005"));
 
         postRepository.save(createPost(
                 libraryId,
                 "post_001",
-                "Sample Image Set",
-                "A post that references the refreshed local sample photos for feed, album cover, and post-detail checks.",
-                "Demo A and Demo B",
+                "示例照片组",
+                "用于照片流、相册封面和帖子详情检查的本地示例照片。",
+                "演示用户 A 和 B",
                 1777412800000L,
                 "media_001"
         ));
         postRepository.save(createPost(
                 libraryId,
                 "post_002",
-                "Long Image Reading Check",
-                "A post focused on long-image preview, viewer scrolling, and true original-file switching.",
-                "Demo A and Demo B",
+                "长图阅读检查",
+                "用于检查长图预览、Viewer 滚动和原文件切换。",
+                "演示用户 A 和 B",
                 1777412200000L,
                 "media_005"
         ));
         postRepository.save(createPost(
                 libraryId,
                 "post_003",
-                "Video Import Check",
-                "A post with a local mp4 sample and a square image for video poster and playback checks.",
-                "Demo A and Demo B",
+                "视频导入检查",
+                "包含本地 mp4 示例和方图，用于视频封面和播放检查。",
+                "演示用户 A 和 B",
                 1777411800000L,
                 "media_006"
         ));
@@ -140,8 +140,8 @@ public class DevContentSeedDataInitializer {
             PostAlbumRepository postAlbumRepository
     ) {
         mediaRepository.save(createImageMedia(libraryId, "media_other_secret", 2400, 2400, 1777410000000L, SAMPLE_SQUARE_PATH, 383_089L));
-        albumRepository.save(createAlbum(libraryId, "album_other_secret", "Internal Album", "Internal fixture for shared-library isolation checks", "media_other_secret"));
-        postRepository.save(createPost(libraryId, "post_other_secret", "Internal Post", "Internal fixture for shared-library isolation checks", "Internal Member", 1777410000000L, "media_other_secret"));
+        albumRepository.save(createAlbum(libraryId, "album_other_secret", "内部相册", "用于共享图库隔离检查的内部数据", "media_other_secret"));
+        postRepository.save(createPost(libraryId, "post_other_secret", "内部帖子", "用于共享图库隔离检查的内部数据", "内部成员", 1777410000000L, "media_other_secret"));
         postMediaRepository.save(createPostMedia(libraryId, "post_media_other_secret", "post_other_secret", "media_other_secret", 1));
         postAlbumRepository.save(createPostAlbum(libraryId, "post_album_other_secret", "post_other_secret", "album_other_secret"));
     }

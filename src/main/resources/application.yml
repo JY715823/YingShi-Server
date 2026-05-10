@@ -5,8 +5,8 @@ spring:
     default: dev
   servlet:
     multipart:
-      max-file-size: 200MB
-      max-request-size: 220MB
+      max-file-size: 1024MB
+      max-request-size: 1100MB
   mvc:
     throw-exception-if-no-handler-found: true
 

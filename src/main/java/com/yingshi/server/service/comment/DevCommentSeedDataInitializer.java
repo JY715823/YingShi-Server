@@ -26,35 +26,35 @@ public class DevCommentSeedDataInitializer {
                     "library_shared",
                     "user_demo_a",
                     "post_001",
-                    "This post uses the refreshed local sample media for photo feed and post-detail checks."
+                    "这条帖子用于检查照片流、相册封面和帖子详情。"
             ));
             commentRepository.save(createPostComment(
                     "comment_post_002",
                     "library_shared",
                     "user_demo_b",
                     "post_001",
-                    "Long images should keep preview safe and switch to original only when the real file loads."
+                    "长图预览要稳定，只有真正加载原文件后才切换。"
             ));
             commentRepository.save(createPostComment(
                     "comment_post_003",
                     "library_shared",
                     "user_demo_a",
                     "post_003",
-                    "Video posts validate playback and poster stability, not image-original state."
+                    "视频帖子用于检查播放和封面稳定性。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_001",
                     "library_shared",
                     "user_demo_b",
                     "media_001",
-                    "Shared media can appear in the feed and multiple posts while keeping comments isolated by mediaId."
+                    "同一个媒体可以出现在照片流和多个帖子里，媒体评论仍按 mediaId 隔离。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_002",
                     "library_shared",
                     "user_demo_a",
                     "media_001",
-                    "Original loading and comment state should follow this media item itself."
+                    "原文件加载和评论状态都跟随当前媒体。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_003",
@@ -68,7 +68,7 @@ public class DevCommentSeedDataInitializer {
                     "library_private_other",
                     "user_demo_b",
                     "post_other_secret",
-                    "Internal isolation fixture for shared-library access checks."
+                    "用于共享图库隔离检查的内部评论。"
             ));
         };
     }

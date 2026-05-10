@@ -36,11 +36,11 @@ public class DevAuthSeedDataInitializer {
 
             SharedLibraryEntity library = new SharedLibraryEntity();
             library.setId(DEMO_LIBRARY_ID);
-            library.setDisplayName("YingShi Shared Library");
+            library.setDisplayName("映时共享相册");
             libraryRepository.save(library);
 
-            UserEntity demoA = createUser("user_demo_a", "demo.a@yingshi.local", "Demo A", passwordEncoder);
-            UserEntity demoB = createUser("user_demo_b", "demo.b@yingshi.local", "Demo B", passwordEncoder);
+            UserEntity demoA = createUser("user_demo_a", "demo.a@yingshi.local", "演示用户 A", passwordEncoder);
+            UserEntity demoB = createUser("user_demo_b", "demo.b@yingshi.local", "演示用户 B", passwordEncoder);
             userRepository.save(demoA);
             userRepository.save(demoB);
 

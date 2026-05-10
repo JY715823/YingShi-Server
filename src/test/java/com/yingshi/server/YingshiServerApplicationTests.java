@@ -29,7 +29,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @AutoConfigureMockMvc
-@SpringBootTest(properties = "yingshi.dev.test-import.enabled=false")
+@SpringBootTest(properties = {
+        "yingshi.dev.test-import.enabled=false",
+        "yingshi.dev.recovery.enabled=false",
+        "spring.datasource.url=jdbc:h2:mem:yingshi-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
+        "spring.jpa.hibernate.ddl-auto=create-drop"
+})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class YingshiServerApplicationTests {
 
@@ -352,7 +357,8 @@ class YingshiServerApplicationTests {
                                   "width": 800,
                                   "height": 600,
                                   "durationMillis": null,
-                                  "displayTimeMillis": 1777416600000
+                                  "displayTimeMillis": 1777416600000,
+                                  "sourceFingerprint": "test-upload-source-001"
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -403,6 +409,42 @@ class YingshiServerApplicationTests {
         @SuppressWarnings("unchecked")
         List<String> postIds = (List<String>) matchedItems.get(0).get("postIds");
         assertTrue(postIds.contains("post_003"));
+
+        MvcResult duplicateTokenResult = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fileName": "upload-demo-copy.jpg",
+                                  "mimeType": "image/jpeg",
+                                  "fileSizeBytes": 999,
+                                  "mediaType": "image",
+                                  "width": 800,
+                                  "height": 600,
+                                  "durationMillis": null,
+                                  "displayTimeMillis": 1777416600000,
+                                  "sourceFingerprint": "test-upload-source-001"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String duplicateUploadId = readField(duplicateTokenResult, "/data/uploadId");
+        MockMultipartFile duplicateMultipartFile = new MockMultipartFile("file", "upload-demo-copy.jpg", "application/octet-stream", fileBytes);
+
+        mockMvc.perform(multipart("/api/uploads/" + duplicateUploadId + "/file")
+                        .file(duplicateMultipartFile)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.media.mediaId").value(mediaId));
+
+        MvcResult duplicateFeedResult = mockMvc.perform(get("/api/media/feed")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        List<Map<String, Object>> duplicateMatchedItems = JsonPath.parse(duplicateFeedResult.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .read("$.data[?(@.mediaId=='%s')]".formatted(mediaId));
+        assertEquals(1, duplicateMatchedItems.size());
     }
 
     @Test
