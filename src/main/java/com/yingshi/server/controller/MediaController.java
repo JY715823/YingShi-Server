@@ -3,9 +3,11 @@ package com.yingshi.server.controller;
 import com.yingshi.server.common.auth.AuthRequired;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.auth.CurrentUser;
+import com.yingshi.server.common.response.PageInfo;
 import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.content.MediaDto;
+import com.yingshi.server.dto.content.MediaFeedPage;
 import com.yingshi.server.service.content.MediaService;
 import com.yingshi.server.service.content.MediaFilePayload;
 import com.yingshi.server.service.trash.TrashService;
@@ -52,8 +54,18 @@ public class MediaController {
     @GetMapping("/feed")
     public ApiResponse<List<MediaDto>> getMediaFeed(
             @CurrentUser AuthenticatedUser currentUser,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) Integer pageSize,
             HttpServletRequest request
     ) {
+        if (cursor != null || pageSize != null) {
+            MediaFeedPage page = mediaService.getMediaFeedPage(currentUser, cursor, pageSize);
+            return ApiResponse.success(
+                    requestId(request),
+                    page.items(),
+                    new PageInfo(1, page.pageSize(), page.nextCursor(), page.hasMore())
+            );
+        }
         return ApiResponse.success(requestId(request), mediaService.getMediaFeed(currentUser));
     }
 

@@ -7,6 +7,7 @@ import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.dto.content.MediaDto;
+import com.yingshi.server.dto.content.MediaFeedPage;
 import com.yingshi.server.mapper.ContentMapper;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.PostMediaRepository;
@@ -17,16 +18,20 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.nio.charset.StandardCharsets;
 
 @Service
 public class MediaService {
 
+    private static final int DEFAULT_FEED_PAGE_SIZE = 60;
+    private static final int MAX_FEED_PAGE_SIZE = 120;
     private final MediaRepository mediaRepository;
     private final PostMediaRepository postMediaRepository;
     private final PostRepository postRepository;
@@ -89,6 +94,29 @@ public class MediaService {
         return results;
     }
 
+    public MediaFeedPage getMediaFeedPage(AuthenticatedUser currentUser, String cursor, Integer pageSize) {
+        int normalizedPageSize = normalizePageSize(pageSize);
+        List<MediaDto> allItems = getMediaFeed(currentUser);
+        if (allItems.isEmpty()) {
+            return new MediaFeedPage(List.of(), null, false, normalizedPageSize);
+        }
+
+        Cursor decodedCursor = decodeCursor(cursor);
+        int startIndex = decodedCursor == null ? 0 : indexAfterCursor(allItems, decodedCursor);
+        if (startIndex >= allItems.size()) {
+            return new MediaFeedPage(List.of(), null, false, normalizedPageSize);
+        }
+
+        int endExclusive = Math.min(startIndex + normalizedPageSize, allItems.size());
+        List<MediaDto> pageItems = allItems.subList(startIndex, endExclusive);
+        boolean hasMore = endExclusive < allItems.size();
+        String nextCursor = hasMore && !pageItems.isEmpty()
+                ? encodeCursor(pageItems.get(pageItems.size() - 1))
+                : null;
+
+        return new MediaFeedPage(pageItems, nextCursor, hasMore, normalizedPageSize);
+    }
+
     public MediaFilePayload loadMediaFile(String mediaId, String variant, AuthenticatedUser currentUser) {
         MediaEntity media = mediaRepository.findByIdAndLibraryId(mediaId, currentUser.libraryId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Media was not found."));
@@ -125,5 +153,57 @@ public class MediaService {
 
     private boolean isRenderableMedia(MediaEntity media, List<String> postIds) {
         return true;
+    }
+
+    private int normalizePageSize(Integer pageSize) {
+        if (pageSize == null || pageSize <= 0) {
+            return DEFAULT_FEED_PAGE_SIZE;
+        }
+        return Math.min(pageSize, MAX_FEED_PAGE_SIZE);
+    }
+
+    private int indexAfterCursor(List<MediaDto> items, Cursor cursor) {
+        for (int index = 0; index < items.size(); index++) {
+            MediaDto item = items.get(index);
+            if (item.displayTimeMillis().equals(cursor.displayTimeMillis()) && item.mediaId().equals(cursor.mediaId())) {
+                return index + 1;
+            }
+        }
+        for (int index = 0; index < items.size(); index++) {
+            MediaDto item = items.get(index);
+            if (item.displayTimeMillis() < cursor.displayTimeMillis()) {
+                return index;
+            }
+            if (item.displayTimeMillis().equals(cursor.displayTimeMillis()) && item.mediaId().compareTo(cursor.mediaId()) > 0) {
+                return index;
+            }
+        }
+        return items.size();
+    }
+
+    private String encodeCursor(MediaDto item) {
+        String rawCursor = item.displayTimeMillis() + "|" + item.mediaId();
+        return Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(rawCursor.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private Cursor decodeCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            return null;
+        }
+        try {
+            String rawCursor = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+            String[] parts = rawCursor.split("\\|", 2);
+            if (parts.length != 2 || parts[1].isBlank()) {
+                return null;
+            }
+            return new Cursor(Long.parseLong(parts[0]), parts[1]);
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
+    }
+
+    private record Cursor(long displayTimeMillis, String mediaId) {
     }
 }

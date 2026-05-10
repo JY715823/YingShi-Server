@@ -127,10 +127,34 @@ class YingshiServerApplicationTests {
         mockMvc.perform(get("/api/media/feed")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").doesNotExist())
                 .andExpect(jsonPath("$.data.length()").value(6))
                 .andExpect(jsonPath("$.data[0].mediaId").value("media_001"))
                 .andExpect(jsonPath("$.data[0].url").value("/api/media/files/media_001"))
                 .andExpect(jsonPath("$.data[0].postIds.length()").value(2));
+
+        MvcResult firstFeedPageResult = mockMvc.perform(get("/api/media/feed")
+                        .queryParam("pageSize", "2")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].mediaId").value("media_001"))
+                .andExpect(jsonPath("$.data[1].mediaId").value("media_002"))
+                .andExpect(jsonPath("$.page.pageSize").value(2))
+                .andExpect(jsonPath("$.page.hasMore").value(true))
+                .andExpect(jsonPath("$.page.nextCursor").isNotEmpty())
+                .andReturn();
+
+        String nextCursor = readField(firstFeedPageResult, "/page/nextCursor");
+        mockMvc.perform(get("/api/media/feed")
+                        .queryParam("cursor", nextCursor)
+                        .queryParam("pageSize", "2")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].mediaId").value("media_003"))
+                .andExpect(jsonPath("$.data[1].mediaId").value("media_004"))
+                .andExpect(jsonPath("$.page.hasMore").value(true));
 
         mockMvc.perform(get("/api/media/files/media_001")
                         .header("Authorization", "Bearer " + accessToken))
