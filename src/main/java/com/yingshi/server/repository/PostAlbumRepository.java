@@ -13,4 +13,6 @@ public interface PostAlbumRepository extends JpaRepository<PostAlbumEntity, Stri
     List<PostAlbumEntity> findByLibraryIdAndPostId(String libraryId, String postId);
 
     List<PostAlbumEntity> findByLibraryIdAndPostIdIn(String libraryId, Collection<String> postIds);
+
+    void deleteByLibraryIdAndPostId(String libraryId, String postId);
 }

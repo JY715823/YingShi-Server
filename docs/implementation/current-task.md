@@ -1,31 +1,32 @@
-# Current Task: Legacy Preview Cleanup
+﻿# Current Task: Trash Restore And Permanent Delete Closure
 
 ## Background
 
-Local image previews now use `preview-v2` file names and video covers use `cover-v1`. Older generated previews used names such as `media_xxx-720.jpg`. They can be removed safely as long as originals, preview-v2 files, video covers, and video sources are never touched.
+The trash API already supports soft delete and restore. This pass adds explicit permanent deletion for in-trash items and safe local-storage cleanup for globally deleted media.
 
 ## Goals
 
-1. Clean up only legacy local preview files under `local-storage/previews`.
-2. Keep original media files, preview-v2 files, cover-v1 files, and video sources untouched.
-3. Make cleanup best-effort so failures do not affect server startup, upload, or media access.
-4. Preserve current preview/cover regeneration behavior for old media.
+1. Restore endpoints continue to restore posts, removed post-media relations, and globally deleted media.
+2. Add a permanent delete endpoint for in-trash items.
+3. Permanently deleting `mediaSystemDeleted` removes the media record and that media's owned original / `preview-v2` / `cover-v1` local-storage files.
+4. Permanent delete failures must not fake success; the trash item remains if cleanup cannot be completed.
+5. Keep system gallery semantics out of Server local-storage deletion.
 
 ## Scope
 
-- Local storage legacy preview file matching.
-- Dev startup cleanup runner.
-- Contract documentation for preview/cover file lifecycle.
+- `TrashController` / `TrashService` purge flow.
+- `LocalMediaStorageService` safe file deletion helpers.
+- Trash API contract and backend tests.
 
 ## Non Goals
 
-- No full cache-management page.
-- No OSS, HLS, transcoding, or object-storage migration.
-- No upload center, trash, post detail, paging, or Viewer playback-control changes.
+- No OSS/HLS/transcoding.
+- No Android cache cleanup changes.
+- No scheduled purge worker.
 
 ## Acceptance
 
-1. Legacy files matching `media_xxx-<size>.jpg` under `previews` can be deleted.
-2. Files containing `preview-v2` or `cover-v1` are never deleted by this cleanup.
-3. Cleanup errors are swallowed and do not block the server.
+1. `POST /api/trash/items/{trashItemId}/purge` works for in-trash items.
+2. `mediaSystemDeleted` purge removes the media DB row and owned local files.
+3. Non-media purge does not delete unrelated media files.
 4. Server `mvnw test` passes.

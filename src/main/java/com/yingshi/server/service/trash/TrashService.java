@@ -19,9 +19,12 @@ import com.yingshi.server.dto.trash.TrashItemDto;
 import com.yingshi.server.dto.trash.TrashPageResponse;
 import com.yingshi.server.mapper.TrashMapper;
 import com.yingshi.server.repository.MediaRepository;
+import com.yingshi.server.repository.CommentRepository;
+import com.yingshi.server.repository.PostAlbumRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.TrashItemRepository;
+import com.yingshi.server.service.upload.LocalMediaStorageService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -51,7 +54,10 @@ public class TrashService {
     private final PostRepository postRepository;
     private final MediaRepository mediaRepository;
     private final PostMediaRepository postMediaRepository;
+    private final PostAlbumRepository postAlbumRepository;
+    private final CommentRepository commentRepository;
     private final TrashMapper trashMapper;
+    private final LocalMediaStorageService localMediaStorageService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public TrashService(
@@ -59,13 +65,19 @@ public class TrashService {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            TrashMapper trashMapper
+            PostAlbumRepository postAlbumRepository,
+            CommentRepository commentRepository,
+            TrashMapper trashMapper,
+            LocalMediaStorageService localMediaStorageService
     ) {
         this.trashItemRepository = trashItemRepository;
         this.postRepository = postRepository;
         this.mediaRepository = mediaRepository;
         this.postMediaRepository = postMediaRepository;
+        this.postAlbumRepository = postAlbumRepository;
+        this.commentRepository = commentRepository;
         this.trashMapper = trashMapper;
+        this.localMediaStorageService = localMediaStorageService;
     }
 
     @Transactional
@@ -220,6 +232,24 @@ public class TrashService {
     }
 
     @Transactional
+    public TrashItemDto purgeTrashItem(String trashItemId, AuthenticatedUser currentUser) {
+        TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
+        if (item.getState() != TrashItemState.IN_TRASH) {
+            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Only in-trash items can be permanently deleted.");
+        }
+
+        TrashItemDto itemDto = toTrashItemDto(item);
+        switch (item.getItemType()) {
+            case POST_DELETED -> purgePostDeleted(item, currentUser.libraryId());
+            case MEDIA_REMOVED -> purgeMediaRemoved(item);
+            case MEDIA_SYSTEM_DELETED -> purgeMediaSystemDeleted(item, currentUser.libraryId());
+            default -> throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Unsupported trash item type.");
+        }
+        trashItemRepository.delete(item);
+        return itemDto;
+    }
+
+    @Transactional
     public TrashItemDto undoRemove(String trashItemId, AuthenticatedUser currentUser) {
         TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
         if (item.getState() != TrashItemState.PENDING_CLEANUP) {
@@ -349,6 +379,30 @@ public class TrashService {
                         }
                     });
         }
+    }
+
+    private void purgePostDeleted(TrashItemEntity item, String libraryId) {
+        PostDeletedSnapshot snapshot = readSnapshot(item.getSnapshotJson(), PostDeletedSnapshot.class);
+        postMediaRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.postId());
+        postAlbumRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.postId());
+        commentRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.postId());
+        postRepository.findByIdAndLibraryId(snapshot.postId(), libraryId).ifPresent(postRepository::delete);
+    }
+
+    private void purgeMediaRemoved(TrashItemEntity item) {
+        // Removing a media-from-post trash record only makes that relation deletion final.
+        // The media file itself remains App content and may still appear in the photo feed or other posts.
+    }
+
+    private void purgeMediaSystemDeleted(TrashItemEntity item, String libraryId) {
+        MediaSystemDeletedSnapshot snapshot = readSnapshot(item.getSnapshotJson(), MediaSystemDeletedSnapshot.class);
+        MediaEntity media = mediaRepository.findByIdAndLibraryId(snapshot.mediaId(), libraryId)
+                .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Media can no longer be permanently deleted."));
+
+        localMediaStorageService.deleteStoredMediaFiles(media.getStoragePath(), media.getId());
+        postMediaRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
+        commentRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
+        mediaRepository.delete(media);
     }
 
     private TrashItemEntity createTrashItem(

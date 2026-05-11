@@ -29,8 +29,10 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -227,6 +229,48 @@ public class LocalMediaStorageService {
         }
     }
 
+    public List<String> deleteStoredMediaFiles(String storagePath, String cacheKey) {
+        Set<Path> candidates = new LinkedHashSet<>();
+        Path sourcePath = resolveStoragePath(storagePath);
+        if (!sourcePath.startsWith(rootPath)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Media path is outside of the configured local storage root.");
+        }
+        candidates.add(sourcePath);
+
+        Path previewRoot = rootPath.resolve("previews").normalize();
+        if (Files.exists(previewRoot)) {
+            try (Stream<Path> stream = Files.walk(previewRoot)) {
+                stream
+                        .filter(Files::isRegularFile)
+                        .filter(path -> isDerivedFileForCacheKey(path, cacheKey))
+                        .forEach(candidates::add);
+            } catch (IOException exception) {
+                throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to scan media preview files for deletion.");
+            }
+        }
+
+        List<String> deletedFiles = new java.util.ArrayList<>();
+        for (Path candidate : candidates) {
+            Path normalized = candidate.toAbsolutePath().normalize();
+            if (!normalized.startsWith(rootPath)) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Refusing to delete media file outside local storage.");
+            }
+            if (!Files.exists(normalized)) {
+                continue;
+            }
+            if (!Files.isRegularFile(normalized)) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Refusing to delete non-file media path.");
+            }
+            try {
+                Files.delete(normalized);
+                deletedFiles.add(toRelativeStoragePath(normalized));
+            } catch (IOException exception) {
+                throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to delete stored media file.");
+            }
+        }
+        return deletedFiles;
+    }
+
     private String sanitizeFileName(String fileName) {
         return fileName.replaceAll("[^A-Za-z0-9._-]", "_");
     }
@@ -281,6 +325,16 @@ public class LocalMediaStorageService {
             return false;
         }
         return LEGACY_PREVIEW_FILE_NAME.matcher(fileName).matches();
+    }
+
+    private boolean isDerivedFileForCacheKey(Path path, String cacheKey) {
+        Path normalized = path.toAbsolutePath().normalize();
+        Path previewRoot = rootPath.resolve("previews").normalize();
+        if (!normalized.startsWith(previewRoot)) {
+            return false;
+        }
+        String fileName = normalized.getFileName().toString();
+        return fileName.startsWith(cacheKey + "-preview-v2-") || fileName.startsWith(cacheKey + "-cover-v1-");
     }
 
     private Path resolveStoragePath(String storagePath) {

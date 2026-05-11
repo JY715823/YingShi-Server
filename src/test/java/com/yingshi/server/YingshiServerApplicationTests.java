@@ -11,7 +11,12 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -565,6 +570,74 @@ class YingshiServerApplicationTests {
     }
 
     @Test
+    void permanentDeleteSystemDeletedMediaRemovesRecordAndLocalFiles() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+        byte[] fileBytes = jpegBytes();
+
+        MvcResult tokenResult = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fileName": "purge-demo.jpg",
+                                  "mimeType": "image/jpeg",
+                                  "fileSizeBytes": %d,
+                                  "mediaType": "image",
+                                  "width": 800,
+                                  "height": 600,
+                                  "durationMillis": null,
+                                  "displayTimeMillis": 1777416600000,
+                                  "sourceFingerprint": "test-purge-source-001"
+                                }
+                                """.formatted(fileBytes.length)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String uploadId = readField(tokenResult, "/data/uploadId");
+        MockMultipartFile multipartFile = new MockMultipartFile("file", "purge-demo.jpg", "image/jpeg", fileBytes);
+
+        MvcResult uploadResult = mockMvc.perform(multipart("/api/uploads/" + uploadId + "/file")
+                        .file(multipartFile)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String mediaId = readField(uploadResult, "/data/media/mediaId");
+        Path originalPath = Path.of("local-storage", "originals", "2026", "04", mediaId + ".jpg");
+        assertTrue(Files.exists(originalPath), "uploaded original should exist before purge");
+
+        MvcResult deleteResult = mockMvc.perform(delete("/api/media/" + mediaId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("mediaSystemDeleted"))
+                .andReturn();
+        String trashItemId = readField(deleteResult, "/data/trashItemId");
+
+        mockMvc.perform(get("/api/media/files/" + mediaId)
+                        .queryParam("variant", "preview")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk());
+        Path previewPath = Path.of("local-storage", "previews", "2026", "04", mediaId + "-preview-v2-1280.jpg");
+        assertTrue(Files.exists(previewPath), "generated preview should exist before purge");
+
+        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/purge")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trashItemId").value(trashItemId));
+
+        mockMvc.perform(get("/api/trash/items/" + trashItemId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("TRASH_ITEM_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/media/files/" + mediaId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound());
+        assertTrue(Files.notExists(originalPath), "original should be physically deleted");
+        assertTrue(Files.notExists(previewPath), "preview should be physically deleted");
+    }
+
+    @Test
     void deletedPostCanBeRestoredFromTrashWithCommentVisibility() throws Exception {
         String accessToken = loginAndGetAccessToken();
 
@@ -619,6 +692,13 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andReturn();
         return readField(loginResult, "/data/accessToken");
+    }
+
+    private byte[] jpegBytes() throws Exception {
+        BufferedImage image = new BufferedImage(4, 3, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        ImageIO.write(image, "jpg", outputStream);
+        return outputStream.toByteArray();
     }
 
     private String readField(MvcResult mvcResult, String pointer) throws Exception {

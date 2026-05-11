@@ -77,6 +77,16 @@ public class TrashController {
         return ApiResponse.success(requestId(request), trashService.moveOutOfTrash(trashItemId, currentUser));
     }
 
+    @Operation(summary = "Permanently delete trash item", security = @SecurityRequirement(name = "bearerAuth"))
+    @PostMapping("/items/{trashItemId}/purge")
+    public ApiResponse<TrashItemDto> purgeTrashItem(
+            @PathVariable String trashItemId,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), trashService.purgeTrashItem(trashItemId, currentUser));
+    }
+
     @Operation(summary = "Undo remove from trash", security = @SecurityRequirement(name = "bearerAuth"))
     @PostMapping("/items/{trashItemId}/undo-remove")
     public ApiResponse<TrashItemDto> undoRemove(

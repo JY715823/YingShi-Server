@@ -9,7 +9,7 @@
 - bearer auth required for all endpoints
 - list pagination defaults to `page=1`, `size=10`
 - list sort order is newest `deletedAtMillis` first
-- current backend has no direct purge endpoint
+- current backend supports direct permanent delete through `purge`
 
 ## Trash Item DTO
 
@@ -132,6 +132,26 @@ Notes:
 - Android REAL mode maps `postDeleted` / `mediaRemoved` / `mediaSystemDeleted` directly from backend
 - `remove` means move to `pendingCleanup`, and `undo-remove` is the 24h撤销入口
 - Trash detail rows should be able to render original deleted content by using `sourceMediaId` and `relatedMediaIds` with `/api/media/files/{mediaId}`. Active lists still hide deleted media; this is a read-only trash preview path.
+
+### `POST /api/trash/items/{trashItemId}/purge`
+
+Permanently deletes an in-trash item.
+
+Response:
+- returns the deleted `TrashItemDto`
+
+Behavior:
+- `postDeleted`: deletes the trash item and the deleted post record / post relations / post comments. It does not delete media files because those media may still belong to the global media library or other posts.
+- `mediaRemoved`: deletes only the trash item, making the relation removal final. It does not delete the media record or physical files.
+- `mediaSystemDeleted`: deletes the trash item, media record, media comments, and the media's explicitly owned local-storage files.
+
+Physical file cleanup for `mediaSystemDeleted`:
+- deletes the media original under `local-storage/originals`
+- deletes matching `preview-v2` and `cover-v1` files under `local-storage/previews`
+- refuses paths outside configured local storage
+- does not delete directories or files owned by other media
+
+If any required physical deletion fails, the request fails and the trash item remains available.
 
 ### `POST /api/trash/items/{trashItemId}/undo-remove`
 

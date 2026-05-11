@@ -24,4 +24,8 @@ public interface CommentRepository extends JpaRepository<CommentEntity, String> 
     );
 
     Optional<CommentEntity> findByIdAndLibraryId(String id, String libraryId);
+
+    void deleteByLibraryIdAndPostId(String libraryId, String postId);
+
+    void deleteByLibraryIdAndMediaId(String libraryId, String mediaId);
 }
