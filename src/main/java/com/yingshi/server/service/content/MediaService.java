@@ -37,7 +37,8 @@ public class MediaService {
     private final PostRepository postRepository;
     private final ContentMapper contentMapper;
     private final LocalMediaStorageService localMediaStorageService;
-    private static final int PREVIEW_MAX_DIMENSION = 720;
+    private static final int PREVIEW_MAX_DIMENSION = 1280;
+    private static final int VIDEO_COVER_MAX_DIMENSION = 1280;
 
     public MediaService(
             MediaRepository mediaRepository,
@@ -124,7 +125,7 @@ public class MediaService {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Local file is not available for this media.");
         }
         Resource resource = resolveMediaResource(media, variant);
-        String mimeType = "preview".equalsIgnoreCase(variant) && media.getMediaType() == com.yingshi.server.domain.MediaType.IMAGE
+        String mimeType = isJpegVariant(media, variant)
                 ? "image/jpeg"
                 : media.getMimeType();
         Long contentLength = null;
@@ -148,7 +149,19 @@ public class MediaService {
                 return localMediaStorageService.load(media.getStoragePath());
             }
         }
+        if (("cover".equalsIgnoreCase(variant) || "preview".equalsIgnoreCase(variant)) &&
+                media.getMediaType() == com.yingshi.server.domain.MediaType.VIDEO) {
+            return localMediaStorageService.loadVideoCover(media.getStoragePath(), media.getId(), VIDEO_COVER_MAX_DIMENSION);
+        }
         return localMediaStorageService.load(media.getStoragePath());
+    }
+
+    private boolean isJpegVariant(MediaEntity media, String variant) {
+        if (media.getMediaType() == com.yingshi.server.domain.MediaType.IMAGE) {
+            return "preview".equalsIgnoreCase(variant);
+        }
+        return media.getMediaType() == com.yingshi.server.domain.MediaType.VIDEO &&
+                ("preview".equalsIgnoreCase(variant) || "cover".equalsIgnoreCase(variant));
     }
 
     private boolean isRenderableMedia(MediaEntity media, List<String> postIds) {

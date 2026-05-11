@@ -11,7 +11,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageOutputStream;
 import java.awt.Graphics2D;
+import java.awt.Color;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -24,14 +28,21 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
+import com.drew.imaging.ImageMetadataReader;
+import com.drew.metadata.Metadata;
+import com.drew.metadata.exif.ExifIFD0Directory;
 
 @Service
 public class LocalMediaStorageService {
 
     private static final DateTimeFormatter STORAGE_MONTH_FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM");
+    private static final int JPEG_PREVIEW_QUALITY_PERCENT = 90;
+    private static final long VIDEO_COVER_TIMEOUT_SECONDS = 20L;
 
     private final Path rootPath;
 
@@ -72,22 +83,77 @@ public class LocalMediaStorageService {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
         }
 
-        Path previewDirectory = previewDirectoryFor(sourcePath);
-        Path previewPath = previewDirectory.resolve(cacheKey + "-" + maxDimension + ".jpg").normalize();
-        try {
-            if (shouldRegeneratePreview(sourcePath, previewPath)) {
-                Files.createDirectories(previewDirectory);
-                BufferedImage sourceImage = ImageIO.read(sourcePath.toFile());
-                if (sourceImage == null || sourceImage.getWidth() <= 0 || sourceImage.getHeight() <= 0) {
-                    throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Preview could not be generated for this media.");
-                }
-                BufferedImage previewImage = resizeImage(sourceImage, maxDimension);
-                ImageIO.write(previewImage, "jpg", previewPath.toFile());
-            }
-        } catch (IOException exception) {
-            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to generate local preview file.");
+        Path previewPath = imagePreviewPath(sourcePath, cacheKey, maxDimension);
+        if (!ensureImagePreview(storagePath, cacheKey, maxDimension)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Preview could not be generated for this media.");
         }
         return new FileSystemResource(previewPath);
+    }
+
+    public boolean ensureImagePreview(String storagePath, String cacheKey, int maxDimension) {
+        Path sourcePath = resolveStoragePath(storagePath);
+        if (!Files.exists(sourcePath)) {
+            return false;
+        }
+        Path previewPath = imagePreviewPath(sourcePath, cacheKey, maxDimension);
+        try {
+            if (!shouldRegeneratePreview(sourcePath, previewPath)) {
+                return true;
+            }
+            Files.createDirectories(previewPath.getParent());
+            BufferedImage sourceImage = ImageIO.read(sourcePath.toFile());
+            if (sourceImage == null || sourceImage.getWidth() <= 0 || sourceImage.getHeight() <= 0) {
+                return false;
+            }
+            BufferedImage previewImage = resizeImage(applyExifOrientation(sourcePath, sourceImage), maxDimension);
+            writeJpeg(previewImage, previewPath, JPEG_PREVIEW_QUALITY_PERCENT / 100f);
+            return Files.exists(previewPath) && Files.size(previewPath) > 0L;
+        } catch (IOException exception) {
+            return false;
+        }
+    }
+
+    public Resource loadVideoCover(String storagePath, String cacheKey, int maxDimension) {
+        Path sourcePath = resolveStoragePath(storagePath);
+        if (!Files.exists(sourcePath)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
+        }
+        Path coverPath = videoCoverPath(sourcePath, cacheKey, maxDimension);
+        if (!ensureVideoCover(storagePath, cacheKey, maxDimension)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Video cover could not be generated for this media.");
+        }
+        return new FileSystemResource(coverPath);
+    }
+
+    public boolean ensureVideoCover(String storagePath, String cacheKey, int maxDimension) {
+        Path sourcePath = resolveStoragePath(storagePath);
+        if (!Files.exists(sourcePath)) {
+            return false;
+        }
+        Path coverPath = videoCoverPath(sourcePath, cacheKey, maxDimension);
+        try {
+            if (!shouldRegeneratePreview(sourcePath, coverPath)) {
+                return true;
+            }
+            Files.createDirectories(coverPath.getParent());
+            Path tempFrame = Files.createTempFile(coverPath.getParent(), cacheKey + "-cover-frame-", ".jpg");
+            try {
+                if (!extractVideoFrame(sourcePath, tempFrame, "1") && !extractVideoFrame(sourcePath, tempFrame, "0")) {
+                    return false;
+                }
+                BufferedImage frameImage = ImageIO.read(tempFrame.toFile());
+                if (frameImage == null || frameImage.getWidth() <= 0 || frameImage.getHeight() <= 0) {
+                    return false;
+                }
+                BufferedImage coverImage = resizeImage(frameImage, maxDimension);
+                writeJpeg(coverImage, coverPath, JPEG_PREVIEW_QUALITY_PERCENT / 100f);
+                return Files.exists(coverPath) && Files.size(coverPath) > 0L;
+            } finally {
+                Files.deleteIfExists(tempFrame);
+            }
+        } catch (IOException exception) {
+            return false;
+        }
     }
 
     public String ensureSeedImage(String seedName, int sourceOffset) {
@@ -165,6 +231,18 @@ public class LocalMediaStorageService {
         return rootPath.resolve("previews").normalize();
     }
 
+    private Path imagePreviewPath(Path sourcePath, String cacheKey, int maxDimension) {
+        return previewDirectoryFor(sourcePath)
+                .resolve(cacheKey + "-preview-v2-" + maxDimension + ".jpg")
+                .normalize();
+    }
+
+    private Path videoCoverPath(Path sourcePath, String cacheKey, int maxDimension) {
+        return previewDirectoryFor(sourcePath)
+                .resolve(cacheKey + "-cover-v1-" + maxDimension + ".jpg")
+                .normalize();
+    }
+
     private Path resolveStoragePath(String storagePath) {
         Path rawPath = Paths.get(storagePath);
         if (rawPath.isAbsolute()) {
@@ -185,8 +263,9 @@ public class LocalMediaStorageService {
         int sourceHeight = sourceImage.getHeight();
         int longestEdge = Math.max(sourceWidth, sourceHeight);
         if (longestEdge <= maxDimension) {
-            BufferedImage copied = new BufferedImage(sourceWidth, sourceHeight, BufferedImage.TYPE_INT_RGB);
+            BufferedImage copied = rgbImage(sourceWidth, sourceHeight);
             Graphics2D graphics = copied.createGraphics();
+            configureHighQualityRendering(graphics);
             graphics.drawImage(sourceImage, 0, 0, null);
             graphics.dispose();
             return copied;
@@ -195,14 +274,136 @@ public class LocalMediaStorageService {
         double scale = maxDimension / (double) longestEdge;
         int targetWidth = Math.max(1, (int) Math.round(sourceWidth * scale));
         int targetHeight = Math.max(1, (int) Math.round(sourceHeight * scale));
-        BufferedImage resized = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_RGB);
+        BufferedImage resized = rgbImage(targetWidth, targetHeight);
         Graphics2D graphics = resized.createGraphics();
-        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        configureHighQualityRendering(graphics);
         graphics.drawImage(sourceImage, 0, 0, targetWidth, targetHeight, null);
         graphics.dispose();
         return resized;
+    }
+
+    private BufferedImage rgbImage(int width, int height) {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = image.createGraphics();
+        graphics.setColor(Color.WHITE);
+        graphics.fillRect(0, 0, width, height);
+        graphics.dispose();
+        return image;
+    }
+
+    private void configureHighQualityRendering(Graphics2D graphics) {
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        graphics.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY);
+        graphics.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_QUALITY);
+    }
+
+    private BufferedImage applyExifOrientation(Path sourcePath, BufferedImage image) {
+        int orientation = readExifOrientation(sourcePath);
+        return switch (orientation) {
+            case 3 -> rotate180(image);
+            case 6 -> rotate90Clockwise(image);
+            case 8 -> rotate90CounterClockwise(image);
+            default -> image;
+        };
+    }
+
+    private int readExifOrientation(Path sourcePath) {
+        try {
+            Metadata metadata = ImageMetadataReader.readMetadata(sourcePath.toFile());
+            ExifIFD0Directory directory = metadata.getFirstDirectoryOfType(ExifIFD0Directory.class);
+            return directory == null ? 1 : directory.getInt(ExifIFD0Directory.TAG_ORIENTATION);
+        } catch (Exception exception) {
+            return 1;
+        }
+    }
+
+    private BufferedImage rotate180(BufferedImage image) {
+        BufferedImage rotated = rgbImage(image.getWidth(), image.getHeight());
+        Graphics2D graphics = rotated.createGraphics();
+        configureHighQualityRendering(graphics);
+        graphics.rotate(Math.PI, image.getWidth() / 2.0, image.getHeight() / 2.0);
+        graphics.drawImage(image, 0, 0, null);
+        graphics.dispose();
+        return rotated;
+    }
+
+    private BufferedImage rotate90Clockwise(BufferedImage image) {
+        BufferedImage rotated = rgbImage(image.getHeight(), image.getWidth());
+        Graphics2D graphics = rotated.createGraphics();
+        configureHighQualityRendering(graphics);
+        graphics.translate(image.getHeight(), 0);
+        graphics.rotate(Math.PI / 2);
+        graphics.drawImage(image, 0, 0, null);
+        graphics.dispose();
+        return rotated;
+    }
+
+    private BufferedImage rotate90CounterClockwise(BufferedImage image) {
+        BufferedImage rotated = rgbImage(image.getHeight(), image.getWidth());
+        Graphics2D graphics = rotated.createGraphics();
+        configureHighQualityRendering(graphics);
+        graphics.translate(0, image.getWidth());
+        graphics.rotate(-Math.PI / 2);
+        graphics.drawImage(image, 0, 0, null);
+        graphics.dispose();
+        return rotated;
+    }
+
+    private void writeJpeg(BufferedImage image, Path targetPath, float quality) throws IOException {
+        Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName("jpg");
+        if (!writers.hasNext()) {
+            ImageIO.write(image, "jpg", targetPath.toFile());
+            return;
+        }
+        ImageWriter writer = writers.next();
+        try (ImageOutputStream outputStream = ImageIO.createImageOutputStream(targetPath.toFile())) {
+            ImageWriteParam params = writer.getDefaultWriteParam();
+            if (params.canWriteCompressed()) {
+                params.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+                params.setCompressionQuality(Math.max(0.1f, Math.min(1f, quality)));
+            }
+            writer.setOutput(outputStream);
+            writer.write(null, new javax.imageio.IIOImage(image, null, null), params);
+        } finally {
+            writer.dispose();
+        }
+    }
+
+    private boolean extractVideoFrame(Path sourcePath, Path targetPath, String seekSeconds) {
+        Process process = null;
+        try {
+            process = new ProcessBuilder(
+                    "ffmpeg",
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-ss",
+                    seekSeconds,
+                    "-i",
+                    sourcePath.toString(),
+                    "-frames:v",
+                    "1",
+                    targetPath.toString()
+            ).redirectErrorStream(true).start();
+            boolean completed = process.waitFor(VIDEO_COVER_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0 && Files.exists(targetPath) && Files.size(targetPath) > 0L;
+        } catch (IOException exception) {
+            return false;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return false;
+        } finally {
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
+        }
     }
 
     private List<Path> findSeedSourceImages() throws IOException {

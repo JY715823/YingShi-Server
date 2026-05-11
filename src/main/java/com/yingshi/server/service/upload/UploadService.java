@@ -29,6 +29,7 @@ import java.util.Locale;
 public class UploadService {
 
     private static final Duration UPLOAD_TTL = Duration.ofMinutes(30);
+    private static final int PREVIEW_MAX_DIMENSION = 1280;
 
     private final UploadTaskRepository uploadTaskRepository;
     private final MediaRepository mediaRepository;
@@ -129,6 +130,7 @@ public class UploadService {
         );
 
         MediaEntity media = buildMediaFromTask(mediaId, task, storedFile.storagePath());
+        warmPreviewIfPossible(media);
         mediaRepository.save(media);
 
         task.setState(UploadState.SUCCESS);
@@ -191,10 +193,10 @@ public class UploadService {
         media.setLibraryId(task.getLibraryId());
         media.setMediaType(task.getMediaType());
         media.setUrl(mediaUrl);
-        media.setPreviewUrl(mediaUrl);
+        media.setPreviewUrl(task.getMediaType() == MediaType.IMAGE ? mediaUrl + "?variant=preview" : null);
         media.setOriginalUrl(task.getMediaType() == MediaType.IMAGE ? mediaUrl : null);
         media.setVideoUrl(task.getMediaType() == MediaType.VIDEO ? mediaUrl : null);
-        media.setCoverUrl(task.getMediaType() == MediaType.VIDEO ? mediaUrl : null);
+        media.setCoverUrl(null);
         media.setMimeType(task.getMimeType());
         media.setSizeBytes(task.getFileSizeBytes());
         media.setWidth(task.getWidth());
@@ -208,6 +210,18 @@ public class UploadService {
         media.setStoragePath(storedPath);
         media.setSourceFingerprint(task.getSourceFingerprint());
         return media;
+    }
+
+    private void warmPreviewIfPossible(MediaEntity media) {
+        if (media.getMediaType() == MediaType.IMAGE) {
+            if (!localMediaStorageService.ensureImagePreview(media.getStoragePath(), media.getId(), PREVIEW_MAX_DIMENSION)) {
+                media.setPreviewUrl(media.getUrl());
+            }
+            return;
+        }
+        if (media.getMediaType() == MediaType.VIDEO) {
+            media.setCoverUrl(media.getUrl() + "?variant=cover");
+        }
     }
 
     private String normalizeSourceFingerprint(String rawFingerprint) {

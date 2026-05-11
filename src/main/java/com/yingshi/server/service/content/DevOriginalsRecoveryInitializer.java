@@ -54,6 +54,8 @@ public class DevOriginalsRecoveryInitializer {
     private static final int DEFAULT_VIDEO_HEIGHT = 1920;
     private static final long DEFAULT_VIDEO_DURATION_MILLIS = 15_000L;
     private static final long MIN_RECOVERABLE_FILE_SIZE_BYTES = 1024L;
+    private static final int PREVIEW_MAX_DIMENSION = 1280;
+    private static final int VIDEO_COVER_MAX_DIMENSION = 1280;
 
     @Bean
     @Order(5)
@@ -91,12 +93,16 @@ public class DevOriginalsRecoveryInitializer {
             Optional<MediaEntity> existingMedia = mediaRepository.findByIdAndLibraryId(media.getId(), libraryId);
             if (existingMedia.isPresent()) {
                 existingCount++;
-                if (correctRecoveredTime(existingMedia.get(), media.getDisplayTimeMillis())) {
-                    mediaRepository.save(existingMedia.get());
+                MediaEntity existing = existingMedia.get();
+                boolean changed = correctRecoveredTime(existing, media.getDisplayTimeMillis());
+                changed = ensureRecoveredPreview(existing, localMediaStorageService) || changed;
+                if (changed) {
+                    mediaRepository.save(existing);
                     correctedCount++;
                 }
                 continue;
             }
+            ensureRecoveredPreview(media, localMediaStorageService);
             mediaRepository.save(media);
             restoredCount++;
         }
@@ -144,10 +150,10 @@ public class DevOriginalsRecoveryInitializer {
         media.setLibraryId(libraryId);
         media.setMediaType(mediaType);
         media.setUrl(mediaUrl);
-        media.setPreviewUrl(mediaUrl);
+        media.setPreviewUrl(mediaType == MediaType.IMAGE ? mediaUrl + "?variant=preview" : null);
         media.setOriginalUrl(mediaType == MediaType.IMAGE ? mediaUrl : null);
         media.setVideoUrl(mediaType == MediaType.VIDEO ? mediaUrl : null);
-        media.setCoverUrl(mediaType == MediaType.VIDEO ? mediaUrl : null);
+        media.setCoverUrl(null);
         media.setMimeType(mimeTypeForPath(path, mediaType));
         media.setSizeBytes(sizeBytes);
         media.setWidth(dimensions.width());
@@ -162,6 +168,34 @@ public class DevOriginalsRecoveryInitializer {
         media.setSourceFingerprint("recovered:" + shortHash(storagePath));
         media.setDeletedAt(null);
         return media;
+    }
+
+    private boolean ensureRecoveredPreview(
+            MediaEntity media,
+            LocalMediaStorageService localMediaStorageService
+    ) {
+        if (media.getStoragePath() == null || media.getStoragePath().isBlank()) {
+            return false;
+        }
+        String mediaUrl = "/api/media/files/" + media.getId();
+        if (media.getMediaType() == MediaType.IMAGE) {
+            boolean ready = localMediaStorageService.ensureImagePreview(media.getStoragePath(), media.getId(), PREVIEW_MAX_DIMENSION);
+            String desiredPreviewUrl = ready ? mediaUrl + "?variant=preview" : mediaUrl;
+            if (!desiredPreviewUrl.equals(media.getPreviewUrl())) {
+                media.setPreviewUrl(desiredPreviewUrl);
+                return true;
+            }
+            return false;
+        }
+        if (media.getMediaType() == MediaType.VIDEO) {
+            boolean ready = localMediaStorageService.ensureVideoCover(media.getStoragePath(), media.getId(), VIDEO_COVER_MAX_DIMENSION);
+            String desiredCoverUrl = ready ? mediaUrl + "?variant=cover" : null;
+            if (desiredCoverUrl == null ? media.getCoverUrl() != null : !desiredCoverUrl.equals(media.getCoverUrl())) {
+                media.setCoverUrl(desiredCoverUrl);
+                return true;
+            }
+        }
+        return false;
     }
 
     private String mediaIdFromFileName(String fileName) {

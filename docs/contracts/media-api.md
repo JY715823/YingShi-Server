@@ -76,6 +76,13 @@ Response:
 - Android image preview priority is `thumbnailUrl -> mediaUrl`; image original priority is `originalUrl -> mediaUrl`, but the resolved original candidate must be non-empty and different from the current preview URL.
 - Video media must not be represented to users as `加载原图`. Video source fallback remains playback-only and is separate from image original loading.
 
+## Preview / Cover Quality Note
+
+- Local image `previewUrl` points to a generated JPEG preview with the original aspect ratio preserved.
+- Local video `coverUrl` may point to `/api/media/files/{mediaId}?variant=cover` when the server can provide a JPEG cover.
+- Video cover generation is best-effort in local development and depends on the local `ffmpeg` command being available. Clients should keep falling back to video-source poster extraction when the cover image cannot be loaded.
+- Preview and cover files live under `local-storage/previews/yyyy/MM/` and may be regenerated when the original file is newer or when the preview naming/version changes.
+
 ## Error Codes
 - `MEDIA_NOT_FOUND`
 - `MEDIA_ALREADY_DELETED`

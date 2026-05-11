@@ -1,34 +1,35 @@
-# Current Task: Photo Feed Paging Step 1
+# Current Task: Preview Quality And Cover Generation
 
 ## Background
 
-The Android photo feed now needs to grow beyond full-list loading. REAL mode should be able to load the first page quickly, continue loading older media when the user reaches the bottom, and keep the existing full-feed API behavior for callers that have not opted in to pagination.
+The Android photo feed now depends on stable preview-sized media URLs for fast browsing. Existing local previews were small and lazily generated, while video media often exposed the original video URL as its cover. This pass improves local-dev preview generation without introducing object storage, transcoding, HLS, or a new media pipeline.
 
 ## Goals
 
-1. Add compatible pagination support to `GET /api/media/feed`.
-2. Return a next-page marker when the client requests paged data.
-3. Keep the original no-query feed response behavior unchanged.
-4. Cover the first page and next-page behavior with backend tests.
+1. Generate clearer image previews while preserving the original aspect ratio.
+2. Handle vertical, horizontal, and long images without stretching or accidental cropping.
+3. Generate video cover JPEGs when local `ffmpeg` is available.
+4. Keep upload and recovery flows tolerant: preview generation failures must not fail media ingestion.
+5. Backfill missing or outdated preview/cover URLs during dev originals recovery.
 
 ## Scope
 
-- `GET /api/media/feed?cursor=...&pageSize=...`
-- Cursor metadata in the standard API envelope.
-- Feed ordering by display time and media id.
-- Conservative in-memory paging over the existing sorted feed implementation.
+- Local storage preview file naming and image resize quality.
+- EXIF orientation handling for image preview generation.
+- Best-effort video cover extraction through the local `ffmpeg` command.
+- Upload and dev recovery preview/cover warm-up.
+- Media DTO URL mapping for `previewUrl` and `coverUrl`.
 
 ## Non Goals
 
-- No database-level cursor query in this step.
-- No changes to media upload, recovery scan, file streaming, comments, posts, or trash APIs.
-- No cross-page target-media positioning logic.
-- No object storage, transcoding, HLS, or storage layout changes.
+- No Android list loading or cache-cleaning redesign.
+- No OSS, HLS, transcoding queue, or cloud storage integration.
+- No upload center, trash, post detail, pagination, or Viewer playback-control changes.
 
 ## Acceptance
 
-1. `GET /api/media/feed` without pagination parameters still returns the original full list.
-2. `GET /api/media/feed?pageSize=...` returns only the requested page size.
-3. Paged responses include `hasMore` and `nextCursor`.
-4. A request with `cursor` returns the following page.
-5. `mvnw test` passes.
+1. Uploaded/imported images use clearer preview URLs and keep correct proportions.
+2. Long, vertical, and horizontal images are not stretched or cropped by the server preview.
+3. Uploaded/imported videos expose a cover URL when a local cover can be generated.
+4. Recovery can repair missing preview/cover metadata and generate missing files best-effort.
+5. Android `assembleDebug` and Server `mvnw test` pass.

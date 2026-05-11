@@ -85,7 +85,7 @@ public class ContentMapper {
                 previewMediaUrl != null ? previewMediaUrl : media.getPreviewUrl(),
                 media.getMediaType() == MediaType.IMAGE && localMediaUrl != null ? localMediaUrl : media.getOriginalUrl(),
                 media.getMediaType() == MediaType.VIDEO && localMediaUrl != null ? localMediaUrl : media.getVideoUrl(),
-                media.getMediaType() == MediaType.VIDEO && localMediaUrl != null ? localMediaUrl : media.getCoverUrl(),
+                media.getMediaType() == MediaType.VIDEO ? media.getCoverUrl() : null,
                 media.getMimeType(),
                 media.getSizeBytes(),
                 media.getWidth(),
@@ -116,6 +116,6 @@ public class ContentMapper {
         if (media.getMediaType() == MediaType.IMAGE) {
             return localMediaUrl + "?variant=preview";
         }
-        return localMediaUrl;
+        return null;
     }
 }
