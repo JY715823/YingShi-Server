@@ -32,6 +32,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import com.drew.imaging.ImageMetadataReader;
 import com.drew.metadata.Metadata;
@@ -43,6 +44,7 @@ public class LocalMediaStorageService {
     private static final DateTimeFormatter STORAGE_MONTH_FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM");
     private static final int JPEG_PREVIEW_QUALITY_PERCENT = 90;
     private static final long VIDEO_COVER_TIMEOUT_SECONDS = 20L;
+    private static final Pattern LEGACY_PREVIEW_FILE_NAME = Pattern.compile("media_[A-Za-z0-9_-]+-\\d+\\.jpg");
 
     private final Path rootPath;
 
@@ -201,6 +203,30 @@ public class LocalMediaStorageService {
                 .replace(FileSystems.getDefault().getSeparator(), "/");
     }
 
+    public int cleanupLegacyPreviewFiles() {
+        Path previewRoot = rootPath.resolve("previews").normalize();
+        if (!Files.exists(previewRoot)) {
+            return 0;
+        }
+        try (Stream<Path> stream = Files.walk(previewRoot)) {
+            List<Path> legacyPreviewFiles = stream
+                    .filter(Files::isRegularFile)
+                    .filter(this::isLegacyPreviewFile)
+                    .toList();
+            int deletedCount = 0;
+            for (Path path : legacyPreviewFiles) {
+                try {
+                    Files.deleteIfExists(path);
+                    deletedCount++;
+                } catch (IOException ignored) {
+                }
+            }
+            return deletedCount;
+        } catch (IOException exception) {
+            return 0;
+        }
+    }
+
     private String sanitizeFileName(String fileName) {
         return fileName.replaceAll("[^A-Za-z0-9._-]", "_");
     }
@@ -241,6 +267,20 @@ public class LocalMediaStorageService {
         return previewDirectoryFor(sourcePath)
                 .resolve(cacheKey + "-cover-v1-" + maxDimension + ".jpg")
                 .normalize();
+    }
+
+    private boolean isLegacyPreviewFile(Path path) {
+        Path normalized = path.toAbsolutePath().normalize();
+        Path previewRoot = rootPath.resolve("previews").normalize();
+        if (!normalized.startsWith(previewRoot)) {
+            return false;
+        }
+        String fileName = normalized.getFileName().toString();
+        String lowerName = fileName.toLowerCase(Locale.ROOT);
+        if (lowerName.contains("-preview-v2-") || lowerName.contains("-cover-v1-")) {
+            return false;
+        }
+        return LEGACY_PREVIEW_FILE_NAME.matcher(fileName).matches();
     }
 
     private Path resolveStoragePath(String storagePath) {

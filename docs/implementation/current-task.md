@@ -1,35 +1,31 @@
-# Current Task: Preview Quality And Cover Generation
+# Current Task: Legacy Preview Cleanup
 
 ## Background
 
-The Android photo feed now depends on stable preview-sized media URLs for fast browsing. Existing local previews were small and lazily generated, while video media often exposed the original video URL as its cover. This pass improves local-dev preview generation without introducing object storage, transcoding, HLS, or a new media pipeline.
+Local image previews now use `preview-v2` file names and video covers use `cover-v1`. Older generated previews used names such as `media_xxx-720.jpg`. They can be removed safely as long as originals, preview-v2 files, video covers, and video sources are never touched.
 
 ## Goals
 
-1. Generate clearer image previews while preserving the original aspect ratio.
-2. Handle vertical, horizontal, and long images without stretching or accidental cropping.
-3. Generate video cover JPEGs when local `ffmpeg` is available.
-4. Keep upload and recovery flows tolerant: preview generation failures must not fail media ingestion.
-5. Backfill missing or outdated preview/cover URLs during dev originals recovery.
+1. Clean up only legacy local preview files under `local-storage/previews`.
+2. Keep original media files, preview-v2 files, cover-v1 files, and video sources untouched.
+3. Make cleanup best-effort so failures do not affect server startup, upload, or media access.
+4. Preserve current preview/cover regeneration behavior for old media.
 
 ## Scope
 
-- Local storage preview file naming and image resize quality.
-- EXIF orientation handling for image preview generation.
-- Best-effort video cover extraction through the local `ffmpeg` command.
-- Upload and dev recovery preview/cover warm-up.
-- Media DTO URL mapping for `previewUrl` and `coverUrl`.
+- Local storage legacy preview file matching.
+- Dev startup cleanup runner.
+- Contract documentation for preview/cover file lifecycle.
 
 ## Non Goals
 
-- No Android list loading or cache-cleaning redesign.
-- No OSS, HLS, transcoding queue, or cloud storage integration.
-- No upload center, trash, post detail, pagination, or Viewer playback-control changes.
+- No full cache-management page.
+- No OSS, HLS, transcoding, or object-storage migration.
+- No upload center, trash, post detail, paging, or Viewer playback-control changes.
 
 ## Acceptance
 
-1. Uploaded/imported images use clearer preview URLs and keep correct proportions.
-2. Long, vertical, and horizontal images are not stretched or cropped by the server preview.
-3. Uploaded/imported videos expose a cover URL when a local cover can be generated.
-4. Recovery can repair missing preview/cover metadata and generate missing files best-effort.
-5. Android `assembleDebug` and Server `mvnw test` pass.
+1. Legacy files matching `media_xxx-<size>.jpg` under `previews` can be deleted.
+2. Files containing `preview-v2` or `cover-v1` are never deleted by this cleanup.
+3. Cleanup errors are swallowed and do not block the server.
+4. Server `mvnw test` passes.

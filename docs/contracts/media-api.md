@@ -82,6 +82,7 @@ Response:
 - Local video `coverUrl` may point to `/api/media/files/{mediaId}?variant=cover` when the server can provide a JPEG cover.
 - Video cover generation is best-effort in local development and depends on the local `ffmpeg` command being available. Clients should keep falling back to video-source poster extraction when the cover image cannot be loaded.
 - Preview and cover files live under `local-storage/previews/yyyy/MM/` and may be regenerated when the original file is newer or when the preview naming/version changes.
+- Dev startup may remove legacy preview files named like `media_xxx-720.jpg`. It does not remove originals, `preview-v2` files, `cover-v1` files, or video source files.
 
 ## Error Codes
 - `MEDIA_NOT_FOUND`
