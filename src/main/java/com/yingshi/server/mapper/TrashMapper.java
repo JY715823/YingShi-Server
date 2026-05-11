@@ -1,6 +1,7 @@
 package com.yingshi.server.mapper;
 
 import com.yingshi.server.domain.TrashItemEntity;
+import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.dto.trash.PendingCleanupDto;
 import com.yingshi.server.dto.trash.TrashDetailDto;
 import com.yingshi.server.dto.trash.TrashItemDto;
@@ -12,7 +13,12 @@ import java.util.List;
 @Component
 public class TrashMapper {
 
-    public TrashItemDto toTrashItemDto(TrashItemEntity item, List<String> relatedPostIds, List<String> relatedMediaIds) {
+    public TrashItemDto toTrashItemDto(
+            TrashItemEntity item,
+            List<String> relatedPostIds,
+            List<String> relatedMediaIds,
+            MediaEntity sourceMedia
+    ) {
         return new TrashItemDto(
                 item.getId(),
                 toItemType(item.getItemType().name()),
@@ -23,7 +29,13 @@ public class TrashMapper {
                 item.getPreviewInfo(),
                 item.getDeletedAt().toEpochMilli(),
                 relatedPostIds,
-                relatedMediaIds
+                relatedMediaIds,
+                sourceMedia == null || sourceMedia.getMediaType() == null ? null : toItemType(sourceMedia.getMediaType().name()),
+                sourceMedia == null ? null : sourceMedia.getWidth(),
+                sourceMedia == null ? null : sourceMedia.getHeight(),
+                sourceMedia == null ? null : sourceMedia.getAspectRatio(),
+                sourceMedia == null ? null : sourceMedia.getDurationMillis(),
+                sourceMedia == null ? null : sourceMedia.getMimeType()
         );
     }
 

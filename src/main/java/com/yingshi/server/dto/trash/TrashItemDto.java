@@ -12,6 +12,12 @@ public record TrashItemDto(
         String previewInfo,
         Long deletedAtMillis,
         List<String> relatedPostIds,
-        List<String> relatedMediaIds
+        List<String> relatedMediaIds,
+        String sourceMediaType,
+        Integer sourceMediaWidth,
+        Integer sourceMediaHeight,
+        Double sourceMediaAspectRatio,
+        Long sourceMediaDurationMillis,
+        String sourceMediaMimeType
 ) {
 }

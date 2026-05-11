@@ -526,7 +526,15 @@ public class TrashService {
     }
 
     private TrashItemDto toTrashItemDto(TrashItemEntity item) {
-        return trashMapper.toTrashItemDto(item, splitIds(item.getRelatedPostIds()), splitIds(item.getRelatedMediaIds()));
+        MediaEntity sourceMedia = item.getSourceMediaId() == null || item.getSourceMediaId().isBlank()
+                ? null
+                : mediaRepository.findByIdAndLibraryId(item.getSourceMediaId(), item.getLibraryId()).orElse(null);
+        return trashMapper.toTrashItemDto(
+                item,
+                splitIds(item.getRelatedPostIds()),
+                splitIds(item.getRelatedMediaIds()),
+                sourceMedia
+        );
     }
 
     private List<String> splitIds(String value) {
