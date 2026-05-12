@@ -485,6 +485,8 @@ class YingshiServerApplicationTests {
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.itemType").value("mediaRemoved"))
+                .andExpect(jsonPath("$.data.sourceMediaId").value("media_002"))
+                .andExpect(jsonPath("$.data.commentTargetMediaId").value("media_002"))
                 .andReturn();
 
         String mediaRemovedTrashId = readField(directoryDeleteResult, "/data/trashItemId");
@@ -499,7 +501,8 @@ class YingshiServerApplicationTests {
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.canRestore").value(true))
-                .andExpect(jsonPath("$.data.item.itemType").value("mediaRemoved"));
+                .andExpect(jsonPath("$.data.item.itemType").value("mediaRemoved"))
+                .andExpect(jsonPath("$.data.item.commentTargetMediaId").value("media_002"));
 
         mockMvc.perform(post("/api/trash/items/" + mediaRemovedTrashId + "/restore")
                         .header("Authorization", "Bearer " + accessToken))
@@ -512,10 +515,23 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.mediaCount").value(3))
                 .andExpect(jsonPath("$.data.mediaItems[1].media.mediaId").value("media_002"));
 
+        mockMvc.perform(post("/api/media/media_001/comments")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "trash viewer real chain comment"
+                                }
+                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mediaId").value("media_001"));
+
         MvcResult systemDeleteResult = mockMvc.perform(delete("/api/media/media_001")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.itemType").value("mediaSystemDeleted"))
+                .andExpect(jsonPath("$.data.sourceMediaId").value("media_001"))
+                .andExpect(jsonPath("$.data.commentTargetMediaId").value("media_001"))
                 .andReturn();
 
         String systemTrashId = readField(systemDeleteResult, "/data/trashItemId");
@@ -532,10 +548,18 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.mediaCount").value(2))
                 .andExpect(jsonPath("$.data.coverMediaId").value("media_002"));
 
+        mockMvc.perform(get("/api/trash/items/" + systemTrashId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.item.itemType").value("mediaSystemDeleted"))
+                .andExpect(jsonPath("$.data.item.sourceMediaId").value("media_001"))
+                .andExpect(jsonPath("$.data.item.commentTargetMediaId").value("media_001"));
+
         mockMvc.perform(get("/api/media/media_001/comments")
                         .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error.code").value("COMMENT_TARGET_NOT_FOUND"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.comments.length()").value(3))
+                .andExpect(jsonPath("$.data.comments[0].content").value("trash viewer real chain comment"));
 
         mockMvc.perform(post("/api/trash/items/" + systemTrashId + "/remove")
                         .header("Authorization", "Bearer " + accessToken))
@@ -566,7 +590,7 @@ class YingshiServerApplicationTests {
         mockMvc.perform(get("/api/media/media_001/comments")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.comments.length()").value(2));
+                .andExpect(jsonPath("$.data.comments.length()").value(3));
     }
 
     @Test
@@ -610,6 +634,7 @@ class YingshiServerApplicationTests {
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.itemType").value("mediaSystemDeleted"))
+                .andExpect(jsonPath("$.data.commentTargetMediaId").value(mediaId))
                 .andReturn();
         String trashItemId = readField(deleteResult, "/data/trashItemId");
 
@@ -633,6 +658,10 @@ class YingshiServerApplicationTests {
         mockMvc.perform(get("/api/media/files/" + mediaId)
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/media/" + mediaId + "/comments")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("COMMENT_TARGET_NOT_FOUND"));
         assertTrue(Files.notExists(originalPath), "original should be physically deleted");
         assertTrue(Files.notExists(previewPath), "preview should be physically deleted");
     }
@@ -656,8 +685,8 @@ class YingshiServerApplicationTests {
 
         mockMvc.perform(get("/api/posts/post_002/comments")
                         .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error.code").value("COMMENT_TARGET_NOT_FOUND"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.comments.length()").value(0));
 
         mockMvc.perform(get("/api/albums/album_003/posts")
                         .header("Authorization", "Bearer " + accessToken))

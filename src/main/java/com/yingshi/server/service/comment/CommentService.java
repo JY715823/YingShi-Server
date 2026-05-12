@@ -57,7 +57,7 @@ public class CommentService {
 
     @Transactional(readOnly = true)
     public CommentPageResponse getPostComments(String postId, Integer page, Integer size, AuthenticatedUser currentUser) {
-        requirePost(postId, currentUser.libraryId());
+        requireReadablePost(postId, currentUser.libraryId());
         Page<CommentEntity> comments = commentRepository.findByLibraryIdAndTargetTypeAndPostId(
                 currentUser.libraryId(),
                 CommentTargetType.POST,
@@ -69,7 +69,7 @@ public class CommentService {
 
     @Transactional(readOnly = true)
     public CommentPageResponse getMediaComments(String mediaId, Integer page, Integer size, AuthenticatedUser currentUser) {
-        requireMedia(mediaId, currentUser.libraryId());
+        requireReadableMedia(mediaId, currentUser.libraryId());
         Page<CommentEntity> comments = commentRepository.findByLibraryIdAndTargetTypeAndMediaId(
                 currentUser.libraryId(),
                 CommentTargetType.MEDIA,
@@ -185,6 +185,18 @@ public class CommentService {
 
     private void requireMedia(String mediaId, String libraryId) {
         if (mediaRepository.findByIdAndLibraryIdAndDeletedAtIsNull(mediaId, libraryId).isEmpty()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Media target was not found.");
+        }
+    }
+
+    private void requireReadablePost(String postId, String libraryId) {
+        if (postRepository.findByIdAndLibraryId(postId, libraryId).isEmpty()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Post target was not found.");
+        }
+    }
+
+    private void requireReadableMedia(String mediaId, String libraryId) {
+        if (mediaRepository.findByIdAndLibraryId(mediaId, libraryId).isEmpty()) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Media target was not found.");
         }
     }

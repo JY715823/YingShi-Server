@@ -342,7 +342,8 @@ public class TrashService {
 
     private void restoreMediaRemoved(TrashItemEntity item, String libraryId) {
         MediaRemovedSnapshot snapshot = readSnapshot(item.getSnapshotJson(), MediaRemovedSnapshot.class);
-        PostEntity post = requireActivePost(snapshot.postId(), libraryId);
+        PostEntity post = postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(snapshot.postId(), libraryId)
+                .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "原帖子不可用，无法恢复到原帖子"));
         requireActiveMedia(snapshot.mediaId(), libraryId);
         if (!postMediaRepository.existsByLibraryIdAndPostIdAndMediaId(libraryId, snapshot.postId(), snapshot.mediaId())) {
             restoreRelationOrder(libraryId, snapshot.postId(), snapshot.mediaId(), snapshot.sortOrder());
@@ -383,6 +384,7 @@ public class TrashService {
 
     private void purgePostDeleted(TrashItemEntity item, String libraryId) {
         PostDeletedSnapshot snapshot = readSnapshot(item.getSnapshotJson(), PostDeletedSnapshot.class);
+        purgeMediaRemovedItemsForPost(libraryId, snapshot.postId());
         postMediaRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.postId());
         postAlbumRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.postId());
         commentRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.postId());
@@ -403,6 +405,17 @@ public class TrashService {
         postMediaRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
         commentRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
         mediaRepository.delete(media);
+    }
+
+    private void purgeMediaRemovedItemsForPost(String libraryId, String postId) {
+        List<TrashItemEntity> mediaRemovedItems = trashItemRepository.findByLibraryIdAndStateAndItemType(
+                libraryId,
+                TrashItemState.IN_TRASH,
+                TrashItemType.MEDIA_REMOVED
+        );
+        trashItemRepository.deleteAll(mediaRemovedItems.stream()
+                .filter(mediaRemovedItem -> postId.equals(mediaRemovedItem.getSourcePostId()))
+                .toList());
     }
 
     private TrashItemEntity createTrashItem(

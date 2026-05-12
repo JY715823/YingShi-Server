@@ -8,6 +8,7 @@ public record TrashItemDto(
         String state,
         String sourcePostId,
         String sourceMediaId,
+        String commentTargetMediaId,
         String title,
         String previewInfo,
         Long deletedAtMillis,

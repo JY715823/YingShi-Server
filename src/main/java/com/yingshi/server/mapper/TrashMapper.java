@@ -2,6 +2,7 @@ package com.yingshi.server.mapper;
 
 import com.yingshi.server.domain.TrashItemEntity;
 import com.yingshi.server.domain.MediaEntity;
+import com.yingshi.server.domain.TrashItemType;
 import com.yingshi.server.dto.trash.PendingCleanupDto;
 import com.yingshi.server.dto.trash.TrashDetailDto;
 import com.yingshi.server.dto.trash.TrashItemDto;
@@ -25,6 +26,7 @@ public class TrashMapper {
                 toItemType(item.getState().name()),
                 item.getSourcePostId(),
                 item.getSourceMediaId(),
+                resolveCommentTargetMediaId(item, relatedMediaIds),
                 item.getTitle(),
                 item.getPreviewInfo(),
                 item.getDeletedAt().toEpochMilli(),
@@ -37,6 +39,19 @@ public class TrashMapper {
                 sourceMedia == null ? null : sourceMedia.getDurationMillis(),
                 sourceMedia == null ? null : sourceMedia.getMimeType()
         );
+    }
+
+    private String resolveCommentTargetMediaId(TrashItemEntity item, List<String> relatedMediaIds) {
+        if (item.getItemType() != TrashItemType.MEDIA_SYSTEM_DELETED && item.getItemType() != TrashItemType.MEDIA_REMOVED) {
+            return null;
+        }
+        if (item.getSourceMediaId() != null && !item.getSourceMediaId().isBlank()) {
+            return item.getSourceMediaId();
+        }
+        return relatedMediaIds.stream()
+                .filter(mediaId -> mediaId != null && !mediaId.isBlank())
+                .findFirst()
+                .orElse(null);
     }
 
     public PendingCleanupDto toPendingCleanupDto(TrashItemDto item, Instant removedAt, Instant undoDeadlineAt) {
