@@ -80,7 +80,7 @@ public class PostService {
         validateDistinctIds(request.initialMediaIds(), ErrorCode.POST_MEDIA_ORDER_INVALID, "initialMediaIds contains duplicates.");
 
         List<AlbumEntity> albums = requireAlbums(libraryId, request.albumIds());
-        Map<String, MediaEntity> mediaById = requireMedia(libraryId, request.initialMediaIds());
+        requireMedia(libraryId, request.initialMediaIds());
         String coverMediaId = resolveCoverMediaId(request.coverMediaId(), request.initialMediaIds());
 
         PostEntity post = new PostEntity();
@@ -245,6 +245,12 @@ public class PostService {
     }
 
     private String resolveCoverMediaId(String coverMediaId, List<String> mediaIds) {
+        if (mediaIds.isEmpty()) {
+            if (coverMediaId != null && !coverMediaId.isBlank()) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.POST_COVER_INVALID, "coverMediaId requires initialMediaIds.");
+            }
+            return null;
+        }
         if (coverMediaId == null || coverMediaId.isBlank()) {
             return mediaIds.get(0);
         }

@@ -202,6 +202,25 @@ class YingshiServerApplicationTests {
 
         String postId = readField(createResult, "/data/postId");
 
+        mockMvc.perform(post("/api/posts")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Empty Draft",
+                                  "summary": "Created before media is attached",
+                                  "contributorLabel": "Demo A",
+                                  "displayTimeMillis": 1777413100000,
+                                  "albumIds": ["album_001"],
+                                  "initialMediaIds": []
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.title").value("Empty Draft"))
+                .andExpect(jsonPath("$.data.coverMediaId").doesNotExist())
+                .andExpect(jsonPath("$.data.mediaCount").value(0))
+                .andExpect(jsonPath("$.data.mediaItems.length()").value(0));
+
         mockMvc.perform(patch("/api/posts/" + postId)
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)

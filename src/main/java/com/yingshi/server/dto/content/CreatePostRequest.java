@@ -1,7 +1,6 @@
 package com.yingshi.server.dto.content;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
@@ -28,10 +27,10 @@ public record CreatePostRequest(
         @Size(max = 20, message = "displayTimeSource must be at most 20 characters.")
         String displayTimeSource,
 
-        @NotEmpty(message = "albumIds is required.")
+        @jakarta.validation.constraints.NotEmpty(message = "albumIds is required.")
         List<@NotBlank(message = "albumId is required.") String> albumIds,
 
-        @NotEmpty(message = "initialMediaIds is required.")
+        @NotNull(message = "initialMediaIds is required.")
         List<@NotBlank(message = "mediaId is required.") String> initialMediaIds,
 
         String coverMediaId
