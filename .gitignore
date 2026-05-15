@@ -1,6 +1,13 @@
 HELP.md
 target/
 local-storage/
+.env
+.env.*
+!.env.example
+minio-data/
+postgres-data/
+pg-data/
+docker-data/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
