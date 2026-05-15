@@ -1,0 +1,53 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:15432/yingshi}
+    driver-class-name: org.postgresql.Driver
+    username: ${SPRING_DATASOURCE_USERNAME:yingshi}
+    password: ${SPRING_DATASOURCE_PASSWORD:yingshi_dev_password}
+  h2:
+    console:
+      enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+  sql:
+    init:
+      mode: never
+
+logging:
+  level:
+    root: INFO
+    com.yingshi.server: INFO
+
+server:
+  port: ${SERVER_PORT:8080}
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+app:
+  auth:
+    jwt:
+      secret: ${APP_AUTH_JWT_SECRET:change-me-to-a-long-dev-secret-at-least-32-characters}
+  storage:
+    provider: ${STORAGE_PROVIDER:s3}
+    bucket: ${STORAGE_BUCKET:yingshi-media}
+    endpoint: ${STORAGE_ENDPOINT:http://127.0.0.1:9000}
+    region: ${STORAGE_REGION:us-east-1}
+    access-key: ${STORAGE_ACCESS_KEY:yingshi_minio_access}
+    secret-key: ${STORAGE_SECRET_KEY:yingshi_minio_secret}
+    local-root: ${STORAGE_LOCAL_ROOT:local-storage}
+
+yingshi:
+  dev:
+    test-import:
+      enabled: false
+    recovery:
+      enabled: false

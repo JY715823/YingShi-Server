@@ -22,11 +22,13 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -50,6 +52,7 @@ public class LocalMediaStorageService {
     private static final int JPEG_PREVIEW_QUALITY_PERCENT = 90;
     private static final long VIDEO_COVER_TIMEOUT_SECONDS = 20L;
     private static final Pattern LEGACY_PREVIEW_FILE_NAME = Pattern.compile("media_[A-Za-z0-9_-]+-\\d+\\.jpg");
+    private static final String LOCAL_PROVIDER = "local";
 
     private final Path rootPath;
     private final ObjectStorageService objectStorageService;
@@ -90,33 +93,31 @@ public class LocalMediaStorageService {
     }
 
     public Resource load(String storagePath) {
+        if (isRelativeStoragePath(storagePath)) {
+            return objectStorageService.get(toObjectKey(storagePath)).resource();
+        }
         Path path = resolveStoragePath(storagePath);
         if (!Files.exists(path)) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
-        }
-        if (isRelativeStoragePath(storagePath)) {
-            return objectStorageService.get(toObjectKey(storagePath)).resource();
         }
         return new FileSystemResource(path);
     }
 
     public Resource loadPreview(String storagePath, String cacheKey, int maxDimension) {
-        Path sourcePath = resolveStoragePath(storagePath);
-        if (!Files.exists(sourcePath)) {
-            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
-        }
-
-        Path previewPath = imagePreviewPath(sourcePath, cacheKey, maxDimension);
         if (!ensureImagePreview(storagePath, cacheKey, maxDimension)) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Preview could not be generated for this media.");
         }
-        if (isRelativeStoragePath(storagePath)) {
-            return objectStorageService.get(toRelativeStoragePath(previewPath)).resource();
+        if (isLocalProvider()) {
+            Path sourcePath = resolveStoragePath(storagePath);
+            return new FileSystemResource(imagePreviewPath(sourcePath, cacheKey, maxDimension));
         }
-        return new FileSystemResource(previewPath);
+        return objectStorageService.get(imagePreviewObjectKey(storagePath, cacheKey, maxDimension)).resource();
     }
 
     public boolean ensureImagePreview(String storagePath, String cacheKey, int maxDimension) {
+        if (!isLocalProvider()) {
+            return ensureRemoteImagePreview(storagePath, cacheKey, maxDimension);
+        }
         Path sourcePath = resolveStoragePath(storagePath);
         if (!Files.exists(sourcePath)) {
             return false;
@@ -140,18 +141,14 @@ public class LocalMediaStorageService {
     }
 
     public Resource loadVideoCover(String storagePath, String cacheKey, int maxDimension) {
-        Path sourcePath = resolveStoragePath(storagePath);
-        if (!Files.exists(sourcePath)) {
-            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
-        }
-        Path coverPath = videoCoverPath(sourcePath, cacheKey, maxDimension);
         if (!ensureVideoCover(storagePath, cacheKey, maxDimension)) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Video cover could not be generated for this media.");
         }
-        if (isRelativeStoragePath(storagePath)) {
-            return objectStorageService.get(toRelativeStoragePath(coverPath)).resource();
+        if (isLocalProvider()) {
+            Path sourcePath = resolveStoragePath(storagePath);
+            return new FileSystemResource(videoCoverPath(sourcePath, cacheKey, maxDimension));
         }
-        return new FileSystemResource(coverPath);
+        return objectStorageService.get(videoCoverObjectKey(storagePath, cacheKey, maxDimension)).resource();
     }
 
     public String provider() {
@@ -167,13 +164,21 @@ public class LocalMediaStorageService {
     }
 
     public String imagePreviewObjectKey(String storagePath, String cacheKey, int maxDimension) {
-        Path sourcePath = resolveStoragePath(storagePath);
-        return toRelativeStoragePath(imagePreviewPath(sourcePath, cacheKey, maxDimension));
+        return previewDirectoryObjectKey(storagePath)
+                + "/"
+                + cacheKey
+                + "-preview-v2-"
+                + maxDimension
+                + ".jpg";
     }
 
     public String videoCoverObjectKey(String storagePath, String cacheKey, int maxDimension) {
-        Path sourcePath = resolveStoragePath(storagePath);
-        return toRelativeStoragePath(videoCoverPath(sourcePath, cacheKey, maxDimension));
+        return previewDirectoryObjectKey(storagePath)
+                + "/"
+                + cacheKey
+                + "-cover-v1-"
+                + maxDimension
+                + ".jpg";
     }
 
     public ObjectMetadata metadata(String storagePath) {
@@ -184,6 +189,9 @@ public class LocalMediaStorageService {
     }
 
     public boolean ensureVideoCover(String storagePath, String cacheKey, int maxDimension) {
+        if (!isLocalProvider()) {
+            return ensureRemoteVideoCover(storagePath, cacheKey, maxDimension);
+        }
         Path sourcePath = resolveStoragePath(storagePath);
         if (!Files.exists(sourcePath)) {
             return false;
@@ -235,6 +243,9 @@ public class LocalMediaStorageService {
     }
 
     public List<Path> listFilesRecursively(String relativeDirectory) {
+        if (!isLocalProvider()) {
+            return List.of();
+        }
         Path directory = rootPath.resolve(relativeDirectory).normalize();
         if (!Files.exists(directory)) {
             return List.of();
@@ -260,6 +271,9 @@ public class LocalMediaStorageService {
     }
 
     public int cleanupLegacyPreviewFiles() {
+        if (!isLocalProvider()) {
+            return 0;
+        }
         Path previewRoot = rootPath.resolve("previews").normalize();
         if (!Files.exists(previewRoot)) {
             return 0;
@@ -284,6 +298,9 @@ public class LocalMediaStorageService {
     }
 
     public List<String> deleteStoredMediaFiles(String storagePath, String cacheKey) {
+        if (!isLocalProvider()) {
+            return deleteRemoteStoredMediaFiles(storagePath, cacheKey);
+        }
         Set<Path> candidates = new LinkedHashSet<>();
         Path sourcePath = resolveStoragePath(storagePath);
         if (!sourcePath.startsWith(rootPath)) {
@@ -403,12 +420,165 @@ public class LocalMediaStorageService {
         return rootPath.resolve(rawPath).toAbsolutePath().normalize();
     }
 
+    private boolean isLocalProvider() {
+        return LOCAL_PROVIDER.equalsIgnoreCase(objectStorageService.provider());
+    }
+
     private boolean isRelativeStoragePath(String storagePath) {
         return storagePath != null && !storagePath.isBlank() && !Paths.get(storagePath).isAbsolute();
     }
 
     private String toObjectKey(String storagePath) {
         return storagePath.trim().replace('\\', '/');
+    }
+
+    private String previewDirectoryObjectKey(String storagePath) {
+        String objectKey = originalObjectKey(storagePath);
+        if (objectKey != null) {
+            String normalized = objectKey.replace('\\', '/');
+            String[] parts = normalized.split("/");
+            if (parts.length >= 4 && "originals".equals(parts[0])) {
+                return "previews/" + parts[1] + "/" + parts[2];
+            }
+        }
+        return "previews";
+    }
+
+    private boolean ensureRemoteImagePreview(String storagePath, String cacheKey, int maxDimension) {
+        String sourceObjectKey = originalObjectKey(storagePath);
+        String previewObjectKey = imagePreviewObjectKey(storagePath, cacheKey, maxDimension);
+        if (sourceObjectKey == null || !objectStorageService.exists(sourceObjectKey)) {
+            return false;
+        }
+        ObjectMetadata sourceMetadata = objectStorageService.getMetadata(sourceObjectKey).orElse(null);
+        ObjectMetadata previewMetadata = objectStorageService.getMetadata(previewObjectKey).orElse(null);
+        if (!shouldRegenerateObject(sourceMetadata, previewMetadata)) {
+            return true;
+        }
+        Path sourcePath = null;
+        Path previewPath = null;
+        try {
+            sourcePath = copyObjectToTempFile(sourceObjectKey, cacheKey + "-source-", extensionForObjectKey(sourceObjectKey));
+            previewPath = Files.createTempFile(cacheKey + "-preview-", ".jpg");
+            BufferedImage sourceImage = ImageIO.read(sourcePath.toFile());
+            if (sourceImage == null || sourceImage.getWidth() <= 0 || sourceImage.getHeight() <= 0) {
+                return false;
+            }
+            BufferedImage previewImage = resizeImage(applyExifOrientation(sourcePath, sourceImage), maxDimension);
+            writeJpeg(previewImage, previewPath, JPEG_PREVIEW_QUALITY_PERCENT / 100f);
+            putGeneratedObject(previewObjectKey, previewPath, "image/jpeg");
+            return objectStorageService.exists(previewObjectKey);
+        } catch (IOException exception) {
+            return false;
+        } finally {
+            deleteTempFile(sourcePath);
+            deleteTempFile(previewPath);
+        }
+    }
+
+    private boolean ensureRemoteVideoCover(String storagePath, String cacheKey, int maxDimension) {
+        String sourceObjectKey = originalObjectKey(storagePath);
+        String coverObjectKey = videoCoverObjectKey(storagePath, cacheKey, maxDimension);
+        if (sourceObjectKey == null || !objectStorageService.exists(sourceObjectKey)) {
+            return false;
+        }
+        ObjectMetadata sourceMetadata = objectStorageService.getMetadata(sourceObjectKey).orElse(null);
+        ObjectMetadata coverMetadata = objectStorageService.getMetadata(coverObjectKey).orElse(null);
+        if (!shouldRegenerateObject(sourceMetadata, coverMetadata)) {
+            return true;
+        }
+        Path sourcePath = null;
+        Path coverPath = null;
+        Path tempFrame = null;
+        try {
+            sourcePath = copyObjectToTempFile(sourceObjectKey, cacheKey + "-video-source-", extensionForObjectKey(sourceObjectKey));
+            coverPath = Files.createTempFile(cacheKey + "-cover-", ".jpg");
+            tempFrame = Files.createTempFile(cacheKey + "-cover-frame-", ".jpg");
+            if (!extractVideoFrame(sourcePath, tempFrame, "1") && !extractVideoFrame(sourcePath, tempFrame, "0")) {
+                return false;
+            }
+            BufferedImage frameImage = ImageIO.read(tempFrame.toFile());
+            if (frameImage == null || frameImage.getWidth() <= 0 || frameImage.getHeight() <= 0) {
+                return false;
+            }
+            BufferedImage coverImage = resizeImage(frameImage, maxDimension);
+            writeJpeg(coverImage, coverPath, JPEG_PREVIEW_QUALITY_PERCENT / 100f);
+            putGeneratedObject(coverObjectKey, coverPath, "image/jpeg");
+            return objectStorageService.exists(coverObjectKey);
+        } catch (IOException exception) {
+            return false;
+        } finally {
+            deleteTempFile(sourcePath);
+            deleteTempFile(coverPath);
+            deleteTempFile(tempFrame);
+        }
+    }
+
+    private Path copyObjectToTempFile(String objectKey, String prefix, String suffix) throws IOException {
+        Path tempFile = Files.createTempFile(prefix, suffix);
+        try (InputStream inputStream = objectStorageService.get(objectKey).resource().getInputStream();
+             OutputStream outputStream = Files.newOutputStream(tempFile)) {
+            inputStream.transferTo(outputStream);
+        }
+        ObjectMetadata metadata = objectStorageService.getMetadata(objectKey).orElse(null);
+        if (metadata != null && metadata.lastModifiedMillis() != null) {
+            Files.setLastModifiedTime(tempFile, FileTime.fromMillis(metadata.lastModifiedMillis()));
+        }
+        return tempFile;
+    }
+
+    private void putGeneratedObject(String objectKey, Path path, String contentType) throws IOException {
+        try (InputStream inputStream = Files.newInputStream(path)) {
+            objectStorageService.put(objectKey, contentType, Files.size(path), inputStream);
+        }
+    }
+
+    private boolean shouldRegenerateObject(ObjectMetadata sourceMetadata, ObjectMetadata generatedMetadata) {
+        if (generatedMetadata == null || generatedMetadata.sizeBytes() == null || generatedMetadata.sizeBytes() <= 0L) {
+            return true;
+        }
+        if (sourceMetadata == null || sourceMetadata.lastModifiedMillis() == null || generatedMetadata.lastModifiedMillis() == null) {
+            return false;
+        }
+        return generatedMetadata.lastModifiedMillis() < sourceMetadata.lastModifiedMillis();
+    }
+
+    private List<String> deleteRemoteStoredMediaFiles(String storagePath, String cacheKey) {
+        String sourceObjectKey = originalObjectKey(storagePath);
+        if (sourceObjectKey == null) {
+            return List.of();
+        }
+        List<String> deletedKeys = new java.util.ArrayList<>();
+        for (String objectKey : List.of(
+                sourceObjectKey,
+                imagePreviewObjectKey(storagePath, cacheKey, 1280),
+                videoCoverObjectKey(storagePath, cacheKey, 1280)
+        )) {
+            if (objectStorageService.delete(objectKey)) {
+                deletedKeys.add(objectKey);
+            }
+        }
+        return deletedKeys;
+    }
+
+    private String extensionForObjectKey(String objectKey) {
+        int slashIndex = objectKey.lastIndexOf('/');
+        String fileName = slashIndex >= 0 ? objectKey.substring(slashIndex + 1) : objectKey;
+        int dotIndex = fileName.lastIndexOf('.');
+        if (dotIndex >= 0 && dotIndex < fileName.length() - 1) {
+            return fileName.substring(dotIndex);
+        }
+        return ".tmp";
+    }
+
+    private void deleteTempFile(Path path) {
+        if (path == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {
+        }
     }
 
     private boolean shouldRegeneratePreview(Path sourcePath, Path previewPath) throws IOException {

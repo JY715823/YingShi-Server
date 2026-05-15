@@ -4,7 +4,9 @@
 
 This document records the current backend storage shape and the migration rules for the next Stage 16 steps.
 
-Stage 16 step 2 adds the first Server storage abstraction, still backed by local files. It does not connect MinIO, does not switch to PostgreSQL, does not add Docker Compose, and does not rewrite upload or media streaming.
+Stage 16 step 2 added the first Server storage abstraction, still backed by local files.
+
+Stage 16 step 3 adds a local Docker cloudlike environment and an S3-compatible storage provider for MinIO smoke testing. Default local development still uses H2 plus `local-storage`; Android REAL contracts remain unchanged.
 
 ## Current Runtime
 
@@ -91,6 +93,43 @@ Still intentionally local/path based in this pass:
 - `storagePath` remains required and is still the fallback for old data.
 
 These are the next migration points when object storage becomes remote. For MinIO/OSS, generation code will need either a temporary local work file or a provider-neutral working-file adapter before writing the generated preview/cover back through `ObjectStorageService.put(...)`.
+
+## Stage 16 Step 3 Implementation Status
+
+Added Server files:
+
+- `docker-compose.yml`: starts PostgreSQL, MinIO, a bucket init job, and the Server container.
+- `Dockerfile`: builds the Spring Boot app image.
+- `.dockerignore`: keeps local media, data volumes, build output, and secrets out of the image context.
+- `.env.example`: example-only local variables for PostgreSQL, MinIO, Spring, and storage config.
+- `src/main/resources/application-docker.yml`: Spring `docker` profile using PostgreSQL and S3-compatible storage.
+- `S3ObjectStorageService`: S3-compatible `ObjectStorageService` implementation for `app.storage.provider=s3` or `minio`.
+- `docs/implementation/stage16-docker-cloudlike-env.md`: local startup and verification guide.
+
+Docker profile behavior:
+
+- PostgreSQL datasource is configured from `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, and `SPRING_DATASOURCE_PASSWORD`.
+- Storage config is read from `STORAGE_PROVIDER`, `STORAGE_BUCKET`, `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_ACCESS_KEY`, and `STORAGE_SECRET_KEY`.
+- Default docker storage provider is `s3`, endpoint `http://minio:9000`, bucket `yingshi-media`.
+- Empty docker databases are bootstrapped with the existing demo auth/library seed only. Dev media content seed, local test import, originals recovery, and legacy preview cleanup do not run in docker profile.
+- Current PostgreSQL schema strategy is `spring.jpa.hibernate.ddl-auto=update` for the cloudlike local environment. This is a bootstrap choice only; future PostgreSQL stages should move schema ownership to committed migration scripts.
+
+Current S3-compatible media support:
+
+- New original uploads are written through `ObjectStorageService.put(...)` to MinIO/S3 when `app.storage.provider=s3` or `minio`.
+- Media rows continue to store `storageProvider`, `bucket`, `originalObjectKey`, `previewObjectKey`, `coverObjectKey`, and `checksum` where available.
+- Object keys stay relative, such as `originals/2026/04/media_xxx.jpg`; they must not include MinIO endpoints, localhost URLs, OSS URLs, or Cloudflare Tunnel URLs.
+- Original reads for `/api/media/files/{mediaId}?variant=original` stream through the backend API from object storage.
+- Image preview generation in remote mode downloads the original to a temporary local file, generates the JPEG preview, writes it back through `ObjectStorageService.put(...)`, and serves it through the same backend API path.
+- Video cover generation follows the same temporary-file pattern when `ffmpeg` is available to the Server runtime.
+- Trash purge can delete original, preview, and cover objects through the storage abstraction for remote provider rows.
+
+Known Step 3 limits:
+
+- The Docker image currently does not install `ffmpeg`; remote video cover generation may fail in docker until a later image pass adds it. Original video playback still uses the backend file endpoint.
+- HTTP Range for S3-backed video is compatible at the API level, but the current implementation obtains the object stream and skips bytes in the backend. Native S3 ranged reads should be added before large-video or production use.
+- Direct-to-object-storage upload, multipart upload, presigned URLs, ACL rules, MinIO admin APIs, and OSS media processing are intentionally not part of this pass.
+- Existing legacy fields (`url`, `previewUrl`, `originalUrl`, `videoUrl`, `coverUrl`, `storagePath`) remain for compatibility.
 
 ## Current Local Storage Layout
 
@@ -265,12 +304,12 @@ Do not depend on MinIO-only admin APIs, bucket notifications, lifecycle shortcut
 
 ## Next S3-Compatible Provider Shape
 
-When Docker Compose + PostgreSQL + MinIO is introduced, add a separate `S3ObjectStorageService` implementation rather than changing controllers or Android contracts.
+Docker Compose + PostgreSQL + MinIO now uses a separate `S3ObjectStorageService` implementation rather than changing controllers or Android contracts.
 
 Recommended shape:
 
-- Bind config from `app.storage.provider=minio`, `app.storage.bucket`, `app.storage.endpoint`, `app.storage.region`, `app.storage.access-key`, and `app.storage.secret-key`.
-- Implement the same `ObjectStorageService` methods with S3-compatible SDK calls.
+- Bind config from `app.storage.provider=s3|minio`, `app.storage.bucket`, `app.storage.endpoint`, `app.storage.region`, `app.storage.access-key`, and `app.storage.secret-key`.
+- Implemented current `ObjectStorageService` methods with S3-compatible SDK calls.
 - Keep object keys identical to the current relative local keys where practical.
 - Continue returning backend delivery URLs from DTO mappers.
 - Keep `/api/media/files/{mediaId}?variant=original|preview|cover` as the Android-facing binary endpoint.
@@ -352,7 +391,15 @@ Secrets rule:
 4. Partially done: new upload/recovery/import rows write object fields; old rows continue using `storagePath` fallback.
 5. Partially done: original put/get/delete and generated file read/delete are wrapped; preview/cover generation itself remains local path based.
 6. Done: keep `/api/media/files/{mediaId}` and upload DTOs unchanged during the first abstraction pass.
-7. Next: add docker profile, PostgreSQL, and MinIO in a separate Stage 16 step.
+7. Done in step 3: add docker profile, PostgreSQL, MinIO, and the S3-compatible provider without changing Android contracts.
+
+## Suggested Stage 16 Step 4
+
+1. Add native ranged reads to the storage abstraction for large video playback.
+2. Add a production-like Server image dependency strategy for `ffmpeg` or choose a separate media-processing worker.
+3. Introduce Flyway, Liquibase, or a committed SQL migration directory for PostgreSQL schema management.
+4. Add focused S3 integration tests or a smoke script that logs in, uploads media, verifies PostgreSQL object-key fields, and verifies MinIO objects.
+5. Keep Android behind backend APIs while preparing a later Cloudflare Tunnel entry that exposes only the Server API.
 
 ## PostgreSQL Schema Management Note
 

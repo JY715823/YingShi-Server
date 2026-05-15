@@ -41,6 +41,10 @@ app:
     provider: ${STORAGE_PROVIDER:local}
     bucket: ${STORAGE_BUCKET:yingshi-media}
     local-root: ${STORAGE_LOCAL_ROOT:local-storage}
+    endpoint: ${STORAGE_ENDPOINT:}
+    region: ${STORAGE_REGION:us-east-1}
+    access-key: ${STORAGE_ACCESS_KEY:}
+    secret-key: ${STORAGE_SECRET_KEY:}
 
 yingshi:
   dev:

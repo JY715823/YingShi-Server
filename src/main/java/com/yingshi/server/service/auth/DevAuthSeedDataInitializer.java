@@ -15,7 +15,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 @Configuration
-@Profile("dev")
+@Profile({"dev", "docker", "docker-local"})
 public class DevAuthSeedDataInitializer {
 
     public static final String DEMO_LIBRARY_ID = "library_shared";

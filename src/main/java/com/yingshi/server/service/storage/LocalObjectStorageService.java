@@ -4,6 +4,7 @@ import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.config.StorageProperties;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -22,6 +23,7 @@ import java.util.HexFormat;
 import java.util.Optional;
 
 @Service
+@ConditionalOnProperty(prefix = "app.storage", name = "provider", havingValue = "local", matchIfMissing = true)
 public class LocalObjectStorageService implements ObjectStorageService {
 
     private static final String LOCAL_PROVIDER = "local";
