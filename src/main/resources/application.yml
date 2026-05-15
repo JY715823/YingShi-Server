@@ -34,4 +34,6 @@ app:
       access-token-ttl: PT30M
       refresh-token-ttl: P7D
   storage:
-    local-root: local-storage
+    provider: ${STORAGE_PROVIDER:local}
+    bucket: ${STORAGE_BUCKET:yingshi-media}
+    local-root: ${STORAGE_LOCAL_ROOT:local-storage}

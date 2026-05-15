@@ -4,6 +4,8 @@ import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.config.StorageProperties;
 import com.yingshi.server.domain.MediaType;
+import com.yingshi.server.service.storage.ObjectMetadata;
+import com.yingshi.server.service.storage.ObjectStorageService;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
@@ -19,6 +21,7 @@ import java.awt.Color;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -49,9 +52,11 @@ public class LocalMediaStorageService {
     private static final Pattern LEGACY_PREVIEW_FILE_NAME = Pattern.compile("media_[A-Za-z0-9_-]+-\\d+\\.jpg");
 
     private final Path rootPath;
+    private final ObjectStorageService objectStorageService;
 
-    public LocalMediaStorageService(StorageProperties storageProperties) {
+    public LocalMediaStorageService(StorageProperties storageProperties, ObjectStorageService objectStorageService) {
         this.rootPath = Paths.get(storageProperties.localRoot()).toAbsolutePath().normalize();
+        this.objectStorageService = objectStorageService;
     }
 
     public StoredFile storeOriginal(
@@ -64,19 +69,33 @@ public class LocalMediaStorageService {
         String extension = resolveExtension(originalFileName, mediaType);
         Path directory = rootPath.resolve("originals").resolve(monthBucket(displayTimeMillis)).normalize();
         Path target = directory.resolve(mediaId + extension).normalize();
+        String objectKey = toRelativeStoragePath(target);
         try {
-            Files.createDirectories(directory);
-            file.transferTo(target);
+            ObjectMetadata metadata;
+            try (InputStream inputStream = file.getInputStream()) {
+                metadata = objectStorageService.put(objectKey, file.getContentType(), file.getSize(), inputStream);
+            }
+            return new StoredFile(
+                    objectKey,
+                    target.getFileName().toString(),
+                    objectStorageService.provider(),
+                    objectStorageService.bucket(),
+                    metadata.objectKey(),
+                    metadata.checksum(),
+                    metadata.sizeBytes()
+            );
         } catch (IOException exception) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to store uploaded file.");
         }
-        return new StoredFile(toRelativeStoragePath(target), target.getFileName().toString());
     }
 
     public Resource load(String storagePath) {
         Path path = resolveStoragePath(storagePath);
         if (!Files.exists(path)) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
+        }
+        if (isRelativeStoragePath(storagePath)) {
+            return objectStorageService.get(toObjectKey(storagePath)).resource();
         }
         return new FileSystemResource(path);
     }
@@ -90,6 +109,9 @@ public class LocalMediaStorageService {
         Path previewPath = imagePreviewPath(sourcePath, cacheKey, maxDimension);
         if (!ensureImagePreview(storagePath, cacheKey, maxDimension)) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Preview could not be generated for this media.");
+        }
+        if (isRelativeStoragePath(storagePath)) {
+            return objectStorageService.get(toRelativeStoragePath(previewPath)).resource();
         }
         return new FileSystemResource(previewPath);
     }
@@ -126,7 +148,39 @@ public class LocalMediaStorageService {
         if (!ensureVideoCover(storagePath, cacheKey, maxDimension)) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Video cover could not be generated for this media.");
         }
+        if (isRelativeStoragePath(storagePath)) {
+            return objectStorageService.get(toRelativeStoragePath(coverPath)).resource();
+        }
         return new FileSystemResource(coverPath);
+    }
+
+    public String provider() {
+        return objectStorageService.provider();
+    }
+
+    public String bucket() {
+        return objectStorageService.bucket();
+    }
+
+    public String originalObjectKey(String storagePath) {
+        return isRelativeStoragePath(storagePath) ? toObjectKey(storagePath) : null;
+    }
+
+    public String imagePreviewObjectKey(String storagePath, String cacheKey, int maxDimension) {
+        Path sourcePath = resolveStoragePath(storagePath);
+        return toRelativeStoragePath(imagePreviewPath(sourcePath, cacheKey, maxDimension));
+    }
+
+    public String videoCoverObjectKey(String storagePath, String cacheKey, int maxDimension) {
+        Path sourcePath = resolveStoragePath(storagePath);
+        return toRelativeStoragePath(videoCoverPath(sourcePath, cacheKey, maxDimension));
+    }
+
+    public ObjectMetadata metadata(String storagePath) {
+        if (!isRelativeStoragePath(storagePath)) {
+            return null;
+        }
+        return objectStorageService.getMetadata(toObjectKey(storagePath)).orElse(null);
     }
 
     public boolean ensureVideoCover(String storagePath, String cacheKey, int maxDimension) {
@@ -262,7 +316,11 @@ public class LocalMediaStorageService {
                 throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Refusing to delete non-file media path.");
             }
             try {
-                Files.delete(normalized);
+                if (normalized.startsWith(rootPath)) {
+                    objectStorageService.delete(toRelativeStoragePath(normalized));
+                } else {
+                    Files.delete(normalized);
+                }
                 deletedFiles.add(toRelativeStoragePath(normalized));
             } catch (IOException exception) {
                 throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to delete stored media file.");
@@ -343,6 +401,14 @@ public class LocalMediaStorageService {
             return rawPath.toAbsolutePath().normalize();
         }
         return rootPath.resolve(rawPath).toAbsolutePath().normalize();
+    }
+
+    private boolean isRelativeStoragePath(String storagePath) {
+        return storagePath != null && !storagePath.isBlank() && !Paths.get(storagePath).isAbsolute();
+    }
+
+    private String toObjectKey(String storagePath) {
+        return storagePath.trim().replace('\\', '/');
     }
 
     private boolean shouldRegeneratePreview(Path sourcePath, Path previewPath) throws IOException {
@@ -567,6 +633,14 @@ public class LocalMediaStorageService {
         }
     }
 
-    public record StoredFile(String storagePath, String storedFileName) {
+    public record StoredFile(
+            String storagePath,
+            String storedFileName,
+            String storageProvider,
+            String bucket,
+            String objectKey,
+            String checksum,
+            Long sizeBytes
+    ) {
     }
 }

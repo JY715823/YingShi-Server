@@ -95,6 +95,7 @@ public class DevOriginalsRecoveryInitializer {
                 existingCount++;
                 MediaEntity existing = existingMedia.get();
                 boolean changed = correctRecoveredTime(existing, media.getDisplayTimeMillis());
+                changed = fillStorageFields(existing, localMediaStorageService) || changed;
                 changed = ensureRecoveredPreview(existing, localMediaStorageService) || changed;
                 if (changed) {
                     mediaRepository.save(existing);
@@ -165,6 +166,10 @@ public class DevOriginalsRecoveryInitializer {
         media.setImportedAtMillis(lastModifiedTimeMillis(path));
         media.setDisplayTimeSource("RECOVERED");
         media.setStoragePath(storagePath);
+        media.setStorageProvider(localMediaStorageService.provider());
+        media.setBucket(localMediaStorageService.bucket());
+        media.setOriginalObjectKey(localMediaStorageService.originalObjectKey(storagePath));
+        media.setChecksum(checksumForStoragePath(storagePath, localMediaStorageService));
         media.setSourceFingerprint("recovered:" + shortHash(storagePath));
         media.setDeletedAt(null);
         return media;
@@ -181,21 +186,67 @@ public class DevOriginalsRecoveryInitializer {
         if (media.getMediaType() == MediaType.IMAGE) {
             boolean ready = localMediaStorageService.ensureImagePreview(media.getStoragePath(), media.getId(), PREVIEW_MAX_DIMENSION);
             String desiredPreviewUrl = ready ? mediaUrl + "?variant=preview" : mediaUrl;
+            String desiredPreviewObjectKey = ready
+                    ? localMediaStorageService.imagePreviewObjectKey(media.getStoragePath(), media.getId(), PREVIEW_MAX_DIMENSION)
+                    : null;
+            boolean changed = false;
             if (!desiredPreviewUrl.equals(media.getPreviewUrl())) {
                 media.setPreviewUrl(desiredPreviewUrl);
-                return true;
+                changed = true;
             }
-            return false;
+            if (desiredPreviewObjectKey == null ? media.getPreviewObjectKey() != null : !desiredPreviewObjectKey.equals(media.getPreviewObjectKey())) {
+                media.setPreviewObjectKey(desiredPreviewObjectKey);
+                changed = true;
+            }
+            return changed;
         }
         if (media.getMediaType() == MediaType.VIDEO) {
             boolean ready = localMediaStorageService.ensureVideoCover(media.getStoragePath(), media.getId(), VIDEO_COVER_MAX_DIMENSION);
             String desiredCoverUrl = ready ? mediaUrl + "?variant=cover" : null;
+            String desiredCoverObjectKey = ready
+                    ? localMediaStorageService.videoCoverObjectKey(media.getStoragePath(), media.getId(), VIDEO_COVER_MAX_DIMENSION)
+                    : null;
+            boolean changed = false;
             if (desiredCoverUrl == null ? media.getCoverUrl() != null : !desiredCoverUrl.equals(media.getCoverUrl())) {
                 media.setCoverUrl(desiredCoverUrl);
-                return true;
+                changed = true;
             }
+            if (desiredCoverObjectKey == null ? media.getCoverObjectKey() != null : !desiredCoverObjectKey.equals(media.getCoverObjectKey())) {
+                media.setCoverObjectKey(desiredCoverObjectKey);
+                changed = true;
+            }
+            return changed;
         }
         return false;
+    }
+
+    private boolean fillStorageFields(MediaEntity media, LocalMediaStorageService localMediaStorageService) {
+        if (media.getStoragePath() == null || media.getStoragePath().isBlank()) {
+            return false;
+        }
+        boolean changed = false;
+        if (media.getStorageProvider() == null || media.getStorageProvider().isBlank()) {
+            media.setStorageProvider(localMediaStorageService.provider());
+            changed = true;
+        }
+        if (media.getBucket() == null || media.getBucket().isBlank()) {
+            media.setBucket(localMediaStorageService.bucket());
+            changed = true;
+        }
+        if (media.getOriginalObjectKey() == null || media.getOriginalObjectKey().isBlank()) {
+            media.setOriginalObjectKey(localMediaStorageService.originalObjectKey(media.getStoragePath()));
+            changed = true;
+        }
+        if (media.getChecksum() == null || media.getChecksum().isBlank()) {
+            media.setChecksum(checksumForStoragePath(media.getStoragePath(), localMediaStorageService));
+            changed = true;
+        }
+        return changed;
+    }
+
+    private String checksumForStoragePath(String storagePath, LocalMediaStorageService localMediaStorageService) {
+        var metadata = localMediaStorageService.metadata(storagePath);
+        return metadata == null ? null : metadata.checksum();
     }
 
     private String mediaIdFromFileName(String fileName) {

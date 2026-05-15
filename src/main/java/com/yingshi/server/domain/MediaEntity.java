@@ -68,6 +68,24 @@ public class MediaEntity extends LibraryScopedEntity {
     @Column(nullable = false, length = 512)
     private String storagePath;
 
+    @Column(length = 40)
+    private String storageProvider;
+
+    @Column(length = 120)
+    private String bucket;
+
+    @Column(length = 512)
+    private String originalObjectKey;
+
+    @Column(length = 512)
+    private String previewObjectKey;
+
+    @Column(length = 512)
+    private String coverObjectKey;
+
+    @Column(length = 128)
+    private String checksum;
+
     @Column(length = 128)
     private String sourceFingerprint;
 
@@ -216,6 +234,54 @@ public class MediaEntity extends LibraryScopedEntity {
 
     public void setStoragePath(String storagePath) {
         this.storagePath = storagePath;
+    }
+
+    public String getStorageProvider() {
+        return storageProvider;
+    }
+
+    public void setStorageProvider(String storageProvider) {
+        this.storageProvider = storageProvider;
+    }
+
+    public String getBucket() {
+        return bucket;
+    }
+
+    public void setBucket(String bucket) {
+        this.bucket = bucket;
+    }
+
+    public String getOriginalObjectKey() {
+        return originalObjectKey;
+    }
+
+    public void setOriginalObjectKey(String originalObjectKey) {
+        this.originalObjectKey = originalObjectKey;
+    }
+
+    public String getPreviewObjectKey() {
+        return previewObjectKey;
+    }
+
+    public void setPreviewObjectKey(String previewObjectKey) {
+        this.previewObjectKey = previewObjectKey;
+    }
+
+    public String getCoverObjectKey() {
+        return coverObjectKey;
+    }
+
+    public void setCoverObjectKey(String coverObjectKey) {
+        this.coverObjectKey = coverObjectKey;
+    }
+
+    public String getChecksum() {
+        return checksum;
+    }
+
+    public void setChecksum(String checksum) {
+        this.checksum = checksum;
     }
 
     public String getSourceFingerprint() {

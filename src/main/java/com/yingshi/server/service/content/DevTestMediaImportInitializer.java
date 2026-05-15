@@ -220,6 +220,10 @@ public class DevTestMediaImportInitializer {
         media.setImportedAtMillis(candidate.displayTimeMillis());
         media.setDisplayTimeSource("ORIGINAL");
         media.setStoragePath(candidate.storagePath());
+        media.setStorageProvider(candidate.storageProvider());
+        media.setBucket(candidate.bucket());
+        media.setOriginalObjectKey(candidate.originalObjectKey());
+        media.setChecksum(candidate.checksum());
         media.setDeletedAt(null);
         return media;
     }
@@ -247,6 +251,10 @@ public class DevTestMediaImportInitializer {
         return new ImportCandidate(
                 storagePath,
                 bucketKey,
+                localMediaStorageService.provider(),
+                localMediaStorageService.bucket(),
+                localMediaStorageService.originalObjectKey(storagePath),
+                checksumForStoragePath(storagePath, localMediaStorageService),
                 mediaType,
                 mimeType,
                 sizeBytes,
@@ -374,6 +382,11 @@ public class DevTestMediaImportInitializer {
         }
     }
 
+    private String checksumForStoragePath(String storagePath, LocalMediaStorageService localMediaStorageService) {
+        var metadata = localMediaStorageService.metadata(storagePath);
+        return metadata == null ? null : metadata.checksum();
+    }
+
     private String bucketKeyForStoragePath(String storagePath) {
         Path path = Paths.get(storagePath.replace("/", java.io.File.separator));
         Path expectedRoot = Paths.get(TEST_IMPORT_ROOT);
@@ -432,6 +445,10 @@ public class DevTestMediaImportInitializer {
     private record ImportCandidate(
             String storagePath,
             String bucketKey,
+            String storageProvider,
+            String bucket,
+            String originalObjectKey,
+            String checksum,
             MediaType mediaType,
             String mimeType,
             long sizeBytes,

@@ -2,9 +2,9 @@
 
 ## Scope
 
-This document records the current backend storage shape and the migration rules for the next Stage 16 steps. It is an audit and contract document only.
+This document records the current backend storage shape and the migration rules for the next Stage 16 steps.
 
-This pass does not connect MinIO, does not switch to PostgreSQL, does not add Docker Compose, and does not rewrite upload or media streaming.
+Stage 16 step 2 adds the first Server storage abstraction, still backed by local files. It does not connect MinIO, does not switch to PostgreSQL, does not add Docker Compose, and does not rewrite upload or media streaming.
 
 ## Current Runtime
 
@@ -12,6 +12,8 @@ This pass does not connect MinIO, does not switch to PostgreSQL, does not add Do
 - Default profile is `dev`.
 - Dev database is H2 file mode: `jdbc:h2:file:./local-storage/dev-db/yingshi;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE`.
 - PostgreSQL driver is already present, but the current dev profile is still H2.
+- Server storage provider defaults to `app.storage.provider=local`.
+- Server storage bucket defaults to `app.storage.bucket=yingshi-media`.
 - Server storage root is configured by `app.storage.local-root`, currently `local-storage`.
 - Health check is `GET /api/health` and returns `status`, `application`, `activeProfiles`, and `serverTime`.
 
@@ -49,10 +51,46 @@ Current `MediaEntity` metadata fields:
 - `importedAtMillis`
 - `displayTimeSource`
 - `storagePath`
+- `storageProvider`
+- `bucket`
+- `originalObjectKey`
+- `previewObjectKey`
+- `coverObjectKey`
+- `checksum`
 - `sourceFingerprint`
 - `deletedAt`
 
-Current migration concern: `url`, `previewUrl`, `originalUrl`, `videoUrl`, `coverUrl`, and `storagePath` mix API URL shape and local-storage implementation details in the database. The mapper currently shields Android by returning backend API paths, but the DB model is not yet object-storage clean.
+Current migration concern: `url`, `previewUrl`, `originalUrl`, `videoUrl`, `coverUrl`, and `storagePath` still exist for compatibility and mix API URL shape with local-storage implementation details. Stage 16 step 2 adds nullable object-storage transition fields so old H2/dev rows continue to start and new media can write object keys without changing DTOs.
+
+## Stage 16 Step 2 Implementation Status
+
+Added Server classes:
+
+- `ObjectStorageService`: provider-neutral storage interface with `put`, `get`, `exists`, `delete`, and `getMetadata`.
+- `LocalObjectStorageService`: local provider implementation backed by `app.storage.local-root`.
+- `ObjectMetadata`: object key, content type, size, checksum, and last modified metadata.
+- `StoredObject`: returned object resource plus metadata.
+
+Current wrapped paths:
+
+- Original upload writes now go through `ObjectStorageService.put(...)`.
+- Original file reads for `/api/media/files/{mediaId}` now go through `ObjectStorageService.get(...)` when the stored path is a relative local object key.
+- Preview and cover reads go through `ObjectStorageService.get(...)` after the existing local generator ensures the file exists.
+- Trash purge deletes original and derived preview/cover files through `ObjectStorageService.delete(...)` when paths are under the local root.
+- New uploaded media rows write `storageProvider`, `bucket`, `originalObjectKey`, and `checksum`.
+- New image preview warmup writes `previewObjectKey` when generation succeeds.
+- New video media writes the expected deterministic `coverObjectKey`; actual video cover file generation remains lazy through the current media file endpoint.
+- Dev originals recovery and dev test import populate provider/bucket/object key/checksum where possible.
+
+Still intentionally local/path based in this pass:
+
+- Image preview generation still uses `Path`, `ImageIO`, and EXIF orientation handling.
+- Video cover generation still uses a local `ffmpeg` process and local file paths.
+- Dev scans still walk `local-storage/originals` and `local-storage/test`.
+- Legacy preview cleanup still scans the local preview directory.
+- `storagePath` remains required and is still the fallback for old data.
+
+These are the next migration points when object storage becomes remote. For MinIO/OSS, generation code will need either a temporary local work file or a provider-neutral working-file adapter before writing the generated preview/cover back through `ObjectStorageService.put(...)`.
 
 ## Current Local Storage Layout
 
@@ -88,6 +126,7 @@ Current cleanup:
 
 - Dev startup may delete legacy preview files matching `media_xxx-720.jpg`.
 - Trash purge for `mediaSystemDeleted` deletes the original `storagePath` and derived `preview-v2` / `cover-v1` files owned by that media cache key.
+- Stage 16 step 2 routes those local deletes through `ObjectStorageService.delete(...)` for keys under the configured local root.
 
 ## Current Server API Surface
 
@@ -186,6 +225,7 @@ Database rule:
 - Store object keys and metadata, not `localhost`, LAN IP, MinIO endpoint URLs, OSS URLs, signed URLs, or Cloudflare Tunnel URLs.
 - Public delivery URLs are derived at request time by backend controllers/services.
 - Android must receive backend API URLs or relative backend API paths, not storage-provider URLs.
+- During the transition, keep legacy URL columns and `storagePath` only for compatibility. New provider fields should use relative object keys such as `originals/2026/04/media_xxx.jpg`, never absolute paths or object-store HTTP URLs.
 
 Android rule:
 
@@ -197,15 +237,16 @@ Android rule:
 
 ## ObjectStorageService Direction
 
-Introduce an `ObjectStorageService` abstraction before connecting MinIO or OSS.
+Stage 16 step 2 introduces an `ObjectStorageService` abstraction before connecting MinIO or OSS.
 
-Suggested first interface:
+Current first interface:
 
 - `put(objectKey, contentType, sizeBytes, inputStream)`
-- `get(objectKey)` returning stream/resource metadata
+- `get(objectKey)` returning a backend `Resource` plus lightweight metadata
 - `delete(objectKey)`
 - `exists(objectKey)`
-- `multipart` initiation/upload/complete hooks only when needed for large files
+- `getMetadata(objectKey)` returning metadata when available
+- `multipart` initiation/upload/complete hooks are reserved for a later large-file pass
 
 Provider implementations should be hidden behind the interface:
 
@@ -221,6 +262,22 @@ Only use common object storage capabilities:
 - multipart upload
 
 Do not depend on MinIO-only admin APIs, bucket notifications, lifecycle shortcuts, browser URLs, or OSS-only media processing features in the business layer. If provider-specific optimizations are added later, keep them optional and outside the core media contract.
+
+## Next S3-Compatible Provider Shape
+
+When Docker Compose + PostgreSQL + MinIO is introduced, add a separate `S3ObjectStorageService` implementation rather than changing controllers or Android contracts.
+
+Recommended shape:
+
+- Bind config from `app.storage.provider=minio`, `app.storage.bucket`, `app.storage.endpoint`, `app.storage.region`, `app.storage.access-key`, and `app.storage.secret-key`.
+- Implement the same `ObjectStorageService` methods with S3-compatible SDK calls.
+- Keep object keys identical to the current relative local keys where practical.
+- Continue returning backend delivery URLs from DTO mappers.
+- Keep `/api/media/files/{mediaId}?variant=original|preview|cover` as the Android-facing binary endpoint.
+- Use multipart only behind the storage interface when upload size requires it.
+- Do not expose MinIO browser URLs, presigned provider URLs, bucket names, or object keys to Android in this stage.
+
+For Aliyun OSS later, add an OSS implementation behind the same interface and keep business services working with bucket/key/provider metadata only.
 
 ## API Compatibility Principles
 
@@ -272,6 +329,14 @@ Mapping suggestion:
 - `app.storage.secret-key=${STORAGE_SECRET_KEY:}`
 - `app.storage.local-root=${STORAGE_LOCAL_ROOT:local-storage}`
 
+Current Stage 16 step 2 config:
+
+- `app.storage.provider=${STORAGE_PROVIDER:local}`
+- `app.storage.bucket=${STORAGE_BUCKET:yingshi-media}`
+- `app.storage.local-root=${STORAGE_LOCAL_ROOT:local-storage}`
+
+Remote endpoint, region, and secret config names remain reserved for the MinIO/OSS pass and must not contain committed real credentials.
+
 Secrets rule:
 
 - Do not commit `.env` files.
@@ -281,10 +346,16 @@ Secrets rule:
 
 ## Suggested Stage 16 Step 2
 
-1. Add `ObjectStorageService` and `StoredObject` model without changing controllers.
-2. Implement a `local` provider backed by the current local root.
-3. Add new object-key fields to `MediaEntity` while keeping current fields temporarily.
-4. Write an adapter that maps current `storagePath` to `originalObjectKey` for existing local rows.
-5. Move media file load/delete/preview/cover code behind storage service boundaries.
-6. Keep `/api/media/files/{mediaId}` and upload DTOs unchanged during the first abstraction pass.
-7. Only after tests pass, consider a separate migration from H2 to PostgreSQL and a separate MinIO profile.
+1. Done: add `ObjectStorageService`, `StoredObject`, and `ObjectMetadata` without changing controllers.
+2. Done: implement a `local` provider backed by the current local root.
+3. Done: add nullable object-key fields to `MediaEntity` while keeping current fields temporarily.
+4. Partially done: new upload/recovery/import rows write object fields; old rows continue using `storagePath` fallback.
+5. Partially done: original put/get/delete and generated file read/delete are wrapped; preview/cover generation itself remains local path based.
+6. Done: keep `/api/media/files/{mediaId}` and upload DTOs unchanged during the first abstraction pass.
+7. Next: add docker profile, PostgreSQL, and MinIO in a separate Stage 16 step.
+
+## PostgreSQL Schema Management Note
+
+The current dev profile can still rely on H2 plus Hibernate `ddl-auto=update` for quick local bootstrap. When PostgreSQL is introduced, schema changes should be managed by committed migration scripts, such as Flyway, Liquibase, or a documented SQL migration directory.
+
+Navicat or other GUI-created tables can be useful for inspection, but should not become the project source of truth. The repository should contain the migration history for fields such as `storage_provider`, `bucket`, `original_object_key`, `preview_object_key`, `cover_object_key`, and `checksum`.

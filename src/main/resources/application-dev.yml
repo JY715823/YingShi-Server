@@ -38,7 +38,9 @@ app:
     jwt:
       secret: dev-secret-key-for-yingshi-server-minimum-length-32
   storage:
-    local-root: local-storage
+    provider: ${STORAGE_PROVIDER:local}
+    bucket: ${STORAGE_BUCKET:yingshi-media}
+    local-root: ${STORAGE_LOCAL_ROOT:local-storage}
 
 yingshi:
   dev:

@@ -31,6 +31,8 @@ public class DevContentSeedDataInitializer {
     private static final String SAMPLE_LONG_PATH = "test/long/sample-long-1400x3200.jpg";
     private static final String SAMPLE_TALL_PATH = "test/long/sample-tall-1200x3600.jpg";
     private static final String SAMPLE_VIDEO_PATH = "test/videos/sample-video-15s-868KB.mp4";
+    private static final String LOCAL_STORAGE_PROVIDER = "local";
+    private static final String DEFAULT_STORAGE_BUCKET = "yingshi-media";
 
     @Bean
     @Order(2)
@@ -255,6 +257,9 @@ public class DevContentSeedDataInitializer {
         media.setImportedAtMillis(displayTimeMillis);
         media.setDisplayTimeSource("ORIGINAL");
         media.setStoragePath(storagePath);
+        media.setStorageProvider(LOCAL_STORAGE_PROVIDER);
+        media.setBucket(DEFAULT_STORAGE_BUCKET);
+        media.setOriginalObjectKey(storagePath);
         return media;
     }
 

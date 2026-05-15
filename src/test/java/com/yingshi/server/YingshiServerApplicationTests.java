@@ -1,6 +1,8 @@
 package com.yingshi.server;
 
 import com.jayway.jsonpath.JsonPath;
+import com.yingshi.server.domain.MediaEntity;
+import com.yingshi.server.repository.MediaRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -21,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
@@ -45,6 +48,9 @@ class YingshiServerApplicationTests {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private MediaRepository mediaRepository;
 
     @Test
     void contextLoads() {
@@ -427,6 +433,12 @@ class YingshiServerApplicationTests {
                 .andReturn();
 
         String mediaId = readField(uploadResult, "/data/media/mediaId");
+        MediaEntity uploadedMedia = mediaRepository.findById(mediaId).orElseThrow();
+        assertEquals("local", uploadedMedia.getStorageProvider());
+        assertEquals("yingshi-media", uploadedMedia.getBucket());
+        assertEquals("originals/2026/04/" + mediaId + ".jpg", uploadedMedia.getOriginalObjectKey());
+        assertEquals(uploadedMedia.getStoragePath(), uploadedMedia.getOriginalObjectKey());
+        assertNotNull(uploadedMedia.getChecksum());
 
         mockMvc.perform(get("/api/media/files/" + mediaId)
                         .header("Authorization", "Bearer " + accessToken))

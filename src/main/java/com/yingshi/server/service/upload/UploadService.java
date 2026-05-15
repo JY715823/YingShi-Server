@@ -81,7 +81,7 @@ public class UploadService {
         uploadTaskRepository.save(task);
         return new UploadTokenResponse(
                 task.getId(),
-                "local",
+                localMediaStorageService.provider(),
                 "/api/uploads/" + task.getId() + "/file",
                 task.getExpireAt().toEpochMilli(),
                 task.getState().name().toLowerCase(Locale.ROOT)
@@ -129,7 +129,7 @@ public class UploadService {
                 file
         );
 
-        MediaEntity media = buildMediaFromTask(mediaId, task, storedFile.storagePath());
+        MediaEntity media = buildMediaFromTask(mediaId, task, storedFile);
         warmPreviewIfPossible(media);
         mediaRepository.save(media);
 
@@ -185,7 +185,7 @@ public class UploadService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.UPLOAD_NOT_FOUND, "Upload task was not found."));
     }
 
-    private MediaEntity buildMediaFromTask(String mediaId, UploadTaskEntity task, String storedPath) {
+    private MediaEntity buildMediaFromTask(String mediaId, UploadTaskEntity task, LocalMediaStorageService.StoredFile storedFile) {
         String mediaUrl = "/api/media/files/" + mediaId;
 
         MediaEntity media = new MediaEntity();
@@ -207,7 +207,11 @@ public class UploadService {
         media.setCapturedAtMillis(task.getCapturedAtMillis());
         media.setImportedAtMillis(task.getImportedAtMillis());
         media.setDisplayTimeSource(task.getDisplayTimeSource());
-        media.setStoragePath(storedPath);
+        media.setStoragePath(storedFile.storagePath());
+        media.setStorageProvider(storedFile.storageProvider());
+        media.setBucket(storedFile.bucket());
+        media.setOriginalObjectKey(storedFile.objectKey());
+        media.setChecksum(storedFile.checksum());
         media.setSourceFingerprint(task.getSourceFingerprint());
         return media;
     }
@@ -216,11 +220,23 @@ public class UploadService {
         if (media.getMediaType() == MediaType.IMAGE) {
             if (!localMediaStorageService.ensureImagePreview(media.getStoragePath(), media.getId(), PREVIEW_MAX_DIMENSION)) {
                 media.setPreviewUrl(media.getUrl());
+                media.setPreviewObjectKey(null);
+            } else {
+                media.setPreviewObjectKey(localMediaStorageService.imagePreviewObjectKey(
+                        media.getStoragePath(),
+                        media.getId(),
+                        PREVIEW_MAX_DIMENSION
+                ));
             }
             return;
         }
         if (media.getMediaType() == MediaType.VIDEO) {
             media.setCoverUrl(media.getUrl() + "?variant=cover");
+            media.setCoverObjectKey(localMediaStorageService.videoCoverObjectKey(
+                    media.getStoragePath(),
+                    media.getId(),
+                    PREVIEW_MAX_DIMENSION
+            ));
         }
     }
 
