@@ -43,7 +43,7 @@ public class S3ObjectStorageService implements ObjectStorageService {
 
     @Override
     public String provider() {
-        return storageProperties.provider();
+        return "s3";
     }
 
     @Override
@@ -172,22 +172,7 @@ public class S3ObjectStorageService implements ObjectStorageService {
     }
 
     private String normalizeObjectKey(String objectKey) {
-        if (objectKey == null || objectKey.isBlank()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Object key must not be blank.");
-        }
-        String normalized = objectKey.trim().replace('\\', '/');
-        while (normalized.startsWith("/")) {
-            normalized = normalized.substring(1);
-        }
-        if (normalized.isBlank() || normalized.contains("//")) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Object key is invalid.");
-        }
-        for (String segment : normalized.split("/")) {
-            if (segment.isBlank() || ".".equals(segment) || "..".equals(segment)) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Object key contains an unsafe path segment.");
-            }
-        }
-        return normalized;
+        return ObjectKeyPolicy.normalizeRelativeObjectKey(objectKey);
     }
 
     private String normalizeContentType(String contentType) {

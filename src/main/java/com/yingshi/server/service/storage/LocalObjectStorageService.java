@@ -134,23 +134,8 @@ public class LocalObjectStorageService implements ObjectStorageService {
     }
 
     private String normalizeObjectKey(String objectKey) {
-        if (objectKey == null || objectKey.isBlank()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Object key must not be blank.");
-        }
-        String normalized = objectKey.trim().replace('\\', '/');
-        while (normalized.startsWith("/")) {
-            normalized = normalized.substring(1);
-        }
+        String normalized = ObjectKeyPolicy.normalizeRelativeObjectKey(objectKey);
         Path path = Paths.get(normalized.replace("/", FileSystems.getDefault().getSeparator()));
-        if (path.isAbsolute()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Object key must be relative.");
-        }
-        for (Path segment : path) {
-            String value = segment.toString();
-            if (value.isBlank() || ".".equals(value) || "..".equals(value)) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Object key contains an unsafe path segment.");
-            }
-        }
         return path.toString().replace(FileSystems.getDefault().getSeparator(), "/");
     }
 

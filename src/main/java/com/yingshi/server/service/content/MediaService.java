@@ -16,6 +16,7 @@ import com.yingshi.server.service.upload.LocalMediaStorageService;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Base64;
@@ -37,6 +38,7 @@ public class MediaService {
     private final PostRepository postRepository;
     private final ContentMapper contentMapper;
     private final LocalMediaStorageService localMediaStorageService;
+    private final MediaStorageFieldService mediaStorageFieldService;
     private static final int PREVIEW_MAX_DIMENSION = 1280;
     private static final int VIDEO_COVER_MAX_DIMENSION = 1280;
 
@@ -45,13 +47,15 @@ public class MediaService {
             PostMediaRepository postMediaRepository,
             PostRepository postRepository,
             ContentMapper contentMapper,
-            LocalMediaStorageService localMediaStorageService
+            LocalMediaStorageService localMediaStorageService,
+            MediaStorageFieldService mediaStorageFieldService
     ) {
         this.mediaRepository = mediaRepository;
         this.postMediaRepository = postMediaRepository;
         this.postRepository = postRepository;
         this.contentMapper = contentMapper;
         this.localMediaStorageService = localMediaStorageService;
+        this.mediaStorageFieldService = mediaStorageFieldService;
     }
 
     public List<MediaDto> getMediaFeed(AuthenticatedUser currentUser) {
@@ -118,13 +122,26 @@ public class MediaService {
         return new MediaFeedPage(pageItems, nextCursor, hasMore, normalizedPageSize);
     }
 
+    @Transactional
     public MediaFilePayload loadMediaFile(String mediaId, String variant, AuthenticatedUser currentUser) {
         MediaEntity media = mediaRepository.findByIdAndLibraryId(mediaId, currentUser.libraryId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Media was not found."));
-        if (media.getStoragePath() == null || media.getStoragePath().isBlank()) {
+        boolean changed = mediaStorageFieldService.fillMissingStorageFields(media);
+        String storagePath = mediaStorageFieldService.storagePathForRead(media);
+        if (storagePath == null || storagePath.isBlank()) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Local file is not available for this media.");
         }
-        Resource resource = resolveMediaResource(media, variant);
+        MediaResourceResolution resolution = resolveMediaResource(media, variant, storagePath);
+        if (resolution.previewGenerated()) {
+            changed = mediaStorageFieldService.markPreviewGenerated(media) || changed;
+        }
+        if (resolution.coverGenerated()) {
+            changed = mediaStorageFieldService.markCoverGenerated(media) || changed;
+        }
+        if (changed) {
+            mediaRepository.save(media);
+        }
+        Resource resource = resolution.resource();
         String mimeType = isJpegVariant(media, variant)
                 ? "image/jpeg"
                 : media.getMimeType();
@@ -141,19 +158,27 @@ public class MediaService {
         return new MediaFilePayload(resource, mimeType, contentLength, lastModifiedMillis);
     }
 
-    private Resource resolveMediaResource(MediaEntity media, String variant) {
+    private MediaResourceResolution resolveMediaResource(MediaEntity media, String variant, String storagePath) {
         if ("preview".equalsIgnoreCase(variant) && media.getMediaType() == com.yingshi.server.domain.MediaType.IMAGE) {
             try {
-                return localMediaStorageService.loadPreview(media.getStoragePath(), media.getId(), PREVIEW_MAX_DIMENSION);
+                return new MediaResourceResolution(
+                        localMediaStorageService.loadPreview(storagePath, media.getId(), PREVIEW_MAX_DIMENSION),
+                        true,
+                        false
+                );
             } catch (ApiException exception) {
-                return localMediaStorageService.load(media.getStoragePath());
+                return new MediaResourceResolution(localMediaStorageService.load(storagePath), false, false);
             }
         }
         if (("cover".equalsIgnoreCase(variant) || "preview".equalsIgnoreCase(variant)) &&
                 media.getMediaType() == com.yingshi.server.domain.MediaType.VIDEO) {
-            return localMediaStorageService.loadVideoCover(media.getStoragePath(), media.getId(), VIDEO_COVER_MAX_DIMENSION);
+            return new MediaResourceResolution(
+                    localMediaStorageService.loadVideoCover(storagePath, media.getId(), VIDEO_COVER_MAX_DIMENSION),
+                    false,
+                    true
+            );
         }
-        return localMediaStorageService.load(media.getStoragePath());
+        return new MediaResourceResolution(localMediaStorageService.load(storagePath), false, false);
     }
 
     private boolean isJpegVariant(MediaEntity media, String variant) {
@@ -218,5 +243,8 @@ public class MediaService {
     }
 
     private record Cursor(long displayTimeMillis, String mediaId) {
+    }
+
+    private record MediaResourceResolution(Resource resource, boolean previewGenerated, boolean coverGenerated) {
     }
 }

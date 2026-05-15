@@ -8,6 +8,8 @@ Stage 16 step 2 added the first Server storage abstraction, still backed by loca
 
 Stage 16 step 3 adds a local Docker cloudlike environment and an S3-compatible storage provider for MinIO smoke testing. Default local development still uses H2 plus `local-storage`; Android REAL contracts remain unchanged.
 
+Stage 16 step 4 tightens media object field rules and compatibility: new local and S3-backed media records use relative object keys, lazy preview/cover reads backfill generated object keys where possible, and lightweight diagnostics/tests check for URL-shaped object keys.
+
 ## Current Runtime
 
 - Spring Boot backend with Spring Web MVC, Spring Data JPA, validation, JWT auth, and springdoc in dev.
@@ -62,7 +64,14 @@ Current `MediaEntity` metadata fields:
 - `sourceFingerprint`
 - `deletedAt`
 
-Current migration concern: `url`, `previewUrl`, `originalUrl`, `videoUrl`, `coverUrl`, and `storagePath` still exist for compatibility and mix API URL shape with local-storage implementation details. Stage 16 step 2 adds nullable object-storage transition fields so old H2/dev rows continue to start and new media can write object keys without changing DTOs.
+Current field responsibility:
+
+- Legacy API URL fields: `url`, `previewUrl`, `originalUrl`, `videoUrl`, and `coverUrl`. These stay temporarily for DTO compatibility and must point to backend API routes, not MinIO/OSS.
+- Legacy storage locator: `storagePath`. This stays temporarily for old H2/dev rows and local recovery flows.
+- Object storage fields: `storageProvider`, `bucket`, `originalObjectKey`, `previewObjectKey`, `coverObjectKey`, and `checksum`. These are the migration-safe fields.
+- Media metadata fields: `sizeBytes`, `mimeType`, `width`, `height`, and `durationMillis`. The future standard name `durationMs` maps to the current Java field `durationMillis`.
+
+Current migration concern: legacy URL fields and `storagePath` still exist for compatibility. New logic should prefer object keys, infer them from legacy fields only when they are safe relative keys, and never store MinIO, OSS, Cloudflare Tunnel, LAN, or localhost URLs in object-key columns.
 
 ## Stage 16 Step 2 Implementation Status
 
@@ -130,6 +139,53 @@ Known Step 3 limits:
 - HTTP Range for S3-backed video is compatible at the API level, but the current implementation obtains the object stream and skips bytes in the backend. Native S3 ranged reads should be added before large-video or production use.
 - Direct-to-object-storage upload, multipart upload, presigned URLs, ACL rules, MinIO admin APIs, and OSS media processing are intentionally not part of this pass.
 - Existing legacy fields (`url`, `previewUrl`, `originalUrl`, `videoUrl`, `coverUrl`, `storagePath`) remain for compatibility.
+
+## Stage 16 Step 4 Implementation Status
+
+Added Server classes/tests:
+
+- `ObjectKeyPolicy`: provider-neutral relative object-key validation and URL-shaped value detection.
+- `MediaStorageFieldService`: small helper for filling missing storage fields, normalizing provider names, deriving safe object keys from legacy fields, marking generated preview/cover keys, and diagnosing object existence.
+- `ObjectKeyPolicyTests` and `MediaStorageFieldServiceTests`: focused checks for relative key rules, URL rejection, provider normalization, and old-field inference.
+
+Updated behavior:
+
+- New local uploads still write originals through `ObjectStorageService` and persist `storageProvider=local`, `bucket`, `originalObjectKey`, `checksum`, `sizeBytes`, and `mimeType`.
+- New S3/MinIO uploads persist `storageProvider=s3`, `bucket`, `originalObjectKey`, `checksum` when available, `sizeBytes`, and `mimeType`. The `minio` config value is accepted as an S3-compatible provider alias, but rows should use `s3`.
+- `S3ObjectStorageService.provider()` now returns `s3`, keeping provider values stable across MinIO and future S3-compatible test environments.
+- Object key validation rejects URL-shaped values such as `http://...`, `https://...`, `s3://...`, `oss://...`, `file://...`, and Windows absolute paths.
+- `/api/media/files/{mediaId}?variant=...` now fills missing provider/bucket/original object fields on read when the values can be safely inferred from existing relative fields.
+- Lazy image preview reads mark `previewObjectKey` after successful preview generation.
+- Lazy video cover reads mark `coverObjectKey` after successful cover generation.
+- `ContentMapper` can still produce backend media URLs when `storagePath` is absent but `originalObjectKey` is available.
+
+Compatibility rules:
+
+- Old rows with only `storagePath` still read through the backend file endpoint.
+- Old rows with missing object keys can be gradually filled by upload/recovery/import/read paths.
+- Full URLs in legacy API fields are not copied into object-key fields.
+- If a row has only URL-shaped legacy values and no safe relative key, it remains unreadable by storage until a manual backfill can map it to a real object.
+
+Lightweight diagnostics:
+
+- `MediaStorageFieldService.diagnose(media)` returns whether the original object key is missing, whether any object key looks like a URL, and whether the current provider can find the object.
+- For PostgreSQL inspection, useful read-only checks are:
+
+```sql
+select id, storage_provider, bucket, original_object_key, preview_object_key, cover_object_key
+from media
+where original_object_key is null
+   or original_object_key like 'http://%'
+   or original_object_key like 'https://%'
+   or original_object_key like 's3://%'
+   or original_object_key like 'oss://%';
+```
+
+Backfill guidance:
+
+- Prefer a committed migration or an explicit admin/script flow for bulk updates.
+- Safe automatic fill is limited to cases where `storagePath` or another legacy field is already a relative object key such as `originals/2026/04/media_xxx.jpg`.
+- Do not infer object keys from public URLs unless a controlled mapping has been verified.
 
 ## Current Local Storage Layout
 
@@ -244,7 +300,7 @@ Trash:
 
 Future media persistence should use object metadata fields rather than stable public URLs or local file paths:
 
-- `provider`: storage provider name, for example `local`, `minio`, or `oss`.
+- `provider`: storage provider name. Current normalized values are `local` and `s3`; `minio` is only a local S3-compatible config alias.
 - `bucket`: logical object bucket/container name.
 - `objectKey`: canonical object key for the main/original media object when one key is enough.
 - `originalObjectKey`: original media object key.
@@ -290,7 +346,7 @@ Current first interface:
 Provider implementations should be hidden behind the interface:
 
 - `local`: stores objects under the current local root using object keys.
-- `minio`: S3-compatible local/prod-like test provider.
+- `s3`: S3-compatible provider. In local Docker this points to MinIO; later it can point to another S3-compatible service.
 - `oss`: future Aliyun OSS implementation.
 
 Only use common object storage capabilities:
@@ -393,13 +449,14 @@ Secrets rule:
 6. Done: keep `/api/media/files/{mediaId}` and upload DTOs unchanged during the first abstraction pass.
 7. Done in step 3: add docker profile, PostgreSQL, MinIO, and the S3-compatible provider without changing Android contracts.
 
-## Suggested Stage 16 Step 4
+## Suggested Stage 16 Next Steps
 
 1. Add native ranged reads to the storage abstraction for large video playback.
 2. Add a production-like Server image dependency strategy for `ffmpeg` or choose a separate media-processing worker.
 3. Introduce Flyway, Liquibase, or a committed SQL migration directory for PostgreSQL schema management.
-4. Add focused S3 integration tests or a smoke script that logs in, uploads media, verifies PostgreSQL object-key fields, and verifies MinIO objects.
-5. Keep Android behind backend APIs while preparing a later Cloudflare Tunnel entry that exposes only the Server API.
+4. Add a non-destructive backfill command or admin-only endpoint that reports and optionally fills missing object-key fields.
+5. Add focused S3 integration tests or a smoke script that logs in, uploads media, verifies PostgreSQL object-key fields, and verifies MinIO objects.
+6. Keep Android behind backend APIs while preparing a later Cloudflare Tunnel entry that exposes only the Server API.
 
 ## PostgreSQL Schema Management Note
 

@@ -10,6 +10,7 @@ import com.yingshi.server.dto.content.MediaDto;
 import com.yingshi.server.dto.content.PostDetailDto;
 import com.yingshi.server.dto.content.PostMediaDto;
 import com.yingshi.server.dto.content.PostSummaryDto;
+import com.yingshi.server.service.storage.ObjectKeyPolicy;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -102,7 +103,9 @@ public class ContentMapper {
 
     private String localMediaUrl(MediaEntity media) {
         String storagePath = media.getStoragePath();
-        if (storagePath == null || storagePath.isBlank()) {
+        String originalObjectKey = media.getOriginalObjectKey();
+        if ((storagePath == null || storagePath.isBlank())
+                && !ObjectKeyPolicy.isRelativeObjectKey(originalObjectKey)) {
             return null;
         }
         return "/api/media/files/" + media.getId();

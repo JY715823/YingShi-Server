@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.hamcrest.Matchers.nullValue;
@@ -439,6 +440,7 @@ class YingshiServerApplicationTests {
         assertEquals("originals/2026/04/" + mediaId + ".jpg", uploadedMedia.getOriginalObjectKey());
         assertEquals(uploadedMedia.getStoragePath(), uploadedMedia.getOriginalObjectKey());
         assertNotNull(uploadedMedia.getChecksum());
+        assertFalse(uploadedMedia.getOriginalObjectKey().contains("://"));
 
         mockMvc.perform(get("/api/media/files/" + mediaId)
                         .header("Authorization", "Bearer " + accessToken))
@@ -660,6 +662,11 @@ class YingshiServerApplicationTests {
         String mediaId = readField(uploadResult, "/data/media/mediaId");
         Path originalPath = Path.of("local-storage", "originals", "2026", "04", mediaId + ".jpg");
         assertTrue(Files.exists(originalPath), "uploaded original should exist before purge");
+        MediaEntity mediaBeforePreview = mediaRepository.findById(mediaId).orElseThrow();
+        assertEquals("local", mediaBeforePreview.getStorageProvider());
+        assertEquals("yingshi-media", mediaBeforePreview.getBucket());
+        assertEquals("originals/2026/04/" + mediaId + ".jpg", mediaBeforePreview.getOriginalObjectKey());
+        assertNotNull(mediaBeforePreview.getChecksum());
 
         MvcResult deleteResult = mockMvc.perform(delete("/api/media/" + mediaId)
                         .header("Authorization", "Bearer " + accessToken))
@@ -673,6 +680,9 @@ class YingshiServerApplicationTests {
                         .queryParam("variant", "preview")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk());
+        MediaEntity mediaAfterPreview = mediaRepository.findById(mediaId).orElseThrow();
+        assertEquals("previews/2026/04/" + mediaId + "-preview-v2-1280.jpg", mediaAfterPreview.getPreviewObjectKey());
+        assertFalse(mediaAfterPreview.getPreviewObjectKey().contains("://"));
         Path previewPath = Path.of("local-storage", "previews", "2026", "04", mediaId + "-preview-v2-1280.jpg");
         assertTrue(Files.exists(previewPath), "generated preview should exist before purge");
 

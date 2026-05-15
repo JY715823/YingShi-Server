@@ -5,6 +5,7 @@ import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.config.StorageProperties;
 import com.yingshi.server.domain.MediaType;
 import com.yingshi.server.service.storage.ObjectMetadata;
+import com.yingshi.server.service.storage.ObjectKeyPolicy;
 import com.yingshi.server.service.storage.ObjectStorageService;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -96,11 +97,18 @@ public class LocalMediaStorageService {
         if (isRelativeStoragePath(storagePath)) {
             return objectStorageService.get(toObjectKey(storagePath)).resource();
         }
+        if (ObjectKeyPolicy.looksLikeFullUrl(storagePath)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
+        }
         Path path = resolveStoragePath(storagePath);
         if (!Files.exists(path)) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
         }
         return new FileSystemResource(path);
+    }
+
+    public Resource loadObject(String objectKey) {
+        return objectStorageService.get(ObjectKeyPolicy.normalizeRelativeObjectKey(objectKey)).resource();
     }
 
     public Resource loadPreview(String storagePath, String cacheKey, int maxDimension) {
@@ -160,7 +168,7 @@ public class LocalMediaStorageService {
     }
 
     public String originalObjectKey(String storagePath) {
-        return isRelativeStoragePath(storagePath) ? toObjectKey(storagePath) : null;
+        return ObjectKeyPolicy.tryNormalizeRelativeObjectKey(storagePath);
     }
 
     public String imagePreviewObjectKey(String storagePath, String cacheKey, int maxDimension) {
@@ -186,6 +194,19 @@ public class LocalMediaStorageService {
             return null;
         }
         return objectStorageService.getMetadata(toObjectKey(storagePath)).orElse(null);
+    }
+
+    public ObjectMetadata metadataForObjectKey(String objectKey) {
+        String normalizedObjectKey = ObjectKeyPolicy.tryNormalizeRelativeObjectKey(objectKey);
+        if (normalizedObjectKey == null) {
+            return null;
+        }
+        return objectStorageService.getMetadata(normalizedObjectKey).orElse(null);
+    }
+
+    public boolean objectExists(String objectKey) {
+        String normalizedObjectKey = ObjectKeyPolicy.tryNormalizeRelativeObjectKey(objectKey);
+        return normalizedObjectKey != null && objectStorageService.exists(normalizedObjectKey);
     }
 
     public boolean ensureVideoCover(String storagePath, String cacheKey, int maxDimension) {
@@ -425,11 +446,11 @@ public class LocalMediaStorageService {
     }
 
     private boolean isRelativeStoragePath(String storagePath) {
-        return storagePath != null && !storagePath.isBlank() && !Paths.get(storagePath).isAbsolute();
+        return ObjectKeyPolicy.isRelativeObjectKey(storagePath);
     }
 
     private String toObjectKey(String storagePath) {
-        return storagePath.trim().replace('\\', '/');
+        return ObjectKeyPolicy.normalizeRelativeObjectKey(storagePath);
     }
 
     private String previewDirectoryObjectKey(String storagePath) {

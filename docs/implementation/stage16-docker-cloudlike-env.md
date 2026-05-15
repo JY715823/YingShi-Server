@@ -133,6 +133,8 @@ This is for inspection only. Do not create or alter project tables manually as t
 
 Current docker profile strategy is `spring.jpa.hibernate.ddl-auto=update` by default for bootstrapping. Future PostgreSQL stages should move schema changes to committed Flyway, Liquibase, or SQL migration scripts.
 
+Use Navicat to inspect rows such as `storage_provider`, `bucket`, `original_object_key`, `preview_object_key`, `cover_object_key`, `checksum`, `size_bytes`, `mime_type`, `width`, `height`, and `duration_millis`. Do not paste MinIO Console URLs, OSS URLs, or Cloudflare Tunnel URLs into object-key columns.
+
 The docker profile seeds only the demo users and shared library. It does not seed local sample media paths, run local test import, or run local originals recovery.
 
 ## Android REAL Base URL
@@ -160,10 +162,46 @@ Use Android REAL or the existing backend smoke flow to upload media. In docker p
 - `POST /api/uploads/token` still returns a backend upload URL.
 - `POST /api/uploads/{uploadId}/file` writes original media to MinIO through `ObjectStorageService`.
 - Media rows continue to store `storageProvider`, `bucket`, `originalObjectKey`, and `checksum`.
+- In this profile `STORAGE_PROVIDER` may be configured as `s3` or `minio`, but persisted media rows should use normalized `storageProvider = s3`. MinIO is only the local S3-compatible service.
 - `objectKey` values are relative keys, not endpoint URLs.
 - `/api/media/files/{mediaId}?variant=original|preview|cover` remains the Android-facing binary route.
+- Lazy preview or video cover generation writes generated objects back through the storage abstraction and records `previewObjectKey` or `coverObjectKey` when generation succeeds.
 
 When using an empty Docker database, log in with `demo.a@yingshi.local` / `demo123456` first. Android and manual HTTP clients should use the returned bearer token for upload and media file requests.
+
+## Object Field Checks
+
+After an upload in `docker-local`, a media row should look conceptually like:
+
+```text
+storage_provider = s3
+bucket = yingshi-media
+original_object_key = originals/2026/04/media_xxx.jpg
+preview_object_key = previews/2026/04/media_xxx-preview-v2-1280.jpg   # images after preview generation
+cover_object_key = previews/2026/04/media_xxx-cover-v1-1280.jpg       # videos after cover generation
+```
+
+The object key columns must not contain:
+
+- `http://127.0.0.1:9000/...`
+- `http://localhost:9000/...`
+- MinIO Console URLs
+- OSS endpoint URLs
+- Cloudflare Tunnel URLs
+
+Use this read-only PostgreSQL check in Navicat when needed:
+
+```sql
+select id, storage_provider, bucket, original_object_key, preview_object_key, cover_object_key
+from media
+where original_object_key is null
+   or original_object_key like 'http://%'
+   or original_object_key like 'https://%'
+   or original_object_key like 's3://%'
+   or original_object_key like 'oss://%';
+```
+
+Android REAL should continue to use only the Server URL, for example `http://10.0.2.2:8080/` or `http://<your-pc-lan-ip>:8080/`. It should never use MinIO's `9000` or `9001` ports.
 
 ## Current Media Limitations
 
