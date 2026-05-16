@@ -5,7 +5,10 @@ public record AuthCurrentUserResponse(
         String account,
         String displayName,
         String avatarUrl,
+        String bio,
         String libraryId,
-        String libraryDisplayName
+        String libraryDisplayName,
+        long createdAtMillis,
+        long updatedAtMillis
 ) {
 }

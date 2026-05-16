@@ -24,6 +24,9 @@ public class UserEntity extends BaseEntity {
     @Column(length = 512)
     private String avatarUrl;
 
+    @Column(length = 280)
+    private String bio;
+
     @Column(nullable = false)
     private String defaultLibraryId;
 
@@ -65,6 +68,14 @@ public class UserEntity extends BaseEntity {
 
     public void setAvatarUrl(String avatarUrl) {
         this.avatarUrl = avatarUrl;
+    }
+
+    public String getBio() {
+        return bio;
+    }
+
+    public void setBio(String bio) {
+        this.bio = bio;
     }
 
     public String getDefaultLibraryId() {

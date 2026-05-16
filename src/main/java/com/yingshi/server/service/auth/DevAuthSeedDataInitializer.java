@@ -44,14 +44,16 @@ public class DevAuthSeedDataInitializer {
                     passwordEncoder,
                     "user_demo_a",
                     "demo.a@yingshi.local",
-                    "Demo A"
+                    "Demo A",
+                    "温柔记录日常，和另一半共享这座小小相册。"
             );
             UserEntity demoB = upsertUser(
                     userRepository,
                     passwordEncoder,
                     "user_demo_b",
                     "demo.b@yingshi.local",
-                    "Demo B"
+                    "Demo B",
+                    "一起把生活里的闪光片段慢慢收进映世。"
             );
 
             upsertMember(libraryMemberRepository, "member_demo_a", DEMO_LIBRARY_ID, demoA.getId(), SharedLibraryRole.OWNER);
@@ -64,7 +66,8 @@ public class DevAuthSeedDataInitializer {
             PasswordEncoder passwordEncoder,
             String id,
             String account,
-            String displayName
+            String displayName,
+            String bio
     ) {
         UserEntity user = userRepository.findByAccount(account)
                 .orElseGet(() -> {
@@ -72,9 +75,10 @@ public class DevAuthSeedDataInitializer {
                     created.setId(id);
                     created.setAccount(account);
                     return created;
-                });
+        });
         user.setAccount(account);
         user.setDisplayName(displayName);
+        user.setBio(bio);
         if (user.getPasswordHash() == null || !passwordEncoder.matches(DEMO_PASSWORD, user.getPasswordHash())) {
             user.setPasswordHash(passwordEncoder.encode(DEMO_PASSWORD));
         }

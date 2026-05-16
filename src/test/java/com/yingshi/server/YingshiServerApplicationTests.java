@@ -103,8 +103,59 @@ class YingshiServerApplicationTests {
     }
 
     @Test
+    void currentUserProfileCanBeReadAndUpdatedByOwner() throws Exception {
+        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
+
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.displayName").value("Demo A"))
+                .andExpect(jsonPath("$.data.bio").value("温柔记录日常，和另一半共享这座小小相册。"))
+                .andExpect(jsonPath("$.data.createdAtMillis").isNumber())
+                .andExpect(jsonPath("$.data.updatedAtMillis").isNumber());
+
+        mockMvc.perform(patch("/api/auth/me/profile")
+                        .header("Authorization", "Bearer " + demoAAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "displayName": "映世小屋",
+                                  "bio": "把两个人的日常安静收进这里。"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.displayName").value("映世小屋"))
+                .andExpect(jsonPath("$.data.bio").value("把两个人的日常安静收进这里。"));
+
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.displayName").value("映世小屋"))
+                .andExpect(jsonPath("$.data.bio").value("把两个人的日常安静收进这里。"));
+
+        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + demoBAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.displayName").value("Demo B"))
+                .andExpect(jsonPath("$.data.bio").value("一起把生活里的闪光片段慢慢收进映世。"));
+    }
+
+    @Test
     void protectedEndpointRejectsMissingToken() throws Exception {
         mockMvc.perform(get("/api/auth/me"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("AUTH_UNAUTHORIZED"));
+
+        mockMvc.perform(patch("/api/auth/me/profile")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "displayName": "Nope",
+                                  "bio": "Nope"
+                                }
+                                """))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("AUTH_UNAUTHORIZED"));
     }
@@ -758,14 +809,18 @@ class YingshiServerApplicationTests {
     }
 
     private String loginAndGetAccessToken() throws Exception {
+        return loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
+    }
+
+    private String loginAndGetAccessToken(String account, String password) throws Exception {
         MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "account": "demo.a@yingshi.local",
-                                  "password": "demo123456"
+                                  "account": "%s",
+                                  "password": "%s"
                                 }
-                                """))
+                                """.formatted(account, password)))
                 .andExpect(status().isOk())
                 .andReturn();
         return readField(loginResult, "/data/accessToken");

@@ -2,14 +2,15 @@
 
 ## Scope
 
-This pass closes the first login loop for Android REAL mode:
+This pass closes the REAL-mode login loop and adds the personal profile loop:
 
 - account/password login with the demo account
 - bearer access token on protected requests
 - current-user lookup for the profile page
+- current-user profile update for nickname and intro
 - logout endpoint for the client logout action
 
-Out of scope: registration, password reset, refresh-token exchange, third-party login, avatar upload, profile editing, relationship binding, direct MinIO access from Android, and any media read/upload contract changes.
+Out of scope: registration, password reset, refresh-token exchange, third-party login, avatar upload, relationship binding, direct MinIO access from Android, and any media read/upload contract changes.
 
 ## Demo Account
 
@@ -21,6 +22,8 @@ The local development profiles seed and maintain these accounts:
 Profiles covered by the seed: `dev`, `docker`, and `docker-local`.
 
 Passwords are stored as BCrypt hashes through the shared `PasswordEncoder`. The seed is idempotent: if demo accounts or the shared library are missing in an existing local database, they are created; if a demo password hash no longer matches `demo123456`, it is replaced with a fresh hash.
+
+Demo users also carry lightweight profile data so the personal page can show a nickname and intro in `dev`, `docker`, and `docker-local`.
 
 ## Endpoints
 
@@ -42,8 +45,12 @@ Response data includes:
 - `userId`
 - `account`
 - `displayName`
+- `avatarUrl`
+- `bio`
 - `libraryId`
 - `libraryDisplayName`
+- `createdAtMillis`
+- `updatedAtMillis`
 - `accessToken`
 - `refreshToken`
 - token expiry timestamps
@@ -62,7 +69,22 @@ Requires:
 Authorization: Bearer <accessToken>
 ```
 
-Returns current user basics: id, account/email, display name, optional avatar URL, shared library id, and shared library display name.
+Returns current user basics plus the lightweight profile fields used by the personal page: `bio`, `createdAtMillis`, and `updatedAtMillis`.
+
+`PATCH /api/auth/me/profile`
+
+Requires bearer auth.
+
+Request:
+
+```json
+{
+  "displayName": "映世小屋",
+  "bio": "把两个人的日常安静收进这里。"
+}
+```
+
+The server only updates the authenticated user row. There is no path-based user selection here, so a client cannot edit another user by mistake or by tampering with the body. The response returns the updated current-user profile payload.
 
 `POST /api/auth/logout`
 
@@ -73,7 +95,7 @@ Requires bearer auth. The request body is optional. This stage returns `{ "succe
 Only methods annotated with `@AuthRequired` require bearer auth. In this stage:
 
 - `/api/auth/login` is public.
-- `/api/auth/me` and `/api/auth/logout` are protected.
+- `/api/auth/me`, `/api/auth/me/profile`, and `/api/auth/logout` are protected.
 - `/api/health` is public.
 - albums, posts, comments, trash, upload, media feed, and media file endpoints keep their existing protected boundary.
 
@@ -86,10 +108,11 @@ This pass does not loosen private media, post, comment, upload, or media file en
 3. If `/me` succeeds, the main shell opens and the profile page can render current user data.
 4. If no token exists, or `/me` fails with unauthorized/expired session, Android clears the token and shows the login page.
 5. The login page calls `POST /api/auth/login`.
-6. On success, Android persists the access/refresh token bundle and calls `/me`.
+6. On success, Android persists the access/refresh token bundle and enters the main shell immediately.
 7. OkHttp attaches `Authorization: Bearer <accessToken>` to protected requests.
 8. Any protected request returning `401` clears the token so the app returns to login.
-9. Logout calls `POST /api/auth/logout`, clears local tokens, and returns to login.
+9. The personal page can edit nickname and intro through `PATCH /api/auth/me/profile`.
+10. Logout calls `POST /api/auth/logout`, clears local tokens, and returns to login.
 
 FAKE mode keeps using local fake repositories and fake auth data. REAL mode requires `baseUrl` to point at the current backend, for example `http://10.0.2.2:8080/` on an Android emulator.
 
@@ -128,6 +151,8 @@ Expected behavior:
 - Demo quick fill uses `demo.a@yingshi.local / demo123456`.
 - REAL mode login succeeds when `baseUrl` points to the running backend.
 - Login enters the main shell.
-- `我的` shows display name, email, avatar placeholder, intro/library text, current mode, and baseUrl.
+- `我的` shows a tappable profile card, current mode, baseUrl, and logout.
+- The personal page shows display name, email, avatar placeholder, intro, account, and join time.
+- Editing nickname and intro updates the server and refreshes both the personal page and `我的`.
 - Logout clears local auth state and returns to login.
 - Restart keeps a valid saved session, or returns to login if the token is missing/invalid.

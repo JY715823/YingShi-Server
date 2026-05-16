@@ -9,6 +9,7 @@ import com.yingshi.server.dto.auth.AuthCurrentUserResponse;
 import com.yingshi.server.dto.auth.AuthLoginRequest;
 import com.yingshi.server.dto.auth.AuthLoginResponse;
 import com.yingshi.server.dto.auth.AuthLogoutResponse;
+import com.yingshi.server.dto.auth.AuthUpdateProfileRequest;
 import com.yingshi.server.repository.SharedLibraryRepository;
 import com.yingshi.server.repository.UserRepository;
 import org.springframework.http.HttpStatus;
@@ -52,20 +53,25 @@ public class AuthService {
         );
         JwtTokenBundle tokenBundle = jwtTokenService.issueTokens(authenticatedUser);
 
-        return new AuthLoginResponse(
-                user.getId(),
-                user.getAccount(),
-                user.getDisplayName(),
-                library.getId(),
-                library.getDisplayName(),
-                tokenBundle.accessToken(),
-                tokenBundle.refreshToken(),
-                tokenBundle.accessTokenExpireAtMillis(),
-                tokenBundle.refreshTokenExpireAtMillis()
-        );
+        return buildLoginResponse(user, library, tokenBundle);
     }
 
     public AuthCurrentUserResponse getCurrentUser(AuthenticatedUser currentUser) {
+        UserEntity user = userRepository.findById(currentUser.userId())
+                .orElseThrow(() -> new ApiException(
+                        HttpStatus.UNAUTHORIZED,
+                        ErrorCode.AUTH_UNAUTHORIZED,
+                "Current user does not exist."
+                ));
+        SharedLibraryEntity library = getLibrary(currentUser.libraryId());
+
+        return buildCurrentUserResponse(user, library);
+    }
+
+    public AuthCurrentUserResponse updateCurrentUserProfile(
+            AuthenticatedUser currentUser,
+            AuthUpdateProfileRequest request
+    ) {
         UserEntity user = userRepository.findById(currentUser.userId())
                 .orElseThrow(() -> new ApiException(
                         HttpStatus.UNAUTHORIZED,
@@ -74,14 +80,11 @@ public class AuthService {
                 ));
         SharedLibraryEntity library = getLibrary(currentUser.libraryId());
 
-        return new AuthCurrentUserResponse(
-                user.getId(),
-                user.getAccount(),
-                user.getDisplayName(),
-                user.getAvatarUrl(),
-                library.getId(),
-                library.getDisplayName()
-        );
+        user.setDisplayName(request.displayName().trim());
+        user.setBio(normalizeNullableText(request.bio()));
+        userRepository.save(user);
+
+        return buildCurrentUserResponse(user, library);
     }
 
     public AuthLogoutResponse logout() {
@@ -95,6 +98,50 @@ public class AuthService {
                         ErrorCode.AUTH_SESSION_INVALID,
                         "Current shared library does not exist."
                 ));
+    }
+
+    private AuthLoginResponse buildLoginResponse(
+            UserEntity user,
+            SharedLibraryEntity library,
+            JwtTokenBundle tokenBundle
+    ) {
+        return new AuthLoginResponse(
+                user.getId(),
+                user.getAccount(),
+                user.getDisplayName(),
+                normalizeNullableText(user.getAvatarUrl()),
+                normalizeNullableText(user.getBio()),
+                library.getId(),
+                library.getDisplayName(),
+                user.getCreatedAt().toEpochMilli(),
+                user.getUpdatedAt().toEpochMilli(),
+                tokenBundle.accessToken(),
+                tokenBundle.refreshToken(),
+                tokenBundle.accessTokenExpireAtMillis(),
+                tokenBundle.refreshTokenExpireAtMillis()
+        );
+    }
+
+    private AuthCurrentUserResponse buildCurrentUserResponse(UserEntity user, SharedLibraryEntity library) {
+        return new AuthCurrentUserResponse(
+                user.getId(),
+                user.getAccount(),
+                user.getDisplayName(),
+                normalizeNullableText(user.getAvatarUrl()),
+                normalizeNullableText(user.getBio()),
+                library.getId(),
+                library.getDisplayName(),
+                user.getCreatedAt().toEpochMilli(),
+                user.getUpdatedAt().toEpochMilli()
+        );
+    }
+
+    private String normalizeNullableText(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private ApiException invalidCredentials() {

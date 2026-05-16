@@ -10,6 +10,7 @@ import com.yingshi.server.dto.auth.AuthLoginRequest;
 import com.yingshi.server.dto.auth.AuthLoginResponse;
 import com.yingshi.server.dto.auth.AuthLogoutRequest;
 import com.yingshi.server.dto.auth.AuthLogoutResponse;
+import com.yingshi.server.dto.auth.AuthUpdateProfileRequest;
 import com.yingshi.server.service.auth.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -17,6 +18,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -63,5 +65,17 @@ public class AuthController {
     ) {
         String requestId = (String) httpServletRequest.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
         return ApiResponse.success(requestId, authService.logout());
+    }
+
+    @AuthRequired
+    @Operation(summary = "Update current user profile", security = @SecurityRequirement(name = "bearerAuth"))
+    @PatchMapping("/me/profile")
+    public ApiResponse<AuthCurrentUserResponse> updateCurrentUserProfile(
+            @CurrentUser AuthenticatedUser currentUser,
+            @Valid @RequestBody AuthUpdateProfileRequest request,
+            HttpServletRequest httpServletRequest
+    ) {
+        String requestId = (String) httpServletRequest.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
+        return ApiResponse.success(requestId, authService.updateCurrentUserProfile(currentUser, request));
     }
 }
