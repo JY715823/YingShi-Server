@@ -10,6 +10,18 @@ Stage 16 step 3 adds a local Docker cloudlike environment and an S3-compatible s
 
 Stage 16 step 4 tightens media object field rules and compatibility: new local and S3-backed media records use relative object keys, lazy preview/cover reads backfill generated object keys where possible, and lightweight diagnostics/tests check for URL-shaped object keys.
 
+Stage 16 step 5 adds the Cloudflare Tunnel quasi-online access plan. It exposes only the backend API hostname, keeps Android behind Server APIs, and keeps PostgreSQL, MinIO API, and MinIO Console private/local.
+
+Stage 16 step 6 adds the cloudlike data-safety layer for the next 1-2 months of local development: PostgreSQL/MinIO backup commands, disaster recovery guidance, a read-only object audit script, and a narrow backend smoke script. It does not change Android contracts or the upload main path.
+
+Stage 16 step 7 retires old H2/local-storage test data as non-authoritative. Old local media is not migrated by default because it was only test data; the project now treats PostgreSQL + MinIO as the development source of truth.
+
+Stage 16 step 8 adds storage-level ranged reads for large media. `/api/media/files/{mediaId}?variant=...` keeps the same Android contract, while S3/MinIO range requests now ask object storage for the requested byte slice instead of opening the full object and skipping bytes in the backend.
+
+Stage 16 step 9 introduces Flyway-backed PostgreSQL schema ownership for docker and docker-local profiles. H2/dev remains `ddl-auto=update` for quick local bootstrap, while PostgreSQL now has a committed initial schema migration and Hibernate validates the schema by default.
+
+Stage 16 step 11 adds a daily cloudlike check entry point. `scripts/stage16-cloudlike-check.ps1` verifies Docker PostgreSQL/MinIO, Server health, Flyway history, object audit, and local-storage retirement dry-run, with optional smoke upload and Maven tests. Keep status updates in conversation summaries rather than in a separate progress-board document.
+
 ## Current Runtime
 
 - Spring Boot backend with Spring Web MVC, Spring Data JPA, validation, JWT auth, and springdoc in dev.
@@ -77,7 +89,7 @@ Current migration concern: legacy URL fields and `storagePath` still exist for c
 
 Added Server classes:
 
-- `ObjectStorageService`: provider-neutral storage interface with `put`, `get`, `exists`, `delete`, and `getMetadata`.
+- `ObjectStorageService`: provider-neutral storage interface with `put`, `get`, `getRange`, `exists`, `delete`, and `getMetadata`.
 - `LocalObjectStorageService`: local provider implementation backed by `app.storage.local-root`.
 - `ObjectMetadata`: object key, content type, size, checksum, and last modified metadata.
 - `StoredObject`: returned object resource plus metadata.
@@ -121,7 +133,7 @@ Docker profile behavior:
 - Storage config is read from `STORAGE_PROVIDER`, `STORAGE_BUCKET`, `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_ACCESS_KEY`, and `STORAGE_SECRET_KEY`.
 - Default docker storage provider is `s3`, endpoint `http://minio:9000`, bucket `yingshi-media`.
 - Empty docker databases are bootstrapped with the existing demo auth/library seed only. Dev media content seed, local test import, originals recovery, and legacy preview cleanup do not run in docker profile.
-- Current PostgreSQL schema strategy is `spring.jpa.hibernate.ddl-auto=update` for the cloudlike local environment. This is a bootstrap choice only; future PostgreSQL stages should move schema ownership to committed migration scripts.
+- Current PostgreSQL schema strategy is Flyway plus Hibernate validation. `src/main/resources/db/migration/postgresql/V1__initial_schema.sql` owns the initial table structure, and docker/docker-local default `spring.jpa.hibernate.ddl-auto` is `validate`.
 
 Current S3-compatible media support:
 
@@ -136,7 +148,7 @@ Current S3-compatible media support:
 Known Step 3 limits:
 
 - The Docker image currently does not install `ffmpeg`; remote video cover generation may fail in docker until a later image pass adds it. Original video playback still uses the backend file endpoint.
-- HTTP Range for S3-backed video is compatible at the API level, but the current implementation obtains the object stream and skips bytes in the backend. Native S3 ranged reads should be added before large-video or production use.
+- HTTP Range for S3-backed originals is now backed by native S3 ranged reads through `ObjectStorageService.getRange(...)`.
 - Direct-to-object-storage upload, multipart upload, presigned URLs, ACL rules, MinIO admin APIs, and OSS media processing are intentionally not part of this pass.
 - Existing legacy fields (`url`, `previewUrl`, `originalUrl`, `videoUrl`, `coverUrl`, `storagePath`) remain for compatibility.
 
@@ -186,6 +198,147 @@ Backfill guidance:
 - Prefer a committed migration or an explicit admin/script flow for bulk updates.
 - Safe automatic fill is limited to cases where `storagePath` or another legacy field is already a relative object key such as `originals/2026/04/media_xxx.jpg`.
 - Do not infer object keys from public URLs unless a controlled mapping has been verified.
+
+## Stage 16 Step 5 Cloudflare Tunnel Status
+
+Added Server files/config:
+
+- `docs/implementation/stage16-cloudflare-tunnel-access.md`: Cloudflare Dashboard, Windows `cloudflared`, Docker `cloudflared`, Android REAL baseUrl, smoke test, and troubleshooting guide.
+- `docker-compose.cloudflare.yml`: optional Cloudflare connector for the full Docker Compose stack.
+- `.env.example`: example-only `CLOUDFLARE_TUNNEL_TOKEN` placeholder.
+- `application-docker.yml` and `application-docker-local.yml`: `server.forward-headers-strategy=framework` for proxy header awareness.
+- `docker-compose.yml`: PostgreSQL and MinIO host ports are bound to `127.0.0.1` for local inspection.
+
+Cloudflare access rules:
+
+- Public hostname should be only the backend API, for example `https://api.your-domain.com/`.
+- Windows IDEA mode maps the hostname to `http://127.0.0.1:8080`.
+- Docker cloudflared mode maps the hostname to `http://server:8080`.
+- Do not publish PostgreSQL, MinIO API, MinIO Console, Navicat, object storage URLs, or object storage credentials.
+- Android REAL baseUrl may be set to the Cloudflare HTTPS API URL, but Android still calls only backend API paths.
+
+## Stage 16 Step 6 Data Safety Status
+
+Added Server files:
+
+- `docs/implementation/stage16-cloudlike-data-safety.md`: PostgreSQL + MinIO source-of-truth, backup, restore, migration, and disaster recovery guide.
+- `scripts/stage16-object-audit.ps1`: read-only PostgreSQL and MinIO object consistency audit.
+- `scripts/stage16-cloudlike-smoke.ps1`: focused login/feed/upload/file-read/object-field smoke script for local or Cloudflare Tunnel base URLs.
+- `scripts/stage16-cloudlike-check.ps1`: daily cloudlike environment check that composes Docker, health, Flyway, object audit, local-storage dry-run, optional smoke, and optional Maven tests.
+- `.gitignore` and `.dockerignore`: exclude `backups/` so local dumps and mirrored media are not committed or copied into the Server image.
+
+Current data ownership:
+
+- In `docker-local` and `docker` profiles, PostgreSQL is the media metadata source of truth.
+- MinIO bucket `yingshi-media` is the media binary source of truth.
+- The database must store relative `original_object_key`, `preview_object_key`, and `cover_object_key` values, not localhost, LAN, MinIO, OSS, or Cloudflare URLs.
+- Android continues to use only Server APIs and does not store object keys or object storage credentials.
+
+Backup commands are documented in `stage16-cloudlike-data-safety.md`:
+
+- PostgreSQL: `pg_dump --format=custom` copied to `backups/yingshi-postgres.dump`.
+- MinIO: `minio/mc mirror` copied to `backups/minio-yingshi-media`.
+
+Read-only migration check:
+
+```powershell
+.\scripts\stage16-object-audit.ps1
+```
+
+The audit checks missing original keys, URL-shaped object-key columns, and missing MinIO objects referenced by media rows. It makes no data changes.
+
+Cloudlike API smoke:
+
+```powershell
+.\scripts\stage16-cloudlike-smoke.ps1 -BaseUrl http://127.0.0.1:8080
+.\scripts\stage16-cloudlike-smoke.ps1 -BaseUrl https://your-temporary.trycloudflare.com
+```
+
+The smoke script creates one tiny test image upload. It verifies health, auth, feed, upload token, multipart upload, original read, preview read, PostgreSQL object fields, and MinIO object existence when the row uses the S3-compatible provider.
+
+Daily cloudlike check:
+
+```powershell
+.\scripts\stage16-cloudlike-check.ps1
+.\scripts\stage16-cloudlike-check.ps1 -RunSmoke
+.\scripts\stage16-cloudlike-check.ps1 -RunSmoke -RunTests
+```
+
+The default check is non-destructive. `-RunSmoke` uploads one tiny test image, and `-RunTests` runs the full Server Maven test suite.
+
+Legacy local-storage strategy:
+
+- Old H2 + `local-storage` data remains legacy local development data and is currently considered disposable.
+- Normal startup must not auto-migrate old H2/local-storage rows.
+- If old media must be retained, add a separate dry-run-first migration tool later. It should scan old `storagePath` values, locate local originals, compute relative target keys, put objects into MinIO or OSS, update PostgreSQL object fields only with an explicit apply flag, and never delete old local files in the first migration.
+
+Deferred hardening:
+
+- Docker `ffmpeg` strategy should be added when video cover generation becomes a required Docker smoke target.
+
+## Stage 16 Step 8 Ranged Read Status
+
+Updated Server classes/tests:
+
+- `ObjectStorageService`: adds `getRange(objectKey, start, endInclusive)`.
+- `S3ObjectStorageService`: sends native S3 range requests such as `bytes=0-1048575`, so MinIO/S3 returns only the requested slice.
+- `LocalObjectStorageService`: supports the same range abstraction with a bounded local stream.
+- `MediaFilePayload` and `MediaController`: keep the existing `/api/media/files/{mediaId}?variant=...` API while using range-capable resources for valid single HTTP `Range` requests.
+- `LocalObjectStorageServiceTests`: verifies the local provider returns exactly the requested bytes.
+
+Compatibility and limits:
+
+- Android continues to call only backend API URLs and does not need to know whether storage is local, MinIO, or future OSS.
+- Full responses still return `200 OK`; valid range responses still return `206 Partial Content`, `Accept-Ranges: bytes`, `Content-Range`, and the requested `Content-Length`.
+- S3/MinIO original reads no longer require the backend to stream from byte zero and discard skipped bytes.
+- Preview and cover files are small generated JPEGs; they use the same endpoint and can still be served by the backend, but the main hardening target is large original media, especially videos.
+- Multi-range HTTP requests are still intentionally not implemented; the first requested range is served, matching the current endpoint behavior.
+- Docker image `ffmpeg` support for video cover generation remains deferred until video-cover testing becomes important.
+
+## Stage 16 Step 9 PostgreSQL Schema Status
+
+Added Server files/config:
+
+- `pom.xml`: adds Flyway core and PostgreSQL database support.
+- `src/main/resources/db/migration/postgresql/V1__initial_schema.sql`: initial PostgreSQL schema for the current core tables.
+- `application-docker.yml` and `application-docker-local.yml`: enable Flyway for PostgreSQL profiles and default Hibernate to `ddl-auto=validate`.
+- `.env.example` and `docker-compose.yml`: expose `SPRING_FLYWAY_ENABLED`, `SPRING_FLYWAY_BASELINE_ON_MIGRATE`, and `SPRING_FLYWAY_BASELINE_VERSION` without real secrets.
+
+Current strategy:
+
+- New empty PostgreSQL databases are created by Flyway migration `V1__initial_schema.sql`.
+- Existing docker-local databases that already have Hibernate-created tables are adopted with `baseline-on-migrate=true` and baseline version `1`. This records Flyway ownership without dropping or recreating existing data.
+- Hibernate validates the mapped schema after Flyway runs. It should not silently mutate PostgreSQL schema by default.
+- The `dev` profile still disables Flyway and keeps H2 with `ddl-auto=update`, because that path is only for lightweight local bootstrap and tests.
+
+Rules for future schema changes:
+
+- Add a new migration file such as `V2__add_xxx.sql`.
+- Do not edit `V1__initial_schema.sql` after it has been used by shared or important databases.
+- Use Navicat only to inspect data or run temporary diagnostics. Do not use Navicat manual table edits as the project source of truth.
+- Keep media object columns as relative keys and metadata columns; do not add migrations that store MinIO, OSS, Cloudflare, localhost, or LAN URLs in object-key fields.
+
+## Stage 16 Step 7 local-storage Retirement Status
+
+Added Server file:
+
+- `scripts/stage16-retire-local-storage.ps1`: safe dry-run-first cleanup helper for retired local H2/local-storage test data.
+
+Decision:
+
+- Old H2 + `local-storage` media is disposable test data and is not part of the migration target.
+- New development media should be created in `docker-local` or `docker` profile and stored in PostgreSQL + MinIO.
+- No automatic H2/local-storage migration runs during Server startup.
+- The cleanup script is manual and defaults to dry-run. It requires `-Apply` to delete files.
+
+Cleanup command:
+
+```powershell
+.\scripts\stage16-retire-local-storage.ps1
+.\scripts\stage16-retire-local-storage.ps1 -Apply
+```
+
+The script deletes only retired directories under the Server repository's `local-storage` root. It does not touch PostgreSQL, MinIO, Docker volumes, `.env`, `backups/`, or the small generated `local-storage/seed` dev fixtures.
 
 ## Current Local Storage Layout
 
@@ -338,6 +491,7 @@ Current first interface:
 
 - `put(objectKey, contentType, sizeBytes, inputStream)`
 - `get(objectKey)` returning a backend `Resource` plus lightweight metadata
+- `getRange(objectKey, start, endInclusive)` for large media byte-range delivery
 - `delete(objectKey)`
 - `exists(objectKey)`
 - `getMetadata(objectKey)` returning metadata when available
@@ -353,6 +507,7 @@ Only use common object storage capabilities:
 
 - put
 - get
+- getRange
 - delete
 - multipart upload
 
@@ -366,6 +521,7 @@ Recommended shape:
 
 - Bind config from `app.storage.provider=s3|minio`, `app.storage.bucket`, `app.storage.endpoint`, `app.storage.region`, `app.storage.access-key`, and `app.storage.secret-key`.
 - Implemented current `ObjectStorageService` methods with S3-compatible SDK calls.
+- Use native S3 ranged reads for `GET /api/media/files/{mediaId}` when Android or the platform media player sends a `Range` header.
 - Keep object keys identical to the current relative local keys where practical.
 - Continue returning backend delivery URLs from DTO mappers.
 - Keep `/api/media/files/{mediaId}?variant=original|preview|cover` as the Android-facing binary endpoint.
@@ -451,15 +607,12 @@ Secrets rule:
 
 ## Suggested Stage 16 Next Steps
 
-1. Add native ranged reads to the storage abstraction for large video playback.
-2. Add a production-like Server image dependency strategy for `ffmpeg` or choose a separate media-processing worker.
-3. Introduce Flyway, Liquibase, or a committed SQL migration directory for PostgreSQL schema management.
-4. Add a non-destructive backfill command or admin-only endpoint that reports and optionally fills missing object-key fields.
-5. Add focused S3 integration tests or a smoke script that logs in, uploads media, verifies PostgreSQL object-key fields, and verifies MinIO objects.
-6. Keep Android behind backend APIs while preparing a later Cloudflare Tunnel entry that exposes only the Server API.
+1. Add a production-like Server image dependency strategy for `ffmpeg` or choose a separate media-processing worker.
+2. Add OSS provider/config once ECS/OSS migration is actually scheduled.
+3. Keep Android behind backend APIs; public ingress should expose only the Server API.
 
 ## PostgreSQL Schema Management Note
 
-The current dev profile can still rely on H2 plus Hibernate `ddl-auto=update` for quick local bootstrap. When PostgreSQL is introduced, schema changes should be managed by committed migration scripts, such as Flyway, Liquibase, or a documented SQL migration directory.
+The current dev profile can still rely on H2 plus Hibernate `ddl-auto=update` for quick local bootstrap. PostgreSQL profiles now use Flyway migrations plus Hibernate validation by default.
 
-Navicat or other GUI-created tables can be useful for inspection, but should not become the project source of truth. The repository should contain the migration history for fields such as `storage_provider`, `bucket`, `original_object_key`, `preview_object_key`, `cover_object_key`, and `checksum`.
+Navicat or other GUI-created tables can be useful for inspection, but should not become the project source of truth. The repository migration history owns fields such as `storage_provider`, `bucket`, `original_object_key`, `preview_object_key`, `cover_object_key`, and `checksum`.

@@ -7,6 +7,7 @@ postgres-data
 pg-data
 minio-data
 docker-data
+backups
 .env
 .env.*
 !.env.example

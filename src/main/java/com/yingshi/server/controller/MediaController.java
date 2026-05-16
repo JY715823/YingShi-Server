@@ -106,7 +106,10 @@ public class MediaController {
                     .header(HttpHeaders.CONTENT_RANGE, byteRange.contentRangeHeader())
                     .contentLength(byteRange.length());
             try {
-                return responseBuilder.body(new PartialResource(payload.resource(), byteRange));
+                Resource rangeResource = payload.loadRange(byteRange.start(), byteRange.end())
+                        .map(resource -> payload.rangeLoaderRequiresBounding() ? newPartialResource(resource, byteRange) : resource)
+                        .orElseGet(() -> newPartialResource(payload.resource(), byteRange));
+                return responseBuilder.body(rangeResource);
             } catch (IOException exception) {
                 throw new IllegalStateException("Failed to stream requested media byte range.", exception);
             }
@@ -126,6 +129,14 @@ public class MediaController {
 
     private String requestId(HttpServletRequest request) {
         return (String) request.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
+    }
+
+    private Resource newPartialResource(Resource resource, ByteRange byteRange) {
+        try {
+            return new PartialResource(resource, byteRange);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to stream requested media byte range.", exception);
+        }
     }
 
     private record ByteRange(long start, long end, long totalLength) {

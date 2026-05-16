@@ -52,6 +52,7 @@ Response:
 - supports standard single HTTP byte ranges through `Range: bytes=start-end`
 - full responses include `Accept-Ranges: bytes`
 - valid range responses return `206 Partial Content`, `Content-Range`, and the requested byte length
+- storage providers may satisfy range requests differently; S3/MinIO-backed media uses object-storage ranged reads while Android still calls this backend endpoint only
 
 ### `DELETE /api/media/{mediaId}`
 

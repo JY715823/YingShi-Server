@@ -8,6 +8,7 @@ minio-data/
 postgres-data/
 pg-data/
 docker-data/
+backups/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/

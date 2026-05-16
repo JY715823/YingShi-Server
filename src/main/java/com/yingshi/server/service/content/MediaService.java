@@ -12,8 +12,9 @@ import com.yingshi.server.mapper.ContentMapper;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
+import com.yingshi.server.service.storage.ObjectKeyPolicy;
+import com.yingshi.server.service.storage.ObjectMetadata;
 import com.yingshi.server.service.upload.LocalMediaStorageService;
-import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -141,44 +142,40 @@ public class MediaService {
         if (changed) {
             mediaRepository.save(media);
         }
-        Resource resource = resolution.resource();
         String mimeType = isJpegVariant(media, variant)
                 ? "image/jpeg"
                 : media.getMimeType();
-        Long contentLength = null;
-        Long lastModifiedMillis = null;
-        try {
-            contentLength = resource.contentLength();
-        } catch (Exception ignored) {
-        }
-        try {
-            lastModifiedMillis = resource.lastModified();
-        } catch (Exception ignored) {
-        }
-        return new MediaFilePayload(resource, mimeType, contentLength, lastModifiedMillis);
+        ObjectMetadata metadata = localMediaStorageService.metadataForStoragePath(resolution.storagePath());
+        Long contentLength = metadata == null ? null : metadata.sizeBytes();
+        Long lastModifiedMillis = metadata == null ? null : metadata.lastModifiedMillis();
+        MediaFilePayload.ResourceLoader resourceLoader = () -> localMediaStorageService.load(resolution.storagePath());
+        boolean providerRange = ObjectKeyPolicy.isRelativeObjectKey(resolution.storagePath());
+        MediaFilePayload.RangeResourceLoader rangeResourceLoader = (start, endInclusive) ->
+                localMediaStorageService.loadRange(resolution.storagePath(), start, endInclusive);
+        return new MediaFilePayload(resourceLoader, rangeResourceLoader, !providerRange, mimeType, contentLength, lastModifiedMillis);
     }
 
     private MediaResourceResolution resolveMediaResource(MediaEntity media, String variant, String storagePath) {
         if ("preview".equalsIgnoreCase(variant) && media.getMediaType() == com.yingshi.server.domain.MediaType.IMAGE) {
             try {
-                return new MediaResourceResolution(
-                        localMediaStorageService.loadPreview(storagePath, media.getId(), PREVIEW_MAX_DIMENSION),
-                        true,
-                        false
-                );
+                String previewObjectKey = localMediaStorageService.imagePreviewObjectKey(storagePath, media.getId(), PREVIEW_MAX_DIMENSION);
+                if (!localMediaStorageService.ensureImagePreview(storagePath, media.getId(), PREVIEW_MAX_DIMENSION)) {
+                    return new MediaResourceResolution(storagePath, false, false);
+                }
+                return new MediaResourceResolution(previewObjectKey, true, false);
             } catch (ApiException exception) {
-                return new MediaResourceResolution(localMediaStorageService.load(storagePath), false, false);
+                return new MediaResourceResolution(storagePath, false, false);
             }
         }
         if (("cover".equalsIgnoreCase(variant) || "preview".equalsIgnoreCase(variant)) &&
                 media.getMediaType() == com.yingshi.server.domain.MediaType.VIDEO) {
-            return new MediaResourceResolution(
-                    localMediaStorageService.loadVideoCover(storagePath, media.getId(), VIDEO_COVER_MAX_DIMENSION),
-                    false,
-                    true
-            );
+            String coverObjectKey = localMediaStorageService.videoCoverObjectKey(storagePath, media.getId(), VIDEO_COVER_MAX_DIMENSION);
+            if (!localMediaStorageService.ensureVideoCover(storagePath, media.getId(), VIDEO_COVER_MAX_DIMENSION)) {
+                throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Video cover could not be generated for this media.");
+            }
+            return new MediaResourceResolution(coverObjectKey, false, true);
         }
-        return new MediaResourceResolution(localMediaStorageService.load(storagePath), false, false);
+        return new MediaResourceResolution(storagePath, false, false);
     }
 
     private boolean isJpegVariant(MediaEntity media, String variant) {
@@ -245,6 +242,10 @@ public class MediaService {
     private record Cursor(long displayTimeMillis, String mediaId) {
     }
 
-    private record MediaResourceResolution(Resource resource, boolean previewGenerated, boolean coverGenerated) {
+    private record MediaResourceResolution(
+            String storagePath,
+            boolean previewGenerated,
+            boolean coverGenerated
+    ) {
     }
 }

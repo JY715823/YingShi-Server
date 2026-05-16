@@ -107,6 +107,20 @@ public class LocalMediaStorageService {
         return new FileSystemResource(path);
     }
 
+    public Resource loadRange(String storagePath, long start, long endInclusive) {
+        if (isRelativeStoragePath(storagePath)) {
+            return objectStorageService.getRange(toObjectKey(storagePath), start, endInclusive).resource();
+        }
+        if (ObjectKeyPolicy.looksLikeFullUrl(storagePath)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
+        }
+        Path path = resolveStoragePath(storagePath);
+        if (!Files.exists(path)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
+        }
+        return new FileSystemResource(path);
+    }
+
     public Resource loadObject(String objectKey) {
         return objectStorageService.get(ObjectKeyPolicy.normalizeRelativeObjectKey(objectKey)).resource();
     }
@@ -204,6 +218,20 @@ public class LocalMediaStorageService {
         return objectStorageService.getMetadata(normalizedObjectKey).orElse(null);
     }
 
+    public ObjectMetadata metadataForStoragePath(String storagePath) {
+        if (isRelativeStoragePath(storagePath)) {
+            return metadataForObjectKey(storagePath);
+        }
+        if (ObjectKeyPolicy.looksLikeFullUrl(storagePath)) {
+            return null;
+        }
+        Path path = resolveStoragePath(storagePath);
+        if (!Files.isRegularFile(path)) {
+            return null;
+        }
+        return fastFileMetadata(storagePath, path);
+    }
+
     public boolean objectExists(String objectKey) {
         String normalizedObjectKey = ObjectKeyPolicy.tryNormalizeRelativeObjectKey(objectKey);
         return normalizedObjectKey != null && objectStorageService.exists(normalizedObjectKey);
@@ -252,13 +280,30 @@ public class LocalMediaStorageService {
                 return rootPath.relativize(target).toString().replace(FileSystems.getDefault().getSeparator(), "/");
             }
             List<Path> sourceImages = findSeedSourceImages();
-            if (sourceImages.isEmpty()) {
-                throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "No local seed images were found.");
+            if (!sourceImages.isEmpty()) {
+                Path source = sourceImages.get(Math.floorMod(seedName.hashCode() + sourceOffset, sourceImages.size()));
+                Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+            } else {
+                writeGeneratedSeedImage(seedName, sourceOffset, target);
             }
-            Path source = sourceImages.get(Math.floorMod(seedName.hashCode() + sourceOffset, sourceImages.size()));
-            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException exception) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to prepare seeded media file.");
+        }
+        return rootPath.relativize(target).toString().replace(FileSystems.getDefault().getSeparator(), "/");
+    }
+
+    public String ensureSeedVideo(String seedName, long sizeBytes) {
+        Path seedDirectory = rootPath.resolve("seed").normalize();
+        Path target = seedDirectory.resolve(seedName + ".mp4").normalize();
+        long normalizedSizeBytes = Math.max(sizeBytes, 1024L);
+        try {
+            Files.createDirectories(seedDirectory);
+            if (Files.isRegularFile(target) && Files.size(target) >= normalizedSizeBytes) {
+                return rootPath.relativize(target).toString().replace(FileSystems.getDefault().getSeparator(), "/");
+            }
+            writeGeneratedSeedVideo(target, normalizedSizeBytes);
+        } catch (IOException exception) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to prepare seeded video file.");
         }
         return rootPath.relativize(target).toString().replace(FileSystems.getDefault().getSeparator(), "/");
     }
@@ -451,6 +496,20 @@ public class LocalMediaStorageService {
 
     private String toObjectKey(String storagePath) {
         return ObjectKeyPolicy.normalizeRelativeObjectKey(storagePath);
+    }
+
+    private ObjectMetadata fastFileMetadata(String storagePath, Path path) {
+        try {
+            return new ObjectMetadata(
+                    storagePath,
+                    Files.probeContentType(path),
+                    Files.size(path),
+                    null,
+                    Files.getLastModifiedTime(path).toMillis()
+            );
+        } catch (IOException exception) {
+            return new ObjectMetadata(storagePath, null, null, null, null);
+        }
     }
 
     private String previewDirectoryObjectKey(String storagePath) {
@@ -719,6 +778,57 @@ public class LocalMediaStorageService {
             writer.write(null, new javax.imageio.IIOImage(image, null, null), params);
         } finally {
             writer.dispose();
+        }
+    }
+
+    private void writeGeneratedSeedImage(String seedName, int sourceOffset, Path target) throws IOException {
+        int width = 1280;
+        int height = 960;
+        int baseHue = Math.floorMod(seedName.hashCode() + sourceOffset * 41, 360);
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = image.createGraphics();
+        try {
+            configureHighQualityRendering(graphics);
+            Color start = Color.getHSBColor(baseHue / 360f, 0.42f, 0.86f);
+            Color end = Color.getHSBColor(((baseHue + 46) % 360) / 360f, 0.34f, 0.58f);
+            for (int y = 0; y < height; y++) {
+                float ratio = y / (float) Math.max(1, height - 1);
+                int red = Math.round(start.getRed() * (1 - ratio) + end.getRed() * ratio);
+                int green = Math.round(start.getGreen() * (1 - ratio) + end.getGreen() * ratio);
+                int blue = Math.round(start.getBlue() * (1 - ratio) + end.getBlue() * ratio);
+                graphics.setColor(new Color(red, green, blue));
+                graphics.drawLine(0, y, width, y);
+            }
+            graphics.setColor(new Color(255, 255, 255, 78));
+            int stripeWidth = 120;
+            for (int x = -width; x < width * 2; x += stripeWidth * 2) {
+                graphics.fillPolygon(
+                        new int[]{x, x + stripeWidth, x + width + stripeWidth, x + width},
+                        new int[]{height, height, 0, 0},
+                        4
+                );
+            }
+        } finally {
+            graphics.dispose();
+        }
+        writeJpeg(image, target, JPEG_PREVIEW_QUALITY_PERCENT / 100f);
+    }
+
+    private void writeGeneratedSeedVideo(Path target, long sizeBytes) throws IOException {
+        byte[] header = "YINGSHI-SEED-MP4-PLACEHOLDER\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        try (OutputStream outputStream = Files.newOutputStream(target)) {
+            outputStream.write(header);
+            long remaining = sizeBytes - header.length;
+            byte[] buffer = new byte[8192];
+            int value = 0;
+            while (remaining > 0) {
+                int length = (int) Math.min(buffer.length, remaining);
+                for (int index = 0; index < length; index++) {
+                    buffer[index] = (byte) (value++ & 0xFF);
+                }
+                outputStream.write(buffer, 0, length);
+                remaining -= length;
+            }
         }
     }
 

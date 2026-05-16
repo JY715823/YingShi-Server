@@ -14,6 +14,7 @@ import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.SharedLibraryRepository;
 import com.yingshi.server.service.auth.DevAuthSeedDataInitializer;
+import com.yingshi.server.service.upload.LocalMediaStorageService;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,12 +26,6 @@ import org.springframework.core.annotation.Order;
 public class DevContentSeedDataInitializer {
 
     private static final String HIDDEN_LIBRARY_ID = "library_private_other";
-    private static final String SAMPLE_LANDSCAPE_PATH = "test/photos/sample-landscape-2400x1600.jpg";
-    private static final String SAMPLE_PORTRAIT_PATH = "test/photos/sample-portrait-1800x2400.jpg";
-    private static final String SAMPLE_SQUARE_PATH = "test/photos/sample-square-2400.jpg";
-    private static final String SAMPLE_LONG_PATH = "test/long/sample-long-1400x3200.jpg";
-    private static final String SAMPLE_TALL_PATH = "test/long/sample-tall-1200x3600.jpg";
-    private static final String SAMPLE_VIDEO_PATH = "test/videos/sample-video-15s-868KB.mp4";
     private static final String LOCAL_STORAGE_PROVIDER = "local";
     private static final String DEFAULT_STORAGE_BUCKET = "yingshi-media";
 
@@ -42,7 +37,8 @@ public class DevContentSeedDataInitializer {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository
+            PostAlbumRepository postAlbumRepository,
+            LocalMediaStorageService localMediaStorageService
     ) {
         return args -> {
             if (albumRepository.count() > 0 || postRepository.count() > 0 || mediaRepository.count() > 0) {
@@ -59,7 +55,8 @@ public class DevContentSeedDataInitializer {
                     postRepository,
                     mediaRepository,
                     postMediaRepository,
-                    postAlbumRepository
+                    postAlbumRepository,
+                    localMediaStorageService
             );
             seedHiddenLibrary(
                     HIDDEN_LIBRARY_ID,
@@ -67,7 +64,8 @@ public class DevContentSeedDataInitializer {
                     postRepository,
                     mediaRepository,
                     postMediaRepository,
-                    postAlbumRepository
+                    postAlbumRepository,
+                    localMediaStorageService
             );
         };
     }
@@ -78,14 +76,15 @@ public class DevContentSeedDataInitializer {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository
+            PostAlbumRepository postAlbumRepository,
+            LocalMediaStorageService localMediaStorageService
     ) {
-        mediaRepository.save(createImageMedia(libraryId, "media_001", 2400, 1600, 1777412800000L, SAMPLE_LANDSCAPE_PATH, 505_464L));
-        mediaRepository.save(createImageMedia(libraryId, "media_002", 1800, 2400, 1777412600000L, SAMPLE_PORTRAIT_PATH, 674_179L));
-        mediaRepository.save(createImageMedia(libraryId, "media_003", 2400, 2400, 1777412400000L, SAMPLE_SQUARE_PATH, 383_089L));
-        mediaRepository.save(createImageMedia(libraryId, "media_004", 1400, 3200, 1777412200000L, SAMPLE_LONG_PATH, 822_197L));
-        mediaRepository.save(createImageMedia(libraryId, "media_005", 1200, 3600, 1777412000000L, SAMPLE_TALL_PATH, 744_380L));
-        mediaRepository.save(createVideoMedia(libraryId, "media_006", 1080, 1920, 1777411800000L, SAMPLE_VIDEO_PATH, 887_988L, 15_000L));
+        mediaRepository.save(createImageMedia(libraryId, "media_001", 2400, 1600, 1777412800000L, localMediaStorageService.ensureSeedImage("media_001", 1), 505_464L));
+        mediaRepository.save(createImageMedia(libraryId, "media_002", 1800, 2400, 1777412600000L, localMediaStorageService.ensureSeedImage("media_002", 2), 674_179L));
+        mediaRepository.save(createImageMedia(libraryId, "media_003", 2400, 2400, 1777412400000L, localMediaStorageService.ensureSeedImage("media_003", 3), 383_089L));
+        mediaRepository.save(createImageMedia(libraryId, "media_004", 1400, 3200, 1777412200000L, localMediaStorageService.ensureSeedImage("media_004", 4), 822_197L));
+        mediaRepository.save(createImageMedia(libraryId, "media_005", 1200, 3600, 1777412000000L, localMediaStorageService.ensureSeedImage("media_005", 5), 744_380L));
+        mediaRepository.save(createVideoMedia(libraryId, "media_006", 1080, 1920, 1777411800000L, localMediaStorageService.ensureSeedVideo("media_006", 887_988L), 887_988L, 15_000L));
 
         albumRepository.save(createAlbum(libraryId, "album_001", "示例照片", "横图、竖图、方图和长图的本地示例数据", "media_001"));
         albumRepository.save(createAlbum(libraryId, "album_002", "视频检查", "用于视频封面、播放和导入检查的本地示例数据", "media_006"));
@@ -139,9 +138,10 @@ public class DevContentSeedDataInitializer {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository
+            PostAlbumRepository postAlbumRepository,
+            LocalMediaStorageService localMediaStorageService
     ) {
-        mediaRepository.save(createImageMedia(libraryId, "media_other_secret", 2400, 2400, 1777410000000L, SAMPLE_SQUARE_PATH, 383_089L));
+        mediaRepository.save(createImageMedia(libraryId, "media_other_secret", 2400, 2400, 1777410000000L, localMediaStorageService.ensureSeedImage("media_other_secret", 6), 383_089L));
         albumRepository.save(createAlbum(libraryId, "album_other_secret", "内部相册", "用于共享图库隔离检查的内部数据", "media_other_secret"));
         postRepository.save(createPost(libraryId, "post_other_secret", "内部帖子", "用于共享图库隔离检查的内部数据", "内部成员", 1777410000000L, "media_other_secret"));
         postMediaRepository.save(createPostMedia(libraryId, "post_media_other_secret", "post_other_secret", "media_other_secret", 1));

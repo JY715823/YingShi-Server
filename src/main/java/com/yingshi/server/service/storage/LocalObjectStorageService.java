@@ -3,11 +3,13 @@ package com.yingshi.server.service.storage;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.config.StorageProperties;
+import org.springframework.core.io.AbstractResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -84,6 +86,37 @@ public class LocalObjectStorageService implements ObjectStorageService {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
         }
         return new StoredObject(normalizedObjectKey, new FileSystemResource(path), fastMetadata(normalizedObjectKey, path));
+    }
+
+    @Override
+    public StoredObject getRange(String objectKey, long start, long endInclusive) {
+        String normalizedObjectKey = normalizeObjectKey(objectKey);
+        Path path = resolveObjectPath(normalizedObjectKey);
+        if (!Files.exists(path) || !Files.isRegularFile(path)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
+        }
+        try {
+            long totalSize = Files.size(path);
+            if (start < 0 || endInclusive < start || start >= totalSize) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Invalid storage object byte range.");
+            }
+            long boundedEnd = Math.min(endInclusive, totalSize - 1);
+            long rangeLength = boundedEnd - start + 1;
+            ObjectMetadata metadata = new ObjectMetadata(
+                    normalizedObjectKey,
+                    normalizeContentType(Files.probeContentType(path)),
+                    rangeLength,
+                    null,
+                    Files.getLastModifiedTime(path).toMillis()
+            );
+            return new StoredObject(
+                    normalizedObjectKey,
+                    new LocalRangeResource(path, normalizedObjectKey, metadata, start, rangeLength),
+                    metadata
+            );
+        } catch (IOException exception) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to read storage object byte range.");
+        }
     }
 
     @Override
@@ -171,5 +204,95 @@ public class LocalObjectStorageService implements ObjectStorageService {
             return DEFAULT_CONTENT_TYPE;
         }
         return contentType;
+    }
+
+    private static final class LocalRangeResource extends AbstractResource {
+        private final Path path;
+        private final String objectKey;
+        private final ObjectMetadata metadata;
+        private final long start;
+        private final long length;
+
+        private LocalRangeResource(Path path, String objectKey, ObjectMetadata metadata, long start, long length) {
+            this.path = path;
+            this.objectKey = objectKey;
+            this.metadata = metadata;
+            this.start = start;
+            this.length = length;
+        }
+
+        @Override
+        public String getDescription() {
+            return "Local storage object byte range " + objectKey;
+        }
+
+        @Override
+        public String getFilename() {
+            return path.getFileName().toString();
+        }
+
+        @Override
+        public long contentLength() {
+            return metadata.sizeBytes() == null ? -1L : metadata.sizeBytes();
+        }
+
+        @Override
+        public long lastModified() {
+            return metadata.lastModifiedMillis() == null ? 0L : metadata.lastModifiedMillis();
+        }
+
+        @Override
+        public InputStream getInputStream() throws IOException {
+            return new BoundedRangeInputStream(Files.newInputStream(path), start, length);
+        }
+    }
+
+    private static final class BoundedRangeInputStream extends FilterInputStream {
+        private long remaining;
+
+        private BoundedRangeInputStream(InputStream source, long offset, long length) throws IOException {
+            super(source);
+            skipFully(source, offset);
+            this.remaining = length;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (remaining <= 0) {
+                return -1;
+            }
+            int value = super.read();
+            if (value != -1) {
+                remaining -= 1;
+            }
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            if (remaining <= 0) {
+                return -1;
+            }
+            int maxLength = (int) Math.min(length, remaining);
+            int read = super.read(buffer, offset, maxLength);
+            if (read > 0) {
+                remaining -= read;
+            }
+            return read;
+        }
+
+        private static void skipFully(InputStream source, long offset) throws IOException {
+            long remainingToSkip = offset;
+            while (remainingToSkip > 0) {
+                long skipped = source.skip(remainingToSkip);
+                if (skipped <= 0) {
+                    if (source.read() == -1) {
+                        throw new IOException("Could not skip to requested storage object byte range.");
+                    }
+                    skipped = 1;
+                }
+                remainingToSkip -= skipped;
+            }
+        }
     }
 }

@@ -104,6 +104,38 @@ public class S3ObjectStorageService implements ObjectStorageService {
     }
 
     @Override
+    public StoredObject getRange(String objectKey, long start, long endInclusive) {
+        String normalizedObjectKey = normalizeObjectKey(objectKey);
+        if (start < 0 || endInclusive < start) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Invalid S3 object byte range.");
+        }
+        try {
+            GetObjectRequest request = GetObjectRequest.builder()
+                    .bucket(bucket())
+                    .key(normalizedObjectKey)
+                    .range("bytes=" + start + "-" + endInclusive)
+                    .build();
+            ResponseInputStream<GetObjectResponse> response = s3Client.getObject(request);
+            long rangeLength = endInclusive - start + 1;
+            ObjectMetadata metadata = new ObjectMetadata(
+                    normalizedObjectKey,
+                    normalizeContentType(response.response().contentType()),
+                    rangeLength,
+                    null,
+                    response.response().lastModified() == null ? null : response.response().lastModified().toEpochMilli()
+            );
+            return new StoredObject(normalizedObjectKey, new S3ObjectResource(response, normalizedObjectKey, metadata), metadata);
+        } catch (NoSuchKeyException exception) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
+        } catch (S3Exception exception) {
+            if (exception.statusCode() == 404) {
+                throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Stored media file was not found.");
+            }
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to read S3 storage object byte range.");
+        }
+    }
+
+    @Override
     public boolean exists(String objectKey) {
         return getMetadata(objectKey).isPresent();
     }

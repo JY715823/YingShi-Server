@@ -12,6 +12,7 @@ Android REAL has a configurable backend `baseUrl` in the diagnostics/settings fl
 
 - The default/debug base URL is only a starting value.
 - Users can edit and persist another backend URL, such as emulator loopback, a LAN IP, or a Cloudflare Tunnel URL.
+- For Cloudflare Tunnel quasi-online testing, set the value to a backend API hostname such as `https://api.your-domain.com/`.
 - Relative media paths returned by Server are resolved against this backend `baseUrl`.
 - Android must not infer object storage endpoints from media ids, object keys, or provider names.
 
@@ -189,5 +190,7 @@ Android REAL currently does not depend on:
 - object keys
 - object storage access key or secret key
 - provider-specific SDKs
+
+Cloudflare Tunnel does not change these non-dependencies. It only changes the backend `baseUrl` from local/LAN HTTP to public HTTPS.
 
 Any future use of direct-to-object-storage upload must be a separate contract revision. Stage 16 step 1 keeps Android behind backend APIs.

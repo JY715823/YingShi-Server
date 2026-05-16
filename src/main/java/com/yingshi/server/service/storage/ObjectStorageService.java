@@ -13,6 +13,8 @@ public interface ObjectStorageService {
 
     StoredObject get(String objectKey);
 
+    StoredObject getRange(String objectKey, long start, long endInclusive);
+
     boolean exists(String objectKey);
 
     boolean delete(String objectKey);
