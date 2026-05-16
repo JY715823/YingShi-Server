@@ -30,41 +30,73 @@ public class DevAuthSeedDataInitializer {
             PasswordEncoder passwordEncoder
     ) {
         return args -> {
-            if (userRepository.count() > 0 || libraryRepository.count() > 0 || libraryMemberRepository.count() > 0) {
-                return;
-            }
-
-            SharedLibraryEntity library = new SharedLibraryEntity();
-            library.setId(DEMO_LIBRARY_ID);
-            library.setDisplayName("映时共享相册");
+            SharedLibraryEntity library = libraryRepository.findById(DEMO_LIBRARY_ID)
+                    .orElseGet(() -> {
+                        SharedLibraryEntity created = new SharedLibraryEntity();
+                        created.setId(DEMO_LIBRARY_ID);
+                        return created;
+                    });
+            library.setDisplayName("YingShi Shared Library");
             libraryRepository.save(library);
 
-            UserEntity demoA = createUser("user_demo_a", "demo.a@yingshi.local", "演示用户 A", passwordEncoder);
-            UserEntity demoB = createUser("user_demo_b", "demo.b@yingshi.local", "演示用户 B", passwordEncoder);
-            userRepository.save(demoA);
-            userRepository.save(demoB);
+            UserEntity demoA = upsertUser(
+                    userRepository,
+                    passwordEncoder,
+                    "user_demo_a",
+                    "demo.a@yingshi.local",
+                    "Demo A"
+            );
+            UserEntity demoB = upsertUser(
+                    userRepository,
+                    passwordEncoder,
+                    "user_demo_b",
+                    "demo.b@yingshi.local",
+                    "Demo B"
+            );
 
-            libraryMemberRepository.save(createMember("member_demo_a", DEMO_LIBRARY_ID, demoA.getId(), SharedLibraryRole.OWNER));
-            libraryMemberRepository.save(createMember("member_demo_b", DEMO_LIBRARY_ID, demoB.getId(), SharedLibraryRole.MEMBER));
+            upsertMember(libraryMemberRepository, "member_demo_a", DEMO_LIBRARY_ID, demoA.getId(), SharedLibraryRole.OWNER);
+            upsertMember(libraryMemberRepository, "member_demo_b", DEMO_LIBRARY_ID, demoB.getId(), SharedLibraryRole.MEMBER);
         };
     }
 
-    private UserEntity createUser(String id, String account, String displayName, PasswordEncoder passwordEncoder) {
-        UserEntity user = new UserEntity();
-        user.setId(id);
+    private UserEntity upsertUser(
+            UserRepository userRepository,
+            PasswordEncoder passwordEncoder,
+            String id,
+            String account,
+            String displayName
+    ) {
+        UserEntity user = userRepository.findByAccount(account)
+                .orElseGet(() -> {
+                    UserEntity created = new UserEntity();
+                    created.setId(id);
+                    created.setAccount(account);
+                    return created;
+                });
         user.setAccount(account);
         user.setDisplayName(displayName);
-        user.setPasswordHash(passwordEncoder.encode(DEMO_PASSWORD));
+        if (user.getPasswordHash() == null || !passwordEncoder.matches(DEMO_PASSWORD, user.getPasswordHash())) {
+            user.setPasswordHash(passwordEncoder.encode(DEMO_PASSWORD));
+        }
         user.setDefaultLibraryId(DEMO_LIBRARY_ID);
-        return user;
+        return userRepository.save(user);
     }
 
-    private SharedLibraryMemberEntity createMember(String id, String libraryId, String userId, SharedLibraryRole role) {
+    private void upsertMember(
+            SharedLibraryMemberRepository libraryMemberRepository,
+            String id,
+            String libraryId,
+            String userId,
+            SharedLibraryRole role
+    ) {
+        if (libraryMemberRepository.existsByUserIdAndLibraryId(userId, libraryId)) {
+            return;
+        }
         SharedLibraryMemberEntity member = new SharedLibraryMemberEntity();
         member.setId(id);
         member.setLibraryId(libraryId);
         member.setUserId(userId);
         member.setRole(role);
-        return member;
+        libraryMemberRepository.save(member);
     }
 }

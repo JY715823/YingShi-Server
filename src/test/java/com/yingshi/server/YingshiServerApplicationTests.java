@@ -93,6 +93,13 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.userId").value("user_demo_a"))
                 .andExpect(jsonPath("$.data.account").value("demo.a@yingshi.local"))
                 .andExpect(jsonPath("$.data.libraryId").value("library_shared"));
+
+        mockMvc.perform(post("/api/auth/logout")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.success").value(true));
     }
 
     @Test
