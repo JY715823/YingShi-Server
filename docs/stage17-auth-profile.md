@@ -156,3 +156,19 @@ Expected behavior:
 - Editing nickname and intro updates the server and refreshes both the personal page and `我的`.
 - Logout clears local auth state and returns to login.
 - Restart keeps a valid saved session, or returns to login if the token is missing/invalid.
+
+
+## Stage 17-3 Stabilization
+
+- Android startup keeps the existing token only when backend reachability fails; it clears the session only for real unauthorized responses.
+- Unauthorized responses from `GET /api/auth/me` and `PATCH /api/auth/me/profile` are treated as session expiry and must return the app to the login page.
+- Network failures, stopped backend services, and wrong LAN `baseUrl` values should surface a natural error message instead of a white screen or a loading loop.
+- The `我的` page now keeps a clearer account-status block with logged-in state, REAL/FAKE mode, current backend, and current account email.
+- Entering the personal page may render cached user data first and then refresh `/me` in the background.
+- REAL-mode physical-device verification should use the current LAN backend address instead of a temporary tunnel URL.
+
+### Stage 17-3 Acceptance Additions
+
+- `我的` should show a tappable profile card, environment data, account status, and logout.
+- Wrong `baseUrl`, stopped backend services, or LAN failures should show a clear account error message and should not white-screen the app.
+- Editing nickname and intro should refresh both the personal page and `我的`.
