@@ -67,7 +67,6 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.application").value("yingshi-server"))
                 .andExpect(jsonPath("$.error").doesNotExist());
     }
-
     @Test
     void authFlowWorksForSeededUser() throws Exception {
         MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
@@ -81,6 +80,10 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.userId").value("user_demo_a"))
                 .andExpect(jsonPath("$.data.libraryId").value("library_shared"))
+                .andExpect(jsonPath("$.data.libraryDisplayName").value("我们的小空间"))
+                .andExpect(jsonPath("$.data.partner.userId").value("user_demo_b"))
+                .andExpect(jsonPath("$.data.partner.account").value("demo.b@yingshi.local"))
+                .andExpect(jsonPath("$.data.partner.displayName").value("另一半"))
                 .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
                 .andExpect(jsonPath("$.data.refreshToken").isNotEmpty())
                 .andReturn();
@@ -92,7 +95,23 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.userId").value("user_demo_a"))
                 .andExpect(jsonPath("$.data.account").value("demo.a@yingshi.local"))
-                .andExpect(jsonPath("$.data.libraryId").value("library_shared"));
+                .andExpect(jsonPath("$.data.libraryId").value("library_shared"))
+                .andExpect(jsonPath("$.data.libraryDisplayName").value("我们的小空间"))
+                .andExpect(jsonPath("$.data.partner.userId").value("user_demo_b"))
+                .andExpect(jsonPath("$.data.partner.account").value("demo.b@yingshi.local"))
+                .andExpect(jsonPath("$.data.partner.displayName").value("另一半"));
+
+        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + demoBAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.userId").value("user_demo_b"))
+                .andExpect(jsonPath("$.data.account").value("demo.b@yingshi.local"))
+                .andExpect(jsonPath("$.data.libraryId").value("library_shared"))
+                .andExpect(jsonPath("$.data.libraryDisplayName").value("我们的小空间"))
+                .andExpect(jsonPath("$.data.partner.userId").value("user_demo_a"))
+                .andExpect(jsonPath("$.data.partner.account").value("demo.a@yingshi.local"))
+                .andExpect(jsonPath("$.data.partner.displayName").value("映世小屋"));
 
         mockMvc.perform(post("/api/auth/logout")
                         .header("Authorization", "Bearer " + accessToken)
@@ -109,8 +128,9 @@ class YingshiServerApplicationTests {
         mockMvc.perform(get("/api/auth/me")
                         .header("Authorization", "Bearer " + demoAAccessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.displayName").value("Demo A"))
-                .andExpect(jsonPath("$.data.bio").value("温柔记录日常，和另一半共享这座小小相册。"))
+                .andExpect(jsonPath("$.data.displayName").value("映世小屋"))
+                .andExpect(jsonPath("$.data.bio").value("一起把平常日子慢慢收进这座小小相册。"))
+                .andExpect(jsonPath("$.data.partner.displayName").value("另一半"))
                 .andExpect(jsonPath("$.data.createdAtMillis").isNumber())
                 .andExpect(jsonPath("$.data.updatedAtMillis").isNumber());
 
@@ -125,23 +145,25 @@ class YingshiServerApplicationTests {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.displayName").value("映世小屋"))
-                .andExpect(jsonPath("$.data.bio").value("把两个人的日常安静收进这里。"));
+                .andExpect(jsonPath("$.data.bio").value("把两个人的日常安静收进这里。"))
+                .andExpect(jsonPath("$.data.partner.displayName").value("另一半"));
 
         mockMvc.perform(get("/api/auth/me")
                         .header("Authorization", "Bearer " + demoAAccessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.displayName").value("映世小屋"))
-                .andExpect(jsonPath("$.data.bio").value("把两个人的日常安静收进这里。"));
+                .andExpect(jsonPath("$.data.bio").value("把两个人的日常安静收进这里。"))
+                .andExpect(jsonPath("$.data.partner.displayName").value("另一半"));
 
         String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
 
         mockMvc.perform(get("/api/auth/me")
                         .header("Authorization", "Bearer " + demoBAccessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.displayName").value("Demo B"))
-                .andExpect(jsonPath("$.data.bio").value("一起把生活里的闪光片段慢慢收进映世。"));
+                .andExpect(jsonPath("$.data.displayName").value("另一半"))
+                .andExpect(jsonPath("$.data.bio").value("把生活里的闪光片段，也把安静和想念一起留下来。"))
+                .andExpect(jsonPath("$.data.partner.displayName").value("映世小屋"));
     }
-
     @Test
     void protectedEndpointRejectsMissingToken() throws Exception {
         mockMvc.perform(get("/api/auth/me"))
@@ -838,3 +860,4 @@ class YingshiServerApplicationTests {
     }
 
 }
+

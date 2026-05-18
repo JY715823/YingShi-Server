@@ -36,7 +36,7 @@ public class DevAuthSeedDataInitializer {
                         created.setId(DEMO_LIBRARY_ID);
                         return created;
                     });
-            library.setDisplayName("YingShi Shared Library");
+            library.setDisplayName("\u6211\u4eec\u7684\u5c0f\u7a7a\u95f4");
             libraryRepository.save(library);
 
             UserEntity demoA = upsertUser(
@@ -44,16 +44,16 @@ public class DevAuthSeedDataInitializer {
                     passwordEncoder,
                     "user_demo_a",
                     "demo.a@yingshi.local",
-                    "Demo A",
-                    "温柔记录日常，和另一半共享这座小小相册。"
+                    "\u6620\u4e16\u5c0f\u5c4b",
+                    "\u4e00\u8d77\u628a\u5e73\u5e38\u65e5\u5b50\u6162\u6162\u6536\u8fdb\u8fd9\u5ea7\u5c0f\u5c0f\u76f8\u518c\u3002"
             );
             UserEntity demoB = upsertUser(
                     userRepository,
                     passwordEncoder,
                     "user_demo_b",
                     "demo.b@yingshi.local",
-                    "Demo B",
-                    "一起把生活里的闪光片段慢慢收进映世。"
+                    "\u53e6\u4e00\u534a",
+                    "\u628a\u751f\u6d3b\u91cc\u7684\u95ea\u5149\u7247\u6bb5\uff0c\u4e5f\u628a\u5b89\u9759\u548c\u60f3\u5ff5\u4e00\u8d77\u7559\u4e0b\u6765\u3002"
             );
 
             upsertMember(libraryMemberRepository, "member_demo_a", DEMO_LIBRARY_ID, demoA.getId(), SharedLibraryRole.OWNER);

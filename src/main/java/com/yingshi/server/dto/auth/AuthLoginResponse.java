@@ -8,6 +8,7 @@ public record AuthLoginResponse(
         String bio,
         String libraryId,
         String libraryDisplayName,
+        AuthPartnerProfileResponse partner,
         long createdAtMillis,
         long updatedAtMillis,
         String accessToken,

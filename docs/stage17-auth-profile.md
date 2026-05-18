@@ -1,29 +1,38 @@
-# Stage 17 Auth And Profile
+﻿# Stage 17 Auth And Profile
 
 ## Scope
 
-This pass closes the REAL-mode login loop and adds the personal profile loop:
+Stage 17 now includes three connected parts:
 
-- account/password login with the demo account
-- bearer access token on protected requests
-- current-user lookup for the profile page
-- current-user profile update for nickname and intro
-- logout endpoint for the client logout action
+- REAL-mode account/password login
+- current-user profile read, edit, and logout
+- a lightweight fixed two-person shared space for `demo.a` and `demo.b`
 
-Out of scope: registration, password reset, refresh-token exchange, third-party login, avatar upload, relationship binding, direct MinIO access from Android, and any media read/upload contract changes.
+This app is currently intended only for two fixed users, so this stage does not introduce a generic relationship system, invite flow, binding review, unbind flow, or multi-space organization model.
 
-## Demo Account
+Out of scope: registration, password reset, refresh-token exchange, third-party login, avatar upload, chat, direct MinIO access from Android, and any media read/upload contract changes.
 
-The local development profiles seed and maintain these accounts:
+## Fixed Shared Space
+
+The local seed keeps two demo accounts available in `dev`, `docker`, and `docker-local`:
 
 - `demo.a@yingshi.local / demo123456`
 - `demo.b@yingshi.local / demo123456`
 
-Profiles covered by the seed: `dev`, `docker`, and `docker-local`.
+Seed behavior:
 
-Passwords are stored as BCrypt hashes through the shared `PasswordEncoder`. The seed is idempotent: if demo accounts or the shared library are missing in an existing local database, they are created; if a demo password hash no longer matches `demo123456`, it is replaced with a fresh hash.
+- both accounts always point to the same `defaultLibraryId`
+- both accounts are members of `library_shared`
+- the shared library display name is `我们的小空间`
+- passwords are stored as BCrypt hashes through the shared `PasswordEncoder`
+- if a demo password hash no longer matches `demo123456`, seed logic rewrites it with a fresh BCrypt hash
 
-Demo users also carry lightweight profile data so the personal page can show a nickname and intro in `dev`, `docker`, and `docker-local`.
+Default seeded profile copy:
+
+- `demo.a@yingshi.local` -> `映世小屋`
+- `demo.b@yingshi.local` -> `另一半`
+
+Current media, album, post, comment, trash, upload, and media-file authorization remains library-scoped. Because both demo accounts belong to the same shared library, they see the same shared content set after login.
 
 ## Endpoints
 
@@ -40,7 +49,7 @@ Request:
 }
 ```
 
-Response data includes:
+Response data now includes:
 
 - `userId`
 - `account`
@@ -49,6 +58,7 @@ Response data includes:
 - `bio`
 - `libraryId`
 - `libraryDisplayName`
+- `partner`
 - `createdAtMillis`
 - `updatedAtMillis`
 - `accessToken`
@@ -69,7 +79,23 @@ Requires:
 Authorization: Bearer <accessToken>
 ```
 
-Returns current user basics plus the lightweight profile fields used by the personal page: `bio`, `createdAtMillis`, and `updatedAtMillis`.
+Returns current user basics plus:
+
+- lightweight profile fields used by the personal page
+- shared library identity
+- `partner` basic profile for the other fixed member in the same shared space
+
+Example `partner` payload:
+
+```json
+{
+  "userId": "user_demo_b",
+  "account": "demo.b@yingshi.local",
+  "displayName": "另一半",
+  "avatarUrl": null,
+  "bio": "把生活里的闪光片段，也把安静和想念一起留下来。"
+}
+```
 
 `PATCH /api/auth/me/profile`
 
@@ -84,37 +110,61 @@ Request:
 }
 ```
 
-The server only updates the authenticated user row. There is no path-based user selection here, so a client cannot edit another user by mistake or by tampering with the body. The response returns the updated current-user profile payload.
+The server only updates the authenticated user row. There is no path-based user selection, so a client cannot edit another user by mistake or by tampering with the body.
 
 `POST /api/auth/logout`
 
-Requires bearer auth. The request body is optional. This stage returns `{ "success": true }`; server-side token revocation is not introduced in Stage 17.
+Requires bearer auth. The request body is optional. Stage 17 still returns:
+
+```json
+{ "success": true }
+```
+
+Server-side token revocation is not introduced in this stage.
 
 ## Auth Boundary
 
 Only methods annotated with `@AuthRequired` require bearer auth. In this stage:
 
-- `/api/auth/login` is public.
-- `/api/auth/me`, `/api/auth/me/profile`, and `/api/auth/logout` are protected.
-- `/api/health` is public.
-- albums, posts, comments, trash, upload, media feed, and media file endpoints keep their existing protected boundary.
+- `/api/auth/login` is public
+- `/api/auth/me`, `/api/auth/me/profile`, and `/api/auth/logout` are protected
+- `/api/health` is public
+- albums, posts, comments, trash, upload, media feed, and media file endpoints remain protected
 
-This pass does not loosen private media, post, comment, upload, or media file endpoints. Android still loads `original`, `preview`, and `cover` files through backend media file URLs with bearer auth; it does not connect to MinIO directly and does not store object-storage credentials.
+This pass does not loosen private media, post, comment, upload, or media file endpoints. Android still loads `original`, `preview`, and `cover` through backend media file URLs with bearer auth. It does not connect to MinIO directly and does not store object-storage credentials.
 
-## Android Login Flow
+## Android Behavior
+
+### Login And Session
 
 1. App starts and loads any persisted token.
 2. If a token exists, Android calls `GET /api/auth/me`.
-3. If `/me` succeeds, the main shell opens and the profile page can render current user data.
-4. If no token exists, or `/me` fails with unauthorized/expired session, Android clears the token and shows the login page.
+3. If `/me` succeeds, the main shell opens.
+4. If no token exists, or `/me` returns unauthorized, Android clears local tokens and shows the login page.
 5. The login page calls `POST /api/auth/login`.
-6. On success, Android persists the access/refresh token bundle and enters the main shell immediately.
+6. On success, Android persists the token bundle and enters the main shell immediately.
 7. OkHttp attaches `Authorization: Bearer <accessToken>` to protected requests.
 8. Any protected request returning `401` clears the token so the app returns to login.
-9. The personal page can edit nickname and intro through `PATCH /api/auth/me/profile`.
-10. Logout calls `POST /api/auth/logout`, clears local tokens, and returns to login.
+9. Logout calls `POST /api/auth/logout`, clears local tokens, and returns to login.
 
-FAKE mode keeps using local fake repositories and fake auth data. REAL mode requires `baseUrl` to point at the current backend, for example `http://10.0.2.2:8080/` on an Android emulator.
+### Shared Space Presentation
+
+- `我的` shows the current user card, shared-space card, partner card, environment info, baseUrl, and logout
+- the personal profile page shows current-user info plus a partner section
+- FAKE mode now also uses fixed two-person demo data so the same shared-space feeling remains available without a backend
+- REAL mode reads partner data from the server response
+
+### Profile Refresh
+
+- editing nickname and bio calls `PATCH /api/auth/me/profile`
+- after save, both `我的` and the personal profile page reuse the updated current-user data
+- entering the personal profile page may render cached user data first and then refresh `/me` in the background
+
+### Error Handling
+
+- unauthorized responses from `/me` and profile update are treated as session expiry
+- wrong `baseUrl`, stopped backend services, and LAN failures should show a natural error instead of a white screen or loading loop
+- REAL-mode physical-device verification should use the current LAN backend address instead of an expired temporary tunnel URL
 
 ## Acceptance
 
@@ -129,46 +179,40 @@ Manual checks:
 ```powershell
 curl.exe http://localhost:8080/api/health
 
-curl.exe http://localhost:8080/api/auth/me
-
 curl.exe -X POST http://localhost:8080/api/auth/login `
   -H "Content-Type: application/json" `
   -d "{\"account\":\"demo.a@yingshi.local\",\"password\":\"demo123456\"}"
+
+curl.exe -X POST http://localhost:8080/api/auth/login `
+  -H "Content-Type: application/json" `
+  -d "{\"account\":\"demo.b@yingshi.local\",\"password\":\"demo123456\"}"
 
 curl.exe http://localhost:8080/api/auth/me `
   -H "Authorization: Bearer <accessToken>"
 ```
 
+Expected server behavior:
+
+- both demo accounts can log in
+- both demo accounts return the same `libraryId` and `libraryDisplayName`
+- current user can read partner basic profile from login and `/me`
+- unauthenticated access to account and content APIs fails
+- `GET /api/health` stays public
+
 Android:
 
 ```powershell
-.\gradlew.bat assembleDebug
+.\gradlew.bat --no-daemon assembleDebug
 ```
 
-Expected behavior:
+Expected Android behavior:
 
-- App opens to the login page when there is no valid session.
-- Demo quick fill uses `demo.a@yingshi.local / demo123456`.
-- REAL mode login succeeds when `baseUrl` points to the running backend.
-- Login enters the main shell.
-- `我的` shows a tappable profile card, current mode, baseUrl, and logout.
-- The personal page shows display name, email, avatar placeholder, intro, account, and join time.
-- Editing nickname and intro updates the server and refreshes both the personal page and `我的`.
-- Logout clears local auth state and returns to login.
-- Restart keeps a valid saved session, or returns to login if the token is missing/invalid.
-
-
-## Stage 17-3 Stabilization
-
-- Android startup keeps the existing token only when backend reachability fails; it clears the session only for real unauthorized responses.
-- Unauthorized responses from `GET /api/auth/me` and `PATCH /api/auth/me/profile` are treated as session expiry and must return the app to the login page.
-- Network failures, stopped backend services, and wrong LAN `baseUrl` values should surface a natural error message instead of a white screen or a loading loop.
-- The `我的` page now keeps a clearer account-status block with logged-in state, REAL/FAKE mode, current backend, and current account email.
-- Entering the personal page may render cached user data first and then refresh `/me` in the background.
-- REAL-mode physical-device verification should use the current LAN backend address instead of a temporary tunnel URL.
-
-### Stage 17-3 Acceptance Additions
-
-- `我的` should show a tappable profile card, environment data, account status, and logout.
-- Wrong `baseUrl`, stopped backend services, or LAN failures should show a clear account error message and should not white-screen the app.
-- Editing nickname and intro should refresh both the personal page and `我的`.
+- app opens to login when there is no valid session
+- demo quick fill uses `demo.a@yingshi.local / demo123456`
+- REAL mode login succeeds when `baseUrl` points to the running backend
+- both demo accounts can log in
+- `我的` shows current account, partner info, shared-space hint, account state, and backend info
+- the personal profile page shows current-user info and partner info together
+- editing nickname and intro updates the server and refreshes both profile surfaces
+- logout clears local auth state and returns to login
+- restart keeps a valid saved session, or returns to login if the token is missing or invalid
