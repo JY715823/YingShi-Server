@@ -4,34 +4,47 @@ import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.domain.SharedLibraryEntity;
+import com.yingshi.server.domain.SharedLibraryMemberEntity;
 import com.yingshi.server.domain.UserEntity;
 import com.yingshi.server.dto.auth.AuthCurrentUserResponse;
 import com.yingshi.server.dto.auth.AuthLoginRequest;
 import com.yingshi.server.dto.auth.AuthLoginResponse;
 import com.yingshi.server.dto.auth.AuthLogoutResponse;
+import com.yingshi.server.dto.auth.AuthPartnerProfileResponse;
 import com.yingshi.server.dto.auth.AuthUpdateProfileRequest;
+import com.yingshi.server.repository.SharedLibraryMemberRepository;
 import com.yingshi.server.repository.SharedLibraryRepository;
 import com.yingshi.server.repository.UserRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
 @Service
 public class AuthService {
 
     private final UserRepository userRepository;
     private final SharedLibraryRepository libraryRepository;
+    private final SharedLibraryMemberRepository libraryMemberRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
 
     public AuthService(
             UserRepository userRepository,
             SharedLibraryRepository libraryRepository,
+            SharedLibraryMemberRepository libraryMemberRepository,
             PasswordEncoder passwordEncoder,
             JwtTokenService jwtTokenService
     ) {
         this.userRepository = userRepository;
         this.libraryRepository = libraryRepository;
+        this.libraryMemberRepository = libraryMemberRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
     }
@@ -105,6 +118,7 @@ public class AuthService {
             SharedLibraryEntity library,
             JwtTokenBundle tokenBundle
     ) {
+        AuthPartnerProfileResponse partner = findPartnerProfile(user, library.getId());
         return new AuthLoginResponse(
                 user.getId(),
                 user.getAccount(),
@@ -113,6 +127,7 @@ public class AuthService {
                 normalizeNullableText(user.getBio()),
                 library.getId(),
                 library.getDisplayName(),
+                partner,
                 user.getCreatedAt().toEpochMilli(),
                 user.getUpdatedAt().toEpochMilli(),
                 tokenBundle.accessToken(),
@@ -123,6 +138,7 @@ public class AuthService {
     }
 
     private AuthCurrentUserResponse buildCurrentUserResponse(UserEntity user, SharedLibraryEntity library) {
+        AuthPartnerProfileResponse partner = findPartnerProfile(user, library.getId());
         return new AuthCurrentUserResponse(
                 user.getId(),
                 user.getAccount(),
@@ -131,8 +147,42 @@ public class AuthService {
                 normalizeNullableText(user.getBio()),
                 library.getId(),
                 library.getDisplayName(),
+                partner,
                 user.getCreatedAt().toEpochMilli(),
                 user.getUpdatedAt().toEpochMilli()
+        );
+    }
+
+    private AuthPartnerProfileResponse findPartnerProfile(UserEntity currentUser, String libraryId) {
+        List<SharedLibraryMemberEntity> members = libraryMemberRepository.findByLibraryId(libraryId);
+        List<String> memberUserIds = members.stream()
+                .map(SharedLibraryMemberEntity::getUserId)
+                .distinct()
+                .toList();
+        if (memberUserIds.isEmpty()) {
+            return null;
+        }
+
+        Map<String, UserEntity> usersById = userRepository.findByIdIn(memberUserIds).stream()
+                .collect(Collectors.toMap(UserEntity::getId, Function.identity()));
+
+        Optional<UserEntity> partner = memberUserIds.stream()
+                .filter(memberUserId -> !memberUserId.equals(currentUser.getId()))
+                .map(usersById::get)
+                .filter(user -> user != null)
+                .sorted(Comparator.comparing(UserEntity::getDisplayName, String.CASE_INSENSITIVE_ORDER))
+                .findFirst();
+
+        return partner.map(this::toPartnerProfile).orElse(null);
+    }
+
+    private AuthPartnerProfileResponse toPartnerProfile(UserEntity user) {
+        return new AuthPartnerProfileResponse(
+                user.getId(),
+                user.getAccount(),
+                user.getDisplayName(),
+                normalizeNullableText(user.getAvatarUrl()),
+                normalizeNullableText(user.getBio())
         );
     }
 
