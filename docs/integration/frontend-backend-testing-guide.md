@@ -1,12 +1,16 @@
 # Frontend Backend Testing Guide
 
+更新时间：2026-05-25
+
 ## Scope
-- backend repo: `yingshi-server`
-- paired Android repo: `YingShi`
+
+- backend repo: `E:\Study\App\YingShi-Server`
+- paired Android repo: `E:\Study\App\YingShi`
 - current backend smoke script: `scripts/integration-smoke.ps1`
-- current Android diagnostics entry: `Settings -> Backend integration diagnostics`
+- current Android diagnostics entry: `我的 -> 设置 -> 后端联调诊断`
 
 ## Seed Account
+
 - account: `demo.a@yingshi.local`
 - password: `demo123456`
 - alternate account: `demo.b@yingshi.local`
@@ -15,10 +19,11 @@
 ## 1. Start the Backend
 
 Requirements:
+
 - Java 17 or newer
 - local port `8080` available
 
-Run from the `yingshi-server` root:
+Run from the repo root:
 
 ```powershell
 .\mvnw.cmd spring-boot:run
@@ -31,13 +36,16 @@ Recommended preflight:
 ```
 
 Current local assumptions:
-- Spring profile defaults to `dev`
-- database is in-memory H2
-- uploaded files are written to `local-storage`
-- restarting the server resets H2 data
-- restarting the server does not delete `local-storage`
 
-Useful local URLs:
+- Spring profile defaults to `dev`
+- `dev` uses file-based H2 + `local-storage`
+- uploaded files are written under `local-storage`
+- multipart limits are currently:
+  - `1024MB` per file
+  - `1100MB` per request
+
+Useful local URLs in `dev`:
+
 - health: `http://localhost:8080/api/health`
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
 - OpenAPI: `http://localhost:8080/v3/api-docs`
@@ -45,22 +53,7 @@ Useful local URLs:
 
 ## 2. Run the Integration Smoke Script
 
-The smoke script covers:
-- health
-- login token
-- me
-- albums
-- album posts
-- post detail
-- post update
-- media feed
-- post comments
-- media comments
-- upload token
-- local upload
-- trash list, detail, and restore
-
-Run from the `yingshi-server` root:
+Run from the repo root:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\integration-smoke.ps1
@@ -72,215 +65,124 @@ Optional custom base URL:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\integration-smoke.ps1 -BaseUrl http://192.168.1.100:8080
 ```
 
-Success output looks like:
+Current smoke coverage:
+
+- health
+- login token
+- refresh token
+- me
+- albums
+- album posts
+- posts list
+- post detail
+- post update
+- post cover
+- post media order
+- media feed
+- post comments
+- media comments
+- upload token
+- upload task status
+- local upload
+- upload confirm
+- upload cancel
+- avatar upload / avatar fetch
+- notifications list / detail / read / read-all
+- trash list / detail / restore
+
+Success output:
 
 ```text
-[PASS] health - ...
-[PASS] login token - ...
-...
 Integration smoke completed with 0 failures.
 ```
 
-Notes:
-- the upload step creates one new media record on the running dev server
-- if you want a fresh seeded database, stop and restart the backend
-- if `local-storage` grows during repeated tests, delete it manually when the backend is stopped
+## 3. Android Base URL Facts
 
-## 3. Manual Health Check
+Current Android defaults:
 
-Request:
+- app build default: `http://10.106.3.193:8080/`
+- diagnostics preset for emulator: `http://10.0.2.2:8080/`
+- diagnostics preset for loopback: `http://127.0.0.1:8080/`
 
-```http
-GET /api/health
-```
+Guidance:
 
-Expected:
-- HTTP `200`
-- response header contains `X-Request-Id`
-- JSON contains `data.status = "UP"`
+- emulator should use `10.0.2.2`
+- physical phone should use the PC LAN IP
+- `127.0.0.1` on a phone usually points back to the phone itself
 
-## 4. Manual Login and Token Check
+## 4. Android Diagnostics Page
 
-Login:
+Current entry path:
 
-```powershell
-curl.exe -X POST http://localhost:8080/api/auth/login `
-  -H "Content-Type: application/json" `
-  -d "{\"account\":\"demo.a@yingshi.local\",\"password\":\"demo123456\"}"
-```
+1. Open the Android app
+2. Go to `我的`
+3. Open `设置`
+4. Open `后端联调诊断`
 
-Use the returned access token:
+Current page capabilities:
 
-```text
-Authorization: Bearer <accessToken>
-```
+- show and edit active `Base URL`
+- apply emulator / loopback presets
+- `保存并重登` seeded demo account
+- clear local auth cache
+- switch `FAKE / REAL`
+- run a minimal `health` check
+- show the latest result
 
-Check current user:
+Important:
 
-```powershell
-curl.exe http://localhost:8080/api/auth/me `
-  -H "Authorization: Bearer <accessToken>"
-```
+- this page no longer contains the old combined buttons for albums/media/trash/upload smoke
+- Android notification center is still fake data, so do not use it to verify backend notifications
+- avatar upload is currently backend-ready but not yet exposed in Android UI
 
-## 5. Android Emulator Base URL
+## 5. Physical Device Acceptance Flow
 
-Current debug default:
+1. Start the backend with `.\mvnw.cmd spring-boot:run`
+2. Keep phone and PC on the same Wi-Fi
+3. Find the PC LAN IP with `ipconfig`
+4. Confirm Windows Firewall allows inbound `8080`
+5. Build Android debug
+6. Open `我的 -> 设置 -> 后端联调诊断`
+7. Replace `Base URL` with `http://<your-pc-ip>:8080/`
+8. Tap `保存并重登`
+9. Confirm login succeeds
+10. Tap `检查健康`
+11. Confirm latest result contains `health=UP`
+12. Switch Android to `REAL`
+13. Reopen target pages and verify:
+    - 我的 / 个人资料
+    - 照片流
+    - 相册与帖子详情
+    - 评论
+    - 回收站
+    - 系统媒体上传 / 导入
 
-```text
-http://10.0.2.2:8080/
-```
-
-Why:
-- Android Emulator cannot reach your computer backend through `localhost`
-- `10.0.2.2` is the emulator bridge back to the host machine
-
-## 6. Android Physical Device Base URL
-
-The diagnostics page includes a preset for:
-
-```text
-http://127.0.0.1:8080/
-```
-
-Important clarification:
-- on a normal phone over Wi-Fi, `127.0.0.1` points to the phone itself, not your PC
-- for same-Wi-Fi testing, replace it with your computer LAN IP, for example `http://192.168.1.100:8080/`
-- keep the phone and computer on the same Wi-Fi
-
-## 7. Android Debug Cleartext
-
-Current Android behavior:
-- debug build allows cleartext HTTP through a debug-only network security config
-- release build security policy is unchanged
-
-If Android still reports a cleartext error:
-- confirm you installed a debug build, not release
-- confirm the base URL starts with `http://`
-- rebuild `assembleDebug` after changing local Android files
-
-## 8. Fake Real Switching
-
-Current design:
-- app default stays on `FAKE`
-- runtime switch is stored in `BackendDebugConfig`
-- diagnostics page can flip `FAKE` / `REAL`
-- Android now rebuilds the REAL page session when `Repository mode` changes, so fake and real caches do not mix
-- Android now clears the current token when `Base URL` changes, so a backend switch always requires relogin
-
-Where it is implemented:
-- config state: `app/src/main/java/com/example/yingshi/data/remote/config/BackendDebugConfig.kt`
-- repository switch point: `app/src/main/java/com/example/yingshi/data/repository/RepositoryProvider.kt`
-- diagnostics page: `app/src/main/java/com/example/yingshi/feature/photos/BackendDiagnosticsScreen.kt`
-
-Recommendation:
-- keep normal UI work on `FAKE`
-- switch to `REAL` only for integration checks
-- after integration checks, switch back to `FAKE`
-
-## 9. Android Diagnostics Entry
-
-Current entry path in the app:
-1. Open the app debug build.
-2. Go to Photos.
-3. Open Notifications.
-4. Open Settings.
-5. Open `Backend integration diagnostics`.
-
-What the diagnostics page can do:
-- show and edit the active `baseUrl`
-- Stage 12.7-Hotfix original check: image original loading must succeed only after the original image request renders or downloads successfully; videos must not show `加载原图`.
-- switch `FAKE` / `REAL`
-- login with the seeded account
-- test `health`
-- test albums and post detail
-- test media and comments
-- test trash
-- run one combined smoke pass
-
-## 10. Exact Device Acceptance Steps
-
-Use this exact sequence on a phone:
-
-1. Start the backend with `.\mvnw.cmd spring-boot:run`.
-2. Confirm `http://<your-pc-ip>:8080/api/health` is reachable from the same Wi-Fi network.
-3. Build and install the Android debug app.
-4. Open `Photos -> Notifications -> Settings -> Backend integration diagnostics`.
-5. In `Base URL`, enter `http://<your-pc-ip>:8080/`.
-6. Tap `Save Base URL`.
-7. Confirm the `Active base URL` row shows the same value.
-8. Keep repository mode on `FAKE` first and tap `Health`.
-9. Confirm `Last result` shows `[health] success`.
-10. Tap `Login and verify /me`.
-11. Confirm `Token state` changes to `Logged in`.
-12. If you change `Base URL`, log in again because Android clears the old token on base-url change.
-13. Tap `Albums and post detail`.
-14. Confirm `Last result` includes `albums=` and `post=`.
-15. Tap `Media and comments`.
-16. Confirm `Last result` includes `media=`, `postComments=`, and `mediaComments=`.
-17. Tap `Trash`.
-18. Confirm `Last result` includes `trash=` and no failure text.
-19. Tap `Run all smoke actions`.
-20. Confirm the diagnostics page lists each smoke item as `success` or `failed`, and the summary contains `health=UP`, `upload=success`, and `trash=`.
-21. If you want to verify future real repository wiring, switch mode to `REAL`, then reopen the relevant feature screen so it rebuilds under the new session.
-22. After the pass, switch mode back to `FAKE`.
-
-## 11. Windows Firewall and Port 8080 Troubleshooting
-
-If the phone cannot reach the backend:
-- confirm the backend is really listening on port `8080`
-- confirm Windows Firewall allows inbound traffic on port `8080`
-- confirm the network profile is not blocking local LAN traffic
-- confirm the phone and computer are on the same Wi-Fi
-- confirm you used the PC LAN IP, not `localhost`
-
-Useful local checks:
-
-```powershell
-netstat -ano | findstr :8080
-ipconfig
-```
-
-## 12. Common Problems
+## 6. Common Problems
 
 `401 AUTH_UNAUTHORIZED`
+
 - token missing
 - token expired after server restart
-- login was done against a different backend base URL
+- Android logged in against a different base URL
 
-Android emulator cannot connect
+Android emulator cannot connect:
+
 - used `localhost` instead of `10.0.2.2`
-- backend is not actually running on `8080`
+- backend not actually running on `8080`
 
-Android phone cannot connect
-- used `127.0.0.1` over Wi-Fi instead of the PC LAN IP
-- phone and computer are not on the same Wi-Fi
+Android phone cannot connect:
+
+- used `127.0.0.1` instead of the PC LAN IP
+- phone and PC are not on the same Wi-Fi
 - Windows Firewall blocked inbound `8080`
 
-Smoke script upload keeps adding media
-- this is expected while the dev server keeps running
-- restart the backend for a clean H2 state
-- delete `local-storage` manually if you want to reclaim disk
+Smoke upload keeps adding media:
 
-Trash restore fails
-- the backend data was already changed by an earlier partial test
-- restart the backend and rerun the smoke script from a clean dev state
-## Stage 12.7 Upload / Import Acceptance
+- expected while the backend keeps running
+- restart the backend for a clean test state
 
-Physical-device checks for upload/import:
+REAL pages still say “请先到后端联调诊断页登录”:
 
-1. Switch Android to REAL mode and set baseUrl to the LAN server address.
-2. Use bottom `+ -> 上传媒体`, select one image and one video through the system picker, and confirm that root upload tasks move from waiting/uploading to success or a clear failure.
-3. After success, open the app photo feed and verify returned media appears without reinstalling or fake placeholders.
-4. In System Media, multi-select local media and run `导入到 App`; verify the same task panel, same logs, and same photo-feed refresh behavior.
-5. For failures, check logcat tag `SystemMediaUpload`; DEBUG logs should include source uri, mime type, display name, file size, upload id, returned media id, URLs, or server error body.
-6. Large local photos/videos require server multipart limits from Stage 12.7 (`200MB` file, `220MB` request).
-
-## Stage 12.8 Shared Library / Storage Checks
-
-1. Log in with `demo.a@yingshi.local` and confirm `/api/auth/me` returns `libraryId=library_shared`.
-2. Confirm Android does not read or send `spaceId`.
-3. Upload one image from bottom `+ -> upload media`; confirm the returned media appears in photo feed with empty `postIds` allowed.
-4. Confirm the server writes the original under `local-storage/originals/yyyy/MM` and any generated preview under `local-storage/previews/yyyy/MM`.
-5. Confirm seed/demo media lives under `local-storage/test/photos`, `local-storage/test/long`, or `local-storage/test/videos`, not under an old space directory.
-6. Confirm uploaded media keeps `capturedAtMillis`, `importedAtMillis`, and `displayTimeSource` when those values are available.
-7. Create or edit one post and confirm the request/response tolerates `eventStartedAtMillis`, `eventEndedAtMillis`, and `displayTimeSource`.
+- Android page was opened before REAL login completed
+- repository mode changed but the page was not reopened
+- backend restarted and old token became invalid

@@ -10,6 +10,8 @@ import com.yingshi.server.domain.UploadState;
 import com.yingshi.server.domain.UploadTaskEntity;
 import com.yingshi.server.dto.content.MediaDto;
 import com.yingshi.server.dto.upload.UploadCompleteResponse;
+import com.yingshi.server.dto.upload.UploadConfirmRequest;
+import com.yingshi.server.dto.upload.UploadTaskResponse;
 import com.yingshi.server.dto.upload.UploadTokenRequest;
 import com.yingshi.server.dto.upload.UploadTokenResponse;
 import com.yingshi.server.mapper.ContentMapper;
@@ -115,6 +117,7 @@ public class UploadService {
             task.setState(UploadState.SUCCESS);
             task.setCompletedAt(Instant.now());
             task.setMediaId(duplicateMedia.getId());
+            task.setStoredPath(duplicateMedia.getStoragePath());
             uploadTaskRepository.save(task);
             MediaDto mediaDto = contentMapper.toMediaDto(duplicateMedia, List.of());
             return new UploadCompleteResponse(task.getId(), "success", mediaDto);
@@ -141,6 +144,52 @@ public class UploadService {
 
         MediaDto mediaDto = contentMapper.toMediaDto(media, List.of());
         return new UploadCompleteResponse(task.getId(), "success", mediaDto);
+    }
+
+    @Transactional(readOnly = true)
+    public UploadTaskResponse getUploadTask(String uploadId, AuthenticatedUser currentUser) {
+        UploadTaskEntity task = requireUploadTask(uploadId, currentUser.libraryId());
+        return toUploadTaskResponse(task);
+    }
+
+    @Transactional
+    public UploadTaskResponse confirmUpload(
+            String uploadId,
+            UploadConfirmRequest request,
+            AuthenticatedUser currentUser
+    ) {
+        UploadTaskEntity task = requireUploadTask(uploadId, currentUser.libraryId());
+        if (task.getState() == UploadState.CANCELLED) {
+            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.UPLOAD_ALREADY_COMPLETED, "Upload task has already been cancelled.");
+        }
+        if (task.getExpireAt().isBefore(Instant.now()) && task.getState() == UploadState.WAITING) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_FILE_MISMATCH, "Upload task has expired.");
+        }
+        if (task.getState() == UploadState.WAITING) {
+            String objectKey = normalizeNullable(request.objectKey());
+            if (objectKey != null && !localMediaStorageService.objectExists(objectKey)) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_FILE_MISMATCH, "Uploaded object was not found.");
+            }
+            if (objectKey != null && task.getStoredPath() == null) {
+                task.setStoredPath(objectKey);
+                uploadTaskRepository.save(task);
+            }
+        }
+        return toUploadTaskResponse(task);
+    }
+
+    @Transactional
+    public UploadTaskResponse cancelUpload(String uploadId, AuthenticatedUser currentUser) {
+        UploadTaskEntity task = requireUploadTask(uploadId, currentUser.libraryId());
+        if (task.getState() == UploadState.SUCCESS) {
+            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.UPLOAD_ALREADY_COMPLETED, "Completed upload task cannot be cancelled.");
+        }
+        if (task.getState() != UploadState.CANCELLED) {
+            task.setState(UploadState.CANCELLED);
+            task.setCompletedAt(Instant.now());
+            uploadTaskRepository.save(task);
+        }
+        return toUploadTaskResponse(task);
     }
 
     private MediaEntity findDuplicateMedia(UploadTaskEntity task) {
@@ -183,6 +232,25 @@ public class UploadService {
     private UploadTaskEntity requireUploadTask(String uploadId, String libraryId) {
         return uploadTaskRepository.findByIdAndLibraryId(uploadId, libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.UPLOAD_NOT_FOUND, "Upload task was not found."));
+    }
+
+    private UploadTaskResponse toUploadTaskResponse(UploadTaskEntity task) {
+        String objectKey = task.getStoredPath();
+        if (objectKey == null && task.getMediaId() != null) {
+            objectKey = "/api/media/files/" + task.getMediaId();
+        }
+        return new UploadTaskResponse(
+                task.getId(),
+                task.getFileName(),
+                task.getMediaType().name().toLowerCase(Locale.ROOT),
+                objectKey,
+                task.getState().name().toLowerCase(Locale.ROOT),
+                switch (task.getState()) {
+                    case WAITING -> 0;
+                    case SUCCESS, CANCELLED -> 100;
+                },
+                task.getState() == UploadState.CANCELLED ? "Upload task was cancelled." : null
+        );
     }
 
     private MediaEntity buildMediaFromTask(String mediaId, UploadTaskEntity task, LocalMediaStorageService.StoredFile storedFile) {
@@ -252,6 +320,13 @@ public class UploadService {
             return null;
         }
         return rawMimeType.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String normalizeNullable(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private String normalizeDisplayTimeSource(String rawSource, String fallback) {

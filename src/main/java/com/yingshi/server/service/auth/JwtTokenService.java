@@ -50,13 +50,21 @@ public class JwtTokenService {
     }
 
     public AuthenticatedUser parseAccessToken(String token) {
+        return parseToken(token, JwtTokenType.ACCESS, "Access token is required.");
+    }
+
+    public AuthenticatedUser parseRefreshToken(String token) {
+        return parseToken(token, JwtTokenType.REFRESH, "Refresh token is required.");
+    }
+
+    private AuthenticatedUser parseToken(String token, JwtTokenType expectedType, String invalidMessage) {
         Claims claims = parseClaims(token);
         JwtTokenType tokenType = JwtTokenType.valueOf(claims.get(TOKEN_TYPE_CLAIM, String.class));
-        if (tokenType != JwtTokenType.ACCESS) {
+        if (tokenType != expectedType) {
             throw new ApiException(
                     HttpStatus.UNAUTHORIZED,
                     ErrorCode.AUTH_SESSION_INVALID,
-                    "Access token is required."
+                    invalidMessage
             );
         }
         return new AuthenticatedUser(

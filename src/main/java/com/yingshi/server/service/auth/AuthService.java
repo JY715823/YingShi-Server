@@ -11,13 +11,18 @@ import com.yingshi.server.dto.auth.AuthLoginRequest;
 import com.yingshi.server.dto.auth.AuthLoginResponse;
 import com.yingshi.server.dto.auth.AuthLogoutResponse;
 import com.yingshi.server.dto.auth.AuthPartnerProfileResponse;
+import com.yingshi.server.dto.auth.AuthRefreshTokenRequest;
+import com.yingshi.server.dto.auth.AuthRefreshTokenResponse;
 import com.yingshi.server.dto.auth.AuthUpdateProfileRequest;
 import com.yingshi.server.repository.SharedLibraryMemberRepository;
 import com.yingshi.server.repository.SharedLibraryRepository;
 import com.yingshi.server.repository.UserRepository;
+import com.yingshi.server.service.upload.LocalMediaStorageService;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Comparator;
 import java.util.List;
@@ -34,19 +39,22 @@ public class AuthService {
     private final SharedLibraryMemberRepository libraryMemberRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
+    private final LocalMediaStorageService localMediaStorageService;
 
     public AuthService(
             UserRepository userRepository,
             SharedLibraryRepository libraryRepository,
             SharedLibraryMemberRepository libraryMemberRepository,
             PasswordEncoder passwordEncoder,
-            JwtTokenService jwtTokenService
+            JwtTokenService jwtTokenService,
+            LocalMediaStorageService localMediaStorageService
     ) {
         this.userRepository = userRepository;
         this.libraryRepository = libraryRepository;
         this.libraryMemberRepository = libraryMemberRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
+        this.localMediaStorageService = localMediaStorageService;
     }
 
     public AuthLoginResponse login(AuthLoginRequest request) {
@@ -70,27 +78,37 @@ public class AuthService {
     }
 
     public AuthCurrentUserResponse getCurrentUser(AuthenticatedUser currentUser) {
-        UserEntity user = userRepository.findById(currentUser.userId())
-                .orElseThrow(() -> new ApiException(
-                        HttpStatus.UNAUTHORIZED,
-                        ErrorCode.AUTH_UNAUTHORIZED,
-                "Current user does not exist."
-                ));
+        UserEntity user = requireCurrentUser(currentUser.userId());
         SharedLibraryEntity library = getLibrary(currentUser.libraryId());
 
         return buildCurrentUserResponse(user, library);
+    }
+
+    public AuthRefreshTokenResponse refreshToken(AuthRefreshTokenRequest request) {
+        AuthenticatedUser refreshUser = jwtTokenService.parseRefreshToken(request.refreshToken().trim());
+        UserEntity user = requireCurrentUser(refreshUser.userId());
+        SharedLibraryEntity library = getLibrary(refreshUser.libraryId());
+        JwtTokenBundle tokenBundle = jwtTokenService.issueTokens(
+                new AuthenticatedUser(
+                        user.getId(),
+                        user.getAccount(),
+                        user.getDisplayName(),
+                        library.getId()
+                )
+        );
+        return new AuthRefreshTokenResponse(
+                tokenBundle.accessToken(),
+                tokenBundle.refreshToken(),
+                tokenBundle.accessTokenExpireAtMillis(),
+                tokenBundle.refreshTokenExpireAtMillis()
+        );
     }
 
     public AuthCurrentUserResponse updateCurrentUserProfile(
             AuthenticatedUser currentUser,
             AuthUpdateProfileRequest request
     ) {
-        UserEntity user = userRepository.findById(currentUser.userId())
-                .orElseThrow(() -> new ApiException(
-                        HttpStatus.UNAUTHORIZED,
-                        ErrorCode.AUTH_UNAUTHORIZED,
-                        "Current user does not exist."
-                ));
+        UserEntity user = requireCurrentUser(currentUser.userId());
         SharedLibraryEntity library = getLibrary(currentUser.libraryId());
 
         user.setDisplayName(request.displayName().trim());
@@ -98,6 +116,38 @@ public class AuthService {
         userRepository.save(user);
 
         return buildCurrentUserResponse(user, library);
+    }
+
+    public AuthCurrentUserResponse uploadCurrentUserAvatar(
+            AuthenticatedUser currentUser,
+            MultipartFile file
+    ) {
+        UserEntity user = requireCurrentUser(currentUser.userId());
+        SharedLibraryEntity library = getLibrary(currentUser.libraryId());
+        user.setAvatarUrl(localMediaStorageService.storeAvatarImage(user.getId(), file));
+        userRepository.save(user);
+        return buildCurrentUserResponse(user, library);
+    }
+
+    public Resource loadAvatar(String userId, AuthenticatedUser currentUser) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new ApiException(
+                        HttpStatus.NOT_FOUND,
+                        ErrorCode.NOT_FOUND,
+                        "Avatar owner was not found."
+                ));
+        if (!libraryMemberRepository.existsByUserIdAndLibraryId(user.getId(), currentUser.libraryId())) {
+            throw new ApiException(
+                    HttpStatus.FORBIDDEN,
+                    ErrorCode.FORBIDDEN,
+                    "Avatar is not accessible in the current shared library."
+            );
+        }
+        String storagePath = normalizeNullableText(user.getAvatarUrl());
+        if (storagePath == null) {
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.NOT_FOUND, "Avatar has not been uploaded yet.");
+        }
+        return localMediaStorageService.load(storagePath);
     }
 
     public AuthLogoutResponse logout() {
@@ -123,7 +173,7 @@ public class AuthService {
                 user.getId(),
                 user.getAccount(),
                 user.getDisplayName(),
-                normalizeNullableText(user.getAvatarUrl()),
+                resolveAvatarUrl(user),
                 normalizeNullableText(user.getBio()),
                 library.getId(),
                 library.getDisplayName(),
@@ -143,7 +193,7 @@ public class AuthService {
                 user.getId(),
                 user.getAccount(),
                 user.getDisplayName(),
-                normalizeNullableText(user.getAvatarUrl()),
+                resolveAvatarUrl(user),
                 normalizeNullableText(user.getBio()),
                 library.getId(),
                 library.getDisplayName(),
@@ -181,9 +231,18 @@ public class AuthService {
                 user.getId(),
                 user.getAccount(),
                 user.getDisplayName(),
-                normalizeNullableText(user.getAvatarUrl()),
+                resolveAvatarUrl(user),
                 normalizeNullableText(user.getBio())
         );
+    }
+
+    private UserEntity requireCurrentUser(String userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new ApiException(
+                        HttpStatus.UNAUTHORIZED,
+                        ErrorCode.AUTH_UNAUTHORIZED,
+                        "Current user does not exist."
+                ));
     }
 
     private String normalizeNullableText(String value) {
@@ -192,6 +251,10 @@ public class AuthService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private String resolveAvatarUrl(UserEntity user) {
+        return normalizeNullableText(user.getAvatarUrl()) == null ? null : "/api/auth/avatar/" + user.getId();
     }
 
     private ApiException invalidCredentials() {

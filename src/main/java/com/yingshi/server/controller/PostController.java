@@ -11,6 +11,7 @@ import com.yingshi.server.domain.PostMediaDeleteMode;
 import com.yingshi.server.dto.content.AddPostMediaRequest;
 import com.yingshi.server.dto.content.CreatePostRequest;
 import com.yingshi.server.dto.content.PostDetailDto;
+import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.dto.content.UpdatePostCoverRequest;
 import com.yingshi.server.dto.content.UpdatePostMediaOrderRequest;
 import com.yingshi.server.dto.content.UpdatePostRequest;
@@ -34,6 +35,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Locale;
+import java.util.List;
 
 @AuthRequired
 @Tag(name = "Posts")
@@ -47,6 +49,15 @@ public class PostController {
     public PostController(PostService postService, TrashService trashService) {
         this.postService = postService;
         this.trashService = trashService;
+    }
+
+    @Operation(summary = "Get post detail", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping
+    public ApiResponse<List<PostSummaryDto>> listPosts(
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), postService.listPosts(currentUser));
     }
 
     @Operation(summary = "Get post detail", security = @SecurityRequirement(name = "bearerAuth"))

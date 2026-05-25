@@ -16,4 +16,8 @@ public interface PostRepository extends JpaRepository<PostEntity, String> {
     List<PostEntity> findByLibraryIdAndIdIn(String libraryId, Collection<String> ids);
 
     List<PostEntity> findByLibraryIdAndIdInAndDeletedAtIsNull(String libraryId, Collection<String> ids);
+
+    List<PostEntity> findByLibraryIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(String libraryId);
+
+    List<PostEntity> findByLibraryIdAndDeletedAtIsNullOrderByUpdatedAtDesc(String libraryId);
 }

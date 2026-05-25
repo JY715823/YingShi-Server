@@ -1,35 +1,16 @@
-# API Overview Draft
+# API 契约总览
 
-## Status
-- Stage 11.1 draft only
-- no live backend required
-- no final auth or pagination behavior locked yet
+更新时间：2026-05-25
 
-## Purpose
-This document defines the first client-side API boundary for future backend integration.
-The goal is to keep UI models separate from transport models while preserving the current fake-first app flow.
+## 状态
 
-## Stage 12.5 Viewer Sync
-- Android Viewer 以 `thumbnailUrl -> mediaUrl -> originalUrl` 作为图片预览优先级。
-- `originalUrl` 为空，或与当前预览图地址相同，都视为“没有独立原图资源”，客户端会隐藏原图按钮。
-- `postIds` 仍是 Viewer 所属帖子跳转的最小后端契约。
-- 系统媒体 Viewer 不消费帖子评论、所属帖子、原图按钮等 app 内容专属字段。
+- 当前文档描述的是 `yingshi-server` 与 Android `REAL` 模式的联调基线
+- 照片主链路、回收站、上传主链路已经稳定可用
+- 通知、头像、refresh-token、帖子列表和上传任务接口都已补齐
 
-## Base URL
-- placeholder only: `https://api-placeholder.yingshi.local/`
-- must be configurable
-- must not hardcode a production server
+## 通用约定
 
-## Auth
-- bearer token placeholder
-- request header draft:
-  - `Authorization: Bearer <token>`
-- auth contract details now live in `auth-api.md`
-- token acquisition and refresh remain placeholder-only in Stage 11.2
-
-## Envelope Draft
-
-Successful response draft:
+- 成功响应：
 
 ```json
 {
@@ -44,68 +25,124 @@ Successful response draft:
 }
 ```
 
-Error response draft:
+- 失败响应：
 
 ```json
 {
   "requestId": "req_123",
   "error": {
-    "code": "NOT_IMPLEMENTED",
-    "message": "Placeholder error",
+    "code": "SERVER_ERROR",
+    "message": "Something went wrong",
     "details": null
   }
 }
 ```
 
-## Naming Rules
-- JSON fields use `camelCase`
-- IDs use string form such as `mediaId`, `postId`, `commentId`
-- timestamps use UTC milliseconds or ISO-8601 string
-- booleans use explicit names such as `isDeleted`, `isRead`, `hasMore`
+- JSON 字段使用 `camelCase`
+- 资源 ID 使用字符串
+- 时间字段使用毫秒时间戳
+- 受保护接口统一使用 bearer auth
 
-## Pagination Draft
-- page-number and cursor styles are both reserved
-- list endpoints in Stage 11.1 expose placeholder params:
-  - `page`
-  - `pageSize`
-  - `cursor`
-- final backend can choose one style later, but the contract docs should mention the placeholder path now
+## 当前已实现接口
 
-## Error Code Placeholders
-- `UNAUTHORIZED`
+### Public
+
+- `GET /api/health`
+- `POST /api/auth/login`
+- `POST /api/auth/refresh-token`
+
+### Authenticated
+
+- `GET /api/auth/me`
+- `PATCH /api/auth/me/profile`
+- `POST /api/auth/logout`
+- `POST /api/auth/me/avatar`
+- `GET /api/auth/avatar/{userId}`
+- `GET /api/albums`
+- `GET /api/albums/{albumId}/posts`
+- `GET /api/posts`
+- `GET /api/posts/{postId}`
+- `POST /api/posts`
+- `PATCH /api/posts/{postId}`
+- `PATCH /api/posts/{postId}/cover`
+- `PATCH /api/posts/{postId}/media-order`
+- `POST /api/posts/{postId}/media`
+- `DELETE /api/posts/{postId}`
+- `DELETE /api/posts/{postId}/media/{mediaId}?deleteMode=directory|system`
+- `GET /api/media/feed`
+- `GET /api/media/files/{mediaId}?variant=original|preview|cover`
+- `DELETE /api/media/{mediaId}`
+- `GET /api/posts/{postId}/comments`
+- `GET /api/media/{mediaId}/comments`
+- `POST /api/posts/{postId}/comments`
+- `POST /api/media/{mediaId}/comments`
+- `PATCH /api/comments/{commentId}`
+- `DELETE /api/comments/{commentId}`
+- `GET /api/trash/items`
+- `GET /api/trash/items/{trashItemId}`
+- `POST /api/trash/items/{trashItemId}/restore`
+- `POST /api/trash/items/{trashItemId}/remove`
+- `POST /api/trash/items/{trashItemId}/purge`
+- `POST /api/trash/items/{trashItemId}/undo-remove`
+- `GET /api/trash/pending-cleanup`
+- `POST /api/uploads/token`
+- `POST /api/uploads/{uploadId}/file`
+- `GET /api/uploads/{uploadId}`
+- `POST /api/uploads/{uploadId}/confirm`
+- `POST /api/uploads/{uploadId}/cancel`
+- `GET /api/notifications`
+- `GET /api/notifications/{notificationId}`
+- `POST /api/notifications/{notificationId}/read`
+- `POST /api/notifications/read-all`
+
+## Android 对齐说明
+
+- Android `REAL` 仓库已经对齐：
+  - `GET /api/posts`
+  - `POST /api/auth/refresh-token`
+  - 上传任务 `status / confirm / cancel`
+- 当前后端已提供、但 Android UI 还未接入的主要能力：
+  - 头像上传 / 头像读取
+  - 通知接口
+
+## 关键联调说明
+
+- 当前 Android 登录恢复完全依赖 `/api/auth/me`
+- `/login` 和 `/me` 已附带共享空间和 `partner` 信息
+- refresh-token 已可用，返回新的 access / refresh token bundle
+- 媒体文件接口当前支持：
+  - `variant=original`
+  - `variant=preview`
+  - `variant=cover`
+- 媒体文件接口支持 range request，便于视频播放和局部读取
+- 回收站已经支持完整恢复和永久删除语义
+- 上传当前是“申请 token -> multipart 上传文件 -> 任务状态/收尾”的链路
+
+## 分页说明
+
+- `GET /api/media/feed`
+  - 不带 `cursor / pageSize` 时返回简单列表
+  - 带参数时返回 `page.nextCursor / page.hasMore`
+- `GET /api/trash/items` 使用 `page / size`
+- 评论列表使用 `page / size`
+- `GET /api/notifications` 使用 `limit`
+
+## 常见错误码
+
+- `AUTH_INVALID_CREDENTIALS`
+- `AUTH_TOKEN_EXPIRED`
+- `AUTH_UNAUTHORIZED`
+- `AUTH_SESSION_INVALID`
+- `ALBUM_NOT_FOUND`
+- `POST_NOT_FOUND`
+- `MEDIA_NOT_FOUND`
+- `COMMENT_NOT_FOUND`
+- `DELETE_CONFLICT`
+- `RESTORE_CONFLICT`
+- `REMOVE_FROM_TRASH_CONFLICT`
+- `UNDO_REMOVE_EXPIRED`
+- `UPLOAD_ALREADY_COMPLETED`
+- `UPLOAD_NOT_FOUND`
 - `FORBIDDEN`
-- `NOT_FOUND`
 - `VALIDATION_ERROR`
-- `RATE_LIMITED`
 - `SERVER_ERROR`
-- `NOT_IMPLEMENTED`
-
-## Stage 11.1 Draft-Only APIs
-- upload token issue and upload completion
-- delete / restore mutations
-- comment create / update / delete
-- notification APIs are not part of this contract pass yet
-## Stage 12.3 约定补充
-
-- Media feed 只面向已经进入内容主链路的媒体，未挂帖媒体不属于主照片流返回范围。
-- 删除媒体时如果会让帖子变成空帖，服务端返回 `409 DELETE_CONFLICT`，由客户端展示空帖保护提示。
-- 系统媒体批量导入属于“先上传、再挂帖”的两阶段动作，客户端应在第二阶段成功后再视为最终完成。
-## Stage 12.4 Client Cleanup Note
-
-- Stage 12.4 does not introduce server API changes.
-- Android now expects media URL normalization and media kind fallback to stay contract-compatible across `mediaType/type`, `url/mediaUrl`, `previewUrl/thumbnailUrl`, and `videoUrl/originalUrl`.
-
-
-## Stage 12.6 Add-Flow Note
-
-- Android ?????????????????????????
-  1. ?????????
-  2. ??????????????
-- ???????????????????????????????????????????????
-- ???????????????????????????????????????????????????????
-
-## Stage 12.7 Performance Note
-
-- No new server API is introduced in this pass.
-- Preview-sized media URLs should remain stable and cheap for list rendering.
-- Comment mutations are treated as lightweight UI updates on Android and should not imply a mandatory full media-feed reload contract.

@@ -6,6 +6,8 @@ import com.yingshi.server.common.auth.CurrentUser;
 import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.upload.UploadCompleteResponse;
+import com.yingshi.server.dto.upload.UploadConfirmRequest;
+import com.yingshi.server.dto.upload.UploadTaskResponse;
 import com.yingshi.server.dto.upload.UploadTokenRequest;
 import com.yingshi.server.dto.upload.UploadTokenResponse;
 import com.yingshi.server.service.upload.UploadService;
@@ -14,6 +16,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -53,6 +56,43 @@ public class UploadController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), uploadService.uploadFile(uploadId, file, currentUser));
+    }
+
+    @Operation(summary = "Get upload task status", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping("/{uploadId}")
+    public ApiResponse<UploadTaskResponse> getUploadTask(
+            @PathVariable String uploadId,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), uploadService.getUploadTask(uploadId, currentUser));
+    }
+
+    @Operation(summary = "Confirm upload task", security = @SecurityRequirement(name = "bearerAuth"))
+    @PostMapping("/{uploadId}/confirm")
+    public ApiResponse<UploadTaskResponse> confirmUpload(
+            @PathVariable String uploadId,
+            @RequestBody(required = false) UploadConfirmRequest requestBody,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        UploadConfirmRequest normalizedRequest = requestBody == null
+                ? new UploadConfirmRequest(null, null)
+                : requestBody;
+        return ApiResponse.success(
+                requestId(request),
+                uploadService.confirmUpload(uploadId, normalizedRequest, currentUser)
+        );
+    }
+
+    @Operation(summary = "Cancel upload task", security = @SecurityRequirement(name = "bearerAuth"))
+    @PostMapping("/{uploadId}/cancel")
+    public ApiResponse<UploadTaskResponse> cancelUpload(
+            @PathVariable String uploadId,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), uploadService.cancelUpload(uploadId, currentUser));
     }
 
     private String requestId(HttpServletRequest request) {

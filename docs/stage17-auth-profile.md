@@ -2,6 +2,8 @@
 
 ## Scope
 
+> Historical note: this document records the original Stage 17 scope. Later stages have since added refresh-token exchange and avatar upload. For current truth, use `docs/contracts/auth-api.md`.
+
 Stage 17 now includes three connected parts:
 
 - REAL-mode account/password login
@@ -10,7 +12,7 @@ Stage 17 now includes three connected parts:
 
 This app is currently intended only for two fixed users, so this stage does not introduce a generic relationship system, invite flow, binding review, unbind flow, or multi-space organization model.
 
-Out of scope: registration, password reset, refresh-token exchange, third-party login, avatar upload, chat, direct MinIO access from Android, and any media read/upload contract changes.
+Out of scope at Stage 17 time: registration, password reset, third-party login, chat, direct MinIO access from Android, and any media read/upload contract changes. Refresh-token exchange and avatar upload were added later.
 
 ## Fixed Shared Space
 

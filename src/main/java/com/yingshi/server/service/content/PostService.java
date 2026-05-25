@@ -14,6 +14,7 @@ import com.yingshi.server.dto.content.CreatePostRequest;
 import com.yingshi.server.dto.content.MediaDto;
 import com.yingshi.server.dto.content.PostDetailDto;
 import com.yingshi.server.dto.content.PostMediaDto;
+import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.dto.content.UpdatePostCoverRequest;
 import com.yingshi.server.dto.content.UpdatePostMediaOrderRequest;
 import com.yingshi.server.dto.content.UpdatePostRequest;
@@ -65,6 +66,13 @@ public class PostService {
         this.postMediaRepository = postMediaRepository;
         this.postAlbumRepository = postAlbumRepository;
         this.contentMapper = contentMapper;
+    }
+
+    @Transactional(readOnly = true)
+    public List<PostSummaryDto> listPosts(AuthenticatedUser currentUser) {
+        String libraryId = currentUser.libraryId();
+        List<PostEntity> posts = postRepository.findByLibraryIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(libraryId);
+        return buildPostSummaries(posts);
     }
 
     @Transactional(readOnly = true)
@@ -336,6 +344,36 @@ public class PostService {
                 .orElse(null);
 
         return contentMapper.toPostDetailDto(post, albumIds, resolvedCoverMediaId, mediaItems.size(), mediaItems);
+    }
+
+    private List<PostSummaryDto> buildPostSummaries(List<PostEntity> posts) {
+        if (posts.isEmpty()) {
+            return List.of();
+        }
+        String libraryId = posts.get(0).getLibraryId();
+        Set<String> postIds = posts.stream().map(PostEntity::getId).collect(Collectors.toSet());
+        Map<String, List<String>> albumIdsByPostId = new LinkedHashMap<>();
+        for (PostAlbumEntity relation : postAlbumRepository.findByLibraryIdAndPostIdIn(libraryId, postIds)) {
+            albumIdsByPostId.computeIfAbsent(relation.getPostId(), key -> new ArrayList<>()).add(relation.getAlbumId());
+        }
+        Map<String, Long> mediaCountByPostId = postMediaRepository.findByLibraryIdAndPostIdIn(libraryId, postIds)
+                .stream()
+                .collect(Collectors.groupingBy(PostMediaEntity::getPostId, Collectors.counting()));
+
+        List<PostSummaryDto> results = new ArrayList<>();
+        for (PostEntity post : posts) {
+            List<String> albumIds = albumIdsByPostId.getOrDefault(post.getId(), List.of())
+                    .stream()
+                    .sorted(String::compareTo)
+                    .toList();
+            results.add(contentMapper.toPostSummaryDto(
+                    post,
+                    albumIds,
+                    post.getCoverMediaId(),
+                    mediaCountByPostId.getOrDefault(post.getId(), 0L)
+            ));
+        }
+        return results;
     }
 
     private String normalizeDisplayTimeSource(String rawSource, String fallback) {

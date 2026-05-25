@@ -5,6 +5,7 @@ import com.yingshi.server.domain.CommentTargetType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import java.util.List;
 import java.util.Optional;
 
 public interface CommentRepository extends JpaRepository<CommentEntity, String> {
@@ -24,6 +25,8 @@ public interface CommentRepository extends JpaRepository<CommentEntity, String> 
     );
 
     Optional<CommentEntity> findByIdAndLibraryId(String id, String libraryId);
+
+    List<CommentEntity> findByLibraryIdOrderByCreatedAtDesc(String libraryId);
 
     void deleteByLibraryIdAndPostId(String libraryId, String postId);
 

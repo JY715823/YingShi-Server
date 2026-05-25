@@ -8,4 +8,6 @@ import java.util.Optional;
 public interface UploadTaskRepository extends JpaRepository<UploadTaskEntity, String> {
 
     Optional<UploadTaskEntity> findByIdAndLibraryId(String id, String libraryId);
+
+    java.util.List<UploadTaskEntity> findByLibraryIdOrderByUpdatedAtDesc(String libraryId);
 }

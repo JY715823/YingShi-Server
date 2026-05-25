@@ -21,6 +21,8 @@ import java.awt.Graphics2D;
 import java.awt.Color;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -183,6 +185,51 @@ public class LocalMediaStorageService {
 
     public String originalObjectKey(String storagePath) {
         return ObjectKeyPolicy.tryNormalizeRelativeObjectKey(storagePath);
+    }
+
+    public String avatarStoragePath(String userId) {
+        return "avatars/" + userId + ".jpg";
+    }
+
+    public String storeAvatarImage(String userId, MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "Avatar file must not be empty.");
+        }
+        try (InputStream inputStream = file.getInputStream()) {
+            BufferedImage sourceImage = ImageIO.read(inputStream);
+            if (sourceImage == null || sourceImage.getWidth() <= 0 || sourceImage.getHeight() <= 0) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "Avatar file must be a readable image.");
+            }
+
+            BufferedImage normalizedImage = new BufferedImage(
+                    sourceImage.getWidth(),
+                    sourceImage.getHeight(),
+                    BufferedImage.TYPE_INT_RGB
+            );
+            Graphics2D graphics = normalizedImage.createGraphics();
+            try {
+                graphics.setColor(Color.WHITE);
+                graphics.fillRect(0, 0, normalizedImage.getWidth(), normalizedImage.getHeight());
+                graphics.drawImage(sourceImage, 0, 0, null);
+            } finally {
+                graphics.dispose();
+            }
+
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            if (!ImageIO.write(normalizedImage, "jpg", outputStream)) {
+                throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to encode avatar image.");
+            }
+            byte[] bytes = outputStream.toByteArray();
+            objectStorageService.put(
+                    avatarStoragePath(userId),
+                    "image/jpeg",
+                    (long) bytes.length,
+                    new ByteArrayInputStream(bytes)
+            );
+            return avatarStoragePath(userId);
+        } catch (IOException exception) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to store avatar image.");
+        }
     }
 
     public String imagePreviewObjectKey(String storagePath, String cacheKey, int maxDimension) {

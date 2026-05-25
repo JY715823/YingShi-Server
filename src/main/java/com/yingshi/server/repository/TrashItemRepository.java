@@ -30,4 +30,6 @@ public interface TrashItemRepository extends JpaRepository<TrashItemEntity, Stri
             TrashItemState state,
             TrashItemType itemType
     );
+
+    List<TrashItemEntity> findByLibraryIdOrderByUpdatedAtDesc(String libraryId);
 }
