@@ -1,6 +1,6 @@
-# Upload API Contract
+﻿# Upload API Contract
 
-更新时间：2026-05-25
+更新时间：2026-05-31
 
 ## 状态
 
@@ -16,7 +16,6 @@
   1. `POST /token`
   2. `POST /{uploadId}/file`
   3. 任务 `status / confirm / cancel`
-- `confirm` 当前是上传任务收尾 / 状态确认接口，不会再次创建媒体
 
 ## 1. `POST /api/uploads/token`
 
@@ -39,11 +38,6 @@
 }
 ```
 
-说明：
-
-- 时间元数据字段都是可选的
-- 若 `displayTimeMillis` 为空，服务端会回退到 `capturedAtMillis`，再回退到 `importedAtMillis`
-
 响应 `data`：
 
 ```json
@@ -57,11 +51,6 @@
 ```
 
 ## 2. `POST /api/uploads/{uploadId}/file`
-
-请求：
-
-- content type: `multipart/form-data`
-- 表单字段名必须是 `file`
 
 响应 `data`：
 
@@ -86,15 +75,15 @@
     "capturedAtMillis": 1777416000000,
     "importedAtMillis": 1777416400000,
     "displayTimeSource": "ORIGINAL",
-    "postIds": []
+    "smallAlbumIds": []
   }
 }
 ```
 
 说明：
 
-- 上传成功后立刻创建一条 `Media` 记录
-- `postIds` 允许为空，表示媒体已导入但尚未挂帖
+- 上传成功后立刻创建一条媒体记录
+- `smallAlbumIds` 允许为空，表示媒体已导入但尚未加入任何小相册
 
 ## 3. `GET /api/uploads/{uploadId}`
 
@@ -123,51 +112,16 @@
 }
 ```
 
-响应：
-
-- 返回 `UploadTaskResponse`
-
-说明：
-
-- 已经 `success` 的任务上，当前接口是幂等状态确认
-- `waiting` 状态下如提供 `objectKey`，服务端会做可选存在性校验
-
 ## 5. `POST /api/uploads/{uploadId}/cancel`
 
-响应：
-
-- 返回 `UploadTaskResponse`
-
-说明：
-
 - 未完成任务可取消，取消后状态变为 `cancelled`
-- 已经 `success` 的任务不能再取消
-
-## 当前本地存储布局
-
-- `local-storage/originals/yyyy/MM/{mediaId}.{ext}`
-- `local-storage/previews/yyyy/MM/{mediaId}-720.jpg`
-- `local-storage/test/...`
-- `local-storage/tmp/uploads/...`
-- `local-storage/videos/posters/...`
-
-## 当前上传限制
-
-- `spring.servlet.multipart.max-file-size = 1024MB`
-- `spring.servlet.multipart.max-request-size = 1100MB`
 
 ## Android 当前使用方式
 
-- 底部 `上传媒体`
-- 系统媒体 `导入到 App`
-- 系统媒体创建帖子
-- 系统媒体加入已有帖子
+- 导入到 App
+- 系统媒体创建小相册
+- 系统媒体加入已有小相册
 - 传输中心取消任务 / 上传收尾
-
-## 当前未实现能力
-
-- 云存储直传
-- 转码 / CDN / 对象存储回调
 
 ## 错误码
 

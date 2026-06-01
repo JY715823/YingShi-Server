@@ -1,9 +1,11 @@
 package com.yingshi.server.dto.content;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import java.util.List;
 
 public record PostDetailDto(
-        String postId,
+        String smallAlbumId,
         String title,
         String summary,
         String contributorLabel,
@@ -11,9 +13,18 @@ public record PostDetailDto(
         Long eventStartedAtMillis,
         Long eventEndedAtMillis,
         String displayTimeSource,
-        List<String> albumIds,
+        String albumId,
         String coverMediaId,
         long mediaCount,
         List<PostMediaDto> mediaItems
 ) {
+    @JsonIgnore
+    public String postId() {
+        return smallAlbumId;
+    }
+
+    @JsonIgnore
+    public List<String> albumIds() {
+        return List.of(albumId);
+    }
 }

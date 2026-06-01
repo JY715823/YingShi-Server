@@ -20,7 +20,6 @@ import com.yingshi.server.dto.trash.TrashPageResponse;
 import com.yingshi.server.mapper.TrashMapper;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.CommentRepository;
-import com.yingshi.server.repository.PostAlbumRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.TrashItemRepository;
@@ -54,7 +53,6 @@ public class TrashService {
     private final PostRepository postRepository;
     private final MediaRepository mediaRepository;
     private final PostMediaRepository postMediaRepository;
-    private final PostAlbumRepository postAlbumRepository;
     private final CommentRepository commentRepository;
     private final TrashMapper trashMapper;
     private final LocalMediaStorageService localMediaStorageService;
@@ -65,7 +63,6 @@ public class TrashService {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository,
             CommentRepository commentRepository,
             TrashMapper trashMapper,
             LocalMediaStorageService localMediaStorageService
@@ -74,7 +71,6 @@ public class TrashService {
         this.postRepository = postRepository;
         this.mediaRepository = mediaRepository;
         this.postMediaRepository = postMediaRepository;
-        this.postAlbumRepository = postAlbumRepository;
         this.commentRepository = commentRepository;
         this.trashMapper = trashMapper;
         this.localMediaStorageService = localMediaStorageService;
@@ -94,11 +90,11 @@ public class TrashService {
 
         TrashItemEntity item = createTrashItem(
                 currentUser.libraryId(),
-                TrashItemType.POST_DELETED,
+                TrashItemType.SMALL_ALBUM_DELETED,
                 postId,
                 null,
                 post.getTitle(),
-                "Post deleted",
+                "Small album deleted",
                 List.of(postId),
                 mediaIds,
                 new PostDeletedSnapshot(postId)
@@ -141,7 +137,7 @@ public class TrashService {
                 postId,
                 mediaId,
                 post.getTitle(),
-                "Media removed from post",
+                "Media removed from small album",
                 List.of(postId),
                 List.of(mediaId),
                 new MediaRemovedSnapshot(postId, mediaId, sortOrder, wasCover)
@@ -205,7 +201,7 @@ public class TrashService {
         }
 
         switch (item.getItemType()) {
-            case POST_DELETED -> restorePostDeleted(item, currentUser.libraryId());
+            case SMALL_ALBUM_DELETED -> restorePostDeleted(item, currentUser.libraryId());
             case MEDIA_REMOVED -> restoreMediaRemoved(item, currentUser.libraryId());
             case MEDIA_SYSTEM_DELETED -> restoreMediaSystemDeleted(item, currentUser.libraryId());
             default -> throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.RESTORE_CONFLICT, "Unsupported trash item type.");
@@ -239,14 +235,22 @@ public class TrashService {
         }
 
         TrashItemDto itemDto = toTrashItemDto(item);
-        switch (item.getItemType()) {
-            case POST_DELETED -> purgePostDeleted(item, currentUser.libraryId());
-            case MEDIA_REMOVED -> purgeMediaRemoved(item);
-            case MEDIA_SYSTEM_DELETED -> purgeMediaSystemDeleted(item, currentUser.libraryId());
-            default -> throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Unsupported trash item type.");
-        }
+        purgeItemData(item, currentUser.libraryId());
         trashItemRepository.delete(item);
         return itemDto;
+    }
+
+    @Transactional
+    public void purgeExpiredPendingCleanupItem(String trashItemId, String libraryId) {
+        TrashItemEntity item = requireTrashItem(trashItemId, libraryId);
+        if (item.getState() != TrashItemState.PENDING_CLEANUP) {
+            return;
+        }
+        if (item.getUndoDeadlineAt() == null || item.getUndoDeadlineAt().isAfter(Instant.now())) {
+            return;
+        }
+        purgeItemData(item, libraryId);
+        trashItemRepository.delete(item);
     }
 
     @Transactional
@@ -343,7 +347,7 @@ public class TrashService {
     private void restoreMediaRemoved(TrashItemEntity item, String libraryId) {
         MediaRemovedSnapshot snapshot = readSnapshot(item.getSnapshotJson(), MediaRemovedSnapshot.class);
         PostEntity post = postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(snapshot.postId(), libraryId)
-                .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "原帖子不可用，无法恢复到原帖子"));
+                .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "原小相册不可用，无法恢复到原小相册"));
         requireActiveMedia(snapshot.mediaId(), libraryId);
         if (!postMediaRepository.existsByLibraryIdAndPostIdAndMediaId(libraryId, snapshot.postId(), snapshot.mediaId())) {
             restoreRelationOrder(libraryId, snapshot.postId(), snapshot.mediaId(), snapshot.sortOrder());
@@ -386,7 +390,6 @@ public class TrashService {
         PostDeletedSnapshot snapshot = readSnapshot(item.getSnapshotJson(), PostDeletedSnapshot.class);
         purgeMediaRemovedItemsForPost(libraryId, snapshot.postId());
         postMediaRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.postId());
-        postAlbumRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.postId());
         commentRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.postId());
         postRepository.findByIdAndLibraryId(snapshot.postId(), libraryId).ifPresent(postRepository::delete);
     }
@@ -416,6 +419,15 @@ public class TrashService {
         trashItemRepository.deleteAll(mediaRemovedItems.stream()
                 .filter(mediaRemovedItem -> postId.equals(mediaRemovedItem.getSourcePostId()))
                 .toList());
+    }
+
+    private void purgeItemData(TrashItemEntity item, String libraryId) {
+        switch (item.getItemType()) {
+            case SMALL_ALBUM_DELETED -> purgePostDeleted(item, libraryId);
+            case MEDIA_REMOVED -> purgeMediaRemoved(item);
+            case MEDIA_SYSTEM_DELETED -> purgeMediaSystemDeleted(item, libraryId);
+            default -> throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Unsupported trash item type.");
+        }
     }
 
     private TrashItemEntity createTrashItem(
@@ -465,7 +477,7 @@ public class TrashService {
         postMediaRepository.flush();
 
         PostMediaEntity restoredRelation = new PostMediaEntity();
-        restoredRelation.setId(IdGenerator.newId("post_media"));
+        restoredRelation.setId(IdGenerator.newId("small_album_media"));
         restoredRelation.setLibraryId(libraryId);
         restoredRelation.setPostId(postId);
         restoredRelation.setMediaId(mediaId);
@@ -480,7 +492,7 @@ public class TrashService {
 
     private PostEntity requireActivePost(String postId, String libraryId) {
         return postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(postId, libraryId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.POST_NOT_FOUND, "Post was not found."));
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.SMALL_ALBUM_NOT_FOUND, "Small album was not found."));
     }
 
     private MediaEntity requireActiveMedia(String mediaId, String libraryId) {
@@ -509,7 +521,7 @@ public class TrashService {
                 .filter(mediaId -> !removedMediaIds.contains(mediaId))
                 .count();
         if (remainingVisibleMediaCount <= 0) {
-            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.DELETE_CONFLICT, "This action would leave the post empty; delete the whole post or keep at least one media item.");
+            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.DELETE_CONFLICT, "This action would leave the small album empty; delete the whole small album or keep at least one media item.");
         }
     }
 

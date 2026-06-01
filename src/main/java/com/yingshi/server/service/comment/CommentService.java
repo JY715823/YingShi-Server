@@ -60,7 +60,7 @@ public class CommentService {
         requireReadablePost(postId, currentUser.libraryId());
         Page<CommentEntity> comments = commentRepository.findByLibraryIdAndTargetTypeAndPostId(
                 currentUser.libraryId(),
-                CommentTargetType.POST,
+                CommentTargetType.SMALL_ALBUM,
                 postId,
                 buildPageRequest(page, size)
         );
@@ -86,7 +86,7 @@ public class CommentService {
         comment.setId(IdGenerator.newId("comment"));
         comment.setLibraryId(currentUser.libraryId());
         comment.setAuthorId(currentUser.userId());
-        comment.setTargetType(CommentTargetType.POST);
+        comment.setTargetType(CommentTargetType.SMALL_ALBUM);
         comment.setPostId(postId);
         comment.setContent(request.content().trim());
         return toCommentDto(commentRepository.save(comment));
@@ -111,8 +111,8 @@ public class CommentService {
         if (comment.getDeletedAt() != null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "Deleted comment cannot be edited.");
         }
-        // TODO: notify the original author when another member in the same shared library edits this comment.
         comment.setContent(request.content().trim());
+        comment.setLastEditedByUserId(currentUser.userId().equals(comment.getAuthorId()) ? null : currentUser.userId());
         return toCommentDto(commentRepository.save(comment));
     }
 
@@ -120,8 +120,8 @@ public class CommentService {
     public CommentDto deleteComment(String commentId, AuthenticatedUser currentUser) {
         CommentEntity comment = requireComment(commentId, currentUser.libraryId());
         if (comment.getDeletedAt() == null) {
-            // TODO: notify the original author when another member in the same shared library deletes this comment.
             comment.setDeletedAt(Instant.now());
+            comment.setDeletedByUserId(currentUser.userId().equals(comment.getAuthorId()) ? null : currentUser.userId());
             comment.setContent(null);
             comment = commentRepository.save(comment);
         }
@@ -179,7 +179,7 @@ public class CommentService {
 
     private void requirePost(String postId, String libraryId) {
         if (postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(postId, libraryId).isEmpty()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Post target was not found.");
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Small album target was not found.");
         }
     }
 
@@ -191,7 +191,7 @@ public class CommentService {
 
     private void requireReadablePost(String postId, String libraryId) {
         if (postRepository.findByIdAndLibraryId(postId, libraryId).isEmpty()) {
-            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Post target was not found.");
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Small album target was not found.");
         }
     }
 

@@ -35,16 +35,16 @@ public class CommentController {
         this.commentService = commentService;
     }
 
-    @Operation(summary = "Get post comments", security = @SecurityRequirement(name = "bearerAuth"))
-    @GetMapping("/api/posts/{postId}/comments")
+    @Operation(summary = "Get small album comments", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping("/api/small-albums/{smallAlbumId}/comments")
     public ApiResponse<CommentPageResponse> getPostComments(
-            @PathVariable String postId,
+            @PathVariable String smallAlbumId,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), commentService.getPostComments(postId, page, size, currentUser));
+        return ApiResponse.success(requestId(request), commentService.getPostComments(smallAlbumId, page, size, currentUser));
     }
 
     @Operation(summary = "Get media comments", security = @SecurityRequirement(name = "bearerAuth"))
@@ -59,15 +59,15 @@ public class CommentController {
         return ApiResponse.success(requestId(request), commentService.getMediaComments(mediaId, page, size, currentUser));
     }
 
-    @Operation(summary = "Create post comment", security = @SecurityRequirement(name = "bearerAuth"))
-    @PostMapping("/api/posts/{postId}/comments")
+    @Operation(summary = "Create small album comment", security = @SecurityRequirement(name = "bearerAuth"))
+    @PostMapping("/api/small-albums/{smallAlbumId}/comments")
     public ApiResponse<CommentDto> createPostComment(
-            @PathVariable String postId,
+            @PathVariable String smallAlbumId,
             @Valid @RequestBody CreateCommentRequest requestBody,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), commentService.createPostComment(postId, requestBody, currentUser));
+        return ApiResponse.success(requestId(request), commentService.createPostComment(smallAlbumId, requestBody, currentUser));
     }
 
     @Operation(summary = "Create media comment", security = @SecurityRequirement(name = "bearerAuth"))

@@ -1,37 +1,40 @@
 # Auth API Contract
 
-更新时间：2026-05-25
+Updated: 2026-05-25
 
-## 状态
+## Status
 
-- 已按当前 `yingshi-server` 代码同步
-- 可用于本地开发和 Android `REAL` 模式联调
-- 当前没有 `/v1` 前缀
+- This document matches the current `yingshi-server` code.
+- Base path: `/api/auth`
+- There is no `/v1` prefix yet.
+- `POST /login` and `POST /refresh-token` are public.
+- `GET /me`, `PATCH /me/profile`, `POST /logout`, `POST /me/avatar`, and `GET /avatar/{userId}` require bearer auth.
 
-## 基础规则
+## Shared Demo Model
 
-- 基础路径：`/api/auth`
-- `POST /login`、`POST /refresh-token` 公开访问
-- `GET /me`、`PATCH /me/profile`、`POST /logout`、`POST /me/avatar`、`GET /avatar/{userId}` 要求 bearer auth
-- 当前后端仍是固定双 demo 账号 + 固定共享空间模型
-
-## 固定共享空间模型
-
-当前 seed 账号：
+Seed accounts:
 
 - `demo.a@yingshi.local / demo123456`
 - `demo.b@yingshi.local / demo123456`
 
-当前行为：
+Current behavior:
 
-- 两个账号都属于同一个 `library_shared`
-- 两个账号看到的是同一份共享内容
-- `libraryDisplayName` 当前是 `我们的小空间`
-- `/login` 和 `/me` 都会附带另一个成员的轻量 `partner` 信息
+- both demo users belong to the same shared library `library_shared`
+- both see the same shared content set
+- `/login` and `/me` include lightweight `partner` information
+
+## Token And Session Rules
+
+- Login issues an access token plus a refresh token.
+- Refresh rotates both tokens and updates the persisted server-side auth session.
+- Refresh tokens are backed by table `auth_sessions`.
+- Reusing an old refresh token revokes that session and returns `AUTH_SESSION_INVALID`.
+- Logout revokes the current session, so the current access token can no longer call protected APIs.
+- If `POST /logout` includes a `refreshToken` body field, that refresh token must belong to the same current session.
 
 ## 1. `POST /api/auth/login`
 
-请求：
+Request:
 
 ```json
 {
@@ -40,28 +43,28 @@
 }
 ```
 
-响应 `data`：
+Response `data` shape:
 
 ```json
 {
   "userId": "user_demo_a",
   "account": "demo.a@yingshi.local",
-  "displayName": "映世小屋",
-  "avatarUrl": null,
-  "bio": "把两个人的日常安静收进这里。",
+  "displayName": "Demo A",
+  "avatarUrl": "/api/auth/avatar/user_demo_a",
+  "bio": "Profile bio",
   "libraryId": "library_shared",
-  "libraryDisplayName": "我们的小空间",
+  "libraryDisplayName": "Shared Library",
   "partner": {
     "userId": "user_demo_b",
     "account": "demo.b@yingshi.local",
-    "displayName": "另一半",
+    "displayName": "Demo B",
     "avatarUrl": null,
-    "bio": "把生活里的闪光片段，也把安静和想念一起留下来。"
+    "bio": "Profile bio"
   },
   "createdAtMillis": 1760000000000,
   "updatedAtMillis": 1760000000000,
-  "accessToken": "access-token-placeholder",
-  "refreshToken": "refresh-token-placeholder",
+  "accessToken": "jwt-access-token",
+  "refreshToken": "jwt-refresh-token",
   "accessTokenExpireAtMillis": 1760001800000,
   "refreshTokenExpireAtMillis": 1760604800000
 }
@@ -69,55 +72,55 @@
 
 ## 2. `POST /api/auth/refresh-token`
 
-请求：
+Request:
 
 ```json
 {
-  "refreshToken": "refresh-token-placeholder"
+  "refreshToken": "jwt-refresh-token"
 }
 ```
 
-响应 `data`：
+Response `data`:
 
 ```json
 {
-  "accessToken": "access-token-placeholder-new",
-  "refreshToken": "refresh-token-placeholder-new",
+  "accessToken": "jwt-access-token-new",
+  "refreshToken": "jwt-refresh-token-new",
   "accessTokenExpireAtMillis": 1760005400000,
   "refreshTokenExpireAtMillis": 1760608400000
 }
 ```
 
-说明：
+Notes:
 
-- 会基于 refresh token 重新签发整套 token bundle
-- 当前仍不提供服务端 token revocation 黑名单逻辑
+- the old refresh token becomes invalid immediately after a successful refresh
+- retrying the same old refresh token returns `401 AUTH_SESSION_INVALID`
 
 ## 3. `GET /api/auth/me`
 
-请求头：
+Request header:
 
 ```http
 Authorization: Bearer <accessToken>
 ```
 
-响应 `data`：
+Response `data`:
 
 ```json
 {
   "userId": "user_demo_a",
   "account": "demo.a@yingshi.local",
-  "displayName": "映世小屋",
-  "avatarUrl": null,
-  "bio": "把两个人的日常安静收进这里。",
+  "displayName": "Demo A",
+  "avatarUrl": "/api/auth/avatar/user_demo_a",
+  "bio": "Profile bio",
   "libraryId": "library_shared",
-  "libraryDisplayName": "我们的小空间",
+  "libraryDisplayName": "Shared Library",
   "partner": {
     "userId": "user_demo_b",
     "account": "demo.b@yingshi.local",
-    "displayName": "另一半",
+    "displayName": "Demo B",
     "avatarUrl": null,
-    "bio": "把生活里的闪光片段，也把安静和想念一起留下来。"
+    "bio": "Profile bio"
   },
   "createdAtMillis": 1760000000000,
   "updatedAtMillis": 1760000000000
@@ -126,41 +129,35 @@ Authorization: Bearer <accessToken>
 
 ## 4. `PATCH /api/auth/me/profile`
 
-请求：
+Request:
 
 ```json
 {
-  "displayName": "映世小屋",
-  "bio": "把两个人的日常安静收进这里。"
+  "displayName": "Demo A",
+  "bio": "Updated profile bio"
 }
 ```
 
-校验规则：
+Validation:
 
-- `displayName` 必填，最大 `80`
-- `bio` 可为空，最大 `280`
+- `displayName` is required and capped at `80`
+- `bio` is optional and capped at `280`
 
-响应：
+Response:
 
-- 返回更新后的 `AuthCurrentUserResponse`
-- 结构与 `/api/auth/me` 一致
-
-说明：
-
-- 当前只允许修改当前登录用户自己
-- 不支持通过 path 或 body 指向其他用户
+- returns the same `AuthCurrentUserResponse` shape as `/api/auth/me`
 
 ## 5. `POST /api/auth/logout`
 
-请求体可为空，当前也兼容下面这种占位结构：
+Body may be omitted, or may include the current refresh token:
 
 ```json
 {
-  "refreshToken": "refresh-token-placeholder"
+  "refreshToken": "jwt-refresh-token-new"
 }
 ```
 
-响应 `data`：
+Response `data`:
 
 ```json
 {
@@ -168,47 +165,48 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-说明：
+Notes:
 
-- 当前阶段没有服务端 token 吊销能力
-- Android 端退出登录时仍会本地清 token
+- logout revokes the current auth session
+- the current access token can no longer call `/api/auth/me`
+- a revoked session returns `401 AUTH_SESSION_INVALID`
 
 ## 6. `POST /api/auth/me/avatar`
 
-请求：
+Request:
 
 - content type: `multipart/form-data`
-- 表单字段名必须是 `file`
+- field name must be `file`
 
-响应：
+Response:
 
-- 返回更新后的 `AuthCurrentUserResponse`
-- 成功后 `avatarUrl` 会变成 `/api/auth/avatar/{userId}`
+- returns updated `AuthCurrentUserResponse`
+- `avatarUrl` becomes `/api/auth/avatar/{userId}` after a successful upload
 
-说明：
+Notes:
 
-- 当前只接受可读图片
-- 服务端会统一转成 JPEG
+- the backend currently normalizes avatar content to JPEG
+- Android `REAL` mode now consumes this route for edit-profile avatar upload and profile/avatar display
 
 ## 7. `GET /api/auth/avatar/{userId}`
 
-响应：
+Response:
 
-- `200 image/jpeg`
+- `200 image/jpeg` when an avatar exists
+- `404` when the user has no avatar yet
 
-说明：
+Notes:
 
-- 当前要求 bearer auth
-- 只有当前共享空间成员可读取该头像
-- 未上传头像时返回 `404`
+- bearer auth is required
+- only users inside the same shared library can read the avatar
 
-## 当前未提供的认证能力
+## Not Yet Provided
 
-- 注册
-- 找回密码
-- 第三方登录
+- public registration
+- password reset
+- third-party login
 
-## 错误码
+## Error Codes
 
 - `AUTH_INVALID_CREDENTIALS`
 - `AUTH_TOKEN_EXPIRED`

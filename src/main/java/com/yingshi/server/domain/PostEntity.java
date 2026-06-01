@@ -8,7 +8,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 @Entity
-@Table(name = "posts")
+@Table(name = "small_albums")
 public class PostEntity extends LibraryScopedEntity {
 
     @Id
@@ -19,6 +19,9 @@ public class PostEntity extends LibraryScopedEntity {
 
     @Column(length = 1000)
     private String summary;
+
+    @Column(nullable = false)
+    private String albumId;
 
     @Column(nullable = false)
     private Long displayTimeMillis;
@@ -63,6 +66,14 @@ public class PostEntity extends LibraryScopedEntity {
 
     public void setSummary(String summary) {
         this.summary = summary;
+    }
+
+    public String getAlbumId() {
+        return albumId;
+    }
+
+    public void setAlbumId(String albumId) {
+        this.albumId = albumId;
     }
 
     public Long getDisplayTimeMillis() {

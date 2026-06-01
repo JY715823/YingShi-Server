@@ -1,6 +1,6 @@
 package com.yingshi.server.domain;
 
 public enum CommentTargetType {
-    POST,
+    SMALL_ALBUM,
     MEDIA
 }

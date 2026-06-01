@@ -38,9 +38,9 @@ import java.util.Locale;
 import java.util.List;
 
 @AuthRequired
-@Tag(name = "Posts")
+@Tag(name = "Small Albums")
 @RestController
-@RequestMapping("/api/posts")
+@RequestMapping("/api/small-albums")
 public class PostController {
 
     private final PostService postService;
@@ -51,7 +51,7 @@ public class PostController {
         this.trashService = trashService;
     }
 
-    @Operation(summary = "Get post detail", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(summary = "List small albums", security = @SecurityRequirement(name = "bearerAuth"))
     @GetMapping
     public ApiResponse<List<PostSummaryDto>> listPosts(
             @CurrentUser AuthenticatedUser currentUser,
@@ -60,17 +60,17 @@ public class PostController {
         return ApiResponse.success(requestId(request), postService.listPosts(currentUser));
     }
 
-    @Operation(summary = "Get post detail", security = @SecurityRequirement(name = "bearerAuth"))
-    @GetMapping("/{postId}")
+    @Operation(summary = "Get small album detail", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping("/{smallAlbumId}")
     public ApiResponse<PostDetailDto> getPost(
-            @PathVariable String postId,
+            @PathVariable String smallAlbumId,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), postService.getPostDetail(postId, currentUser));
+        return ApiResponse.success(requestId(request), postService.getPostDetail(smallAlbumId, currentUser));
     }
 
-    @Operation(summary = "Create post", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(summary = "Create small album", security = @SecurityRequirement(name = "bearerAuth"))
     @PostMapping
     public ApiResponse<PostDetailDto> createPost(
             @Valid @RequestBody CreatePostRequest createPostRequest,
@@ -80,64 +80,64 @@ public class PostController {
         return ApiResponse.success(requestId(request), postService.createPost(createPostRequest, currentUser));
     }
 
-    @Operation(summary = "Update post", security = @SecurityRequirement(name = "bearerAuth"))
-    @PatchMapping("/{postId}")
+    @Operation(summary = "Update small album", security = @SecurityRequirement(name = "bearerAuth"))
+    @PatchMapping("/{smallAlbumId}")
     public ApiResponse<PostDetailDto> updatePost(
-            @PathVariable String postId,
+            @PathVariable String smallAlbumId,
             @Valid @RequestBody UpdatePostRequest updatePostRequest,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), postService.updatePost(postId, updatePostRequest, currentUser));
+        return ApiResponse.success(requestId(request), postService.updatePost(smallAlbumId, updatePostRequest, currentUser));
     }
 
-    @Operation(summary = "Update post cover", security = @SecurityRequirement(name = "bearerAuth"))
-    @PatchMapping("/{postId}/cover")
+    @Operation(summary = "Update small album cover", security = @SecurityRequirement(name = "bearerAuth"))
+    @PatchMapping("/{smallAlbumId}/cover")
     public ApiResponse<PostDetailDto> updateCover(
-            @PathVariable String postId,
+            @PathVariable String smallAlbumId,
             @Valid @RequestBody UpdatePostCoverRequest updatePostCoverRequest,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), postService.updatePostCover(postId, updatePostCoverRequest, currentUser));
+        return ApiResponse.success(requestId(request), postService.updatePostCover(smallAlbumId, updatePostCoverRequest, currentUser));
     }
 
-    @Operation(summary = "Update post media order", security = @SecurityRequirement(name = "bearerAuth"))
-    @PatchMapping("/{postId}/media-order")
+    @Operation(summary = "Update small album media order", security = @SecurityRequirement(name = "bearerAuth"))
+    @PatchMapping("/{smallAlbumId}/media-order")
     public ApiResponse<PostDetailDto> updateMediaOrder(
-            @PathVariable String postId,
+            @PathVariable String smallAlbumId,
             @Valid @RequestBody UpdatePostMediaOrderRequest updatePostMediaOrderRequest,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), postService.updatePostMediaOrder(postId, updatePostMediaOrderRequest, currentUser));
+        return ApiResponse.success(requestId(request), postService.updatePostMediaOrder(smallAlbumId, updatePostMediaOrderRequest, currentUser));
     }
 
-    @Operation(summary = "Add media to post", security = @SecurityRequirement(name = "bearerAuth"))
-    @PostMapping("/{postId}/media")
+    @Operation(summary = "Add media to small album", security = @SecurityRequirement(name = "bearerAuth"))
+    @PostMapping("/{smallAlbumId}/media")
     public ApiResponse<PostDetailDto> addMediaToPost(
-            @PathVariable String postId,
+            @PathVariable String smallAlbumId,
             @Valid @RequestBody AddPostMediaRequest requestBody,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), postService.addMediaToPost(postId, requestBody, currentUser));
+        return ApiResponse.success(requestId(request), postService.addMediaToPost(smallAlbumId, requestBody, currentUser));
     }
 
-    @Operation(summary = "Delete post to trash", security = @SecurityRequirement(name = "bearerAuth"))
-    @DeleteMapping("/{postId}")
+    @Operation(summary = "Delete small album to trash", security = @SecurityRequirement(name = "bearerAuth"))
+    @DeleteMapping("/{smallAlbumId}")
     public ApiResponse<TrashItemDto> deletePost(
-            @PathVariable String postId,
+            @PathVariable String smallAlbumId,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), trashService.deletePost(postId, currentUser));
+        return ApiResponse.success(requestId(request), trashService.deletePost(smallAlbumId, currentUser));
     }
 
-    @Operation(summary = "Delete post media", security = @SecurityRequirement(name = "bearerAuth"))
-    @DeleteMapping("/{postId}/media/{mediaId}")
+    @Operation(summary = "Delete small album media", security = @SecurityRequirement(name = "bearerAuth"))
+    @DeleteMapping("/{smallAlbumId}/media/{mediaId}")
     public ApiResponse<TrashItemDto> deletePostMedia(
-            @PathVariable String postId,
+            @PathVariable String smallAlbumId,
             @PathVariable String mediaId,
             @RequestParam String deleteMode,
             @CurrentUser AuthenticatedUser currentUser,
@@ -145,7 +145,7 @@ public class PostController {
     ) {
         return ApiResponse.success(
                 requestId(request),
-                trashService.deletePostMedia(postId, mediaId, parseDeleteMode(deleteMode), currentUser)
+                trashService.deletePostMedia(smallAlbumId, mediaId, parseDeleteMode(deleteMode), currentUser)
         );
     }
 

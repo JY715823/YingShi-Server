@@ -1,5 +1,6 @@
 package com.yingshi.server.dto.content;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -27,12 +28,16 @@ public record CreatePostRequest(
         @Size(max = 20, message = "displayTimeSource must be at most 20 characters.")
         String displayTimeSource,
 
-        @jakarta.validation.constraints.NotEmpty(message = "albumIds is required.")
-        List<@NotBlank(message = "albumId is required.") String> albumIds,
+        @NotBlank(message = "albumId is required.")
+        String albumId,
 
         @NotNull(message = "initialMediaIds is required.")
         List<@NotBlank(message = "mediaId is required.") String> initialMediaIds,
 
         String coverMediaId
 ) {
+    @JsonIgnore
+    public List<String> albumIds() {
+        return List.of(albumId);
+    }
 }

@@ -1,188 +1,163 @@
 # Frontend Backend Testing Guide
 
-更新时间：2026-05-25
+Updated: 2026-05-25
 
 ## Scope
 
 - backend repo: `E:\Study\App\YingShi-Server`
 - paired Android repo: `E:\Study\App\YingShi`
-- current backend smoke script: `scripts/integration-smoke.ps1`
-- current Android diagnostics entry: `我的 -> 设置 -> 后端联调诊断`
 
-## Seed Account
+## Choose The Backend Mode First
 
-- account: `demo.a@yingshi.local`
-- password: `demo123456`
-- alternate account: `demo.b@yingshi.local`
-- alternate password: `demo123456`
+Fast local bootstrap:
 
-## 1. Start the Backend
+- profile: `dev`
+- database: H2
+- storage: `local-storage`
+- start: `.\mvnw.cmd spring-boot:run`
 
-Requirements:
+Recommended Android integration mode:
 
-- Java 17 or newer
-- local port `8080` available
+- profile: `docker-local`
+- database: PostgreSQL in Docker
+- storage: MinIO in Docker
+- dependency start: `docker compose up -d postgres minio minio-init`
+- backend process: IDEA on Windows
 
-Run from the repo root:
+## Seed Accounts
 
-```powershell
-.\mvnw.cmd spring-boot:run
-```
+- `demo.a@yingshi.local / demo123456`
+- `demo.b@yingshi.local / demo123456`
 
-Recommended preflight:
+## Backend Preflight
+
+From the backend repo root:
 
 ```powershell
 .\mvnw.cmd test
 ```
 
-Current local assumptions:
+For cloudlike mode:
 
-- Spring profile defaults to `dev`
-- `dev` uses file-based H2 + `local-storage`
-- uploaded files are written under `local-storage`
-- multipart limits are currently:
-  - `1024MB` per file
-  - `1100MB` per request
+```powershell
+Copy-Item .env.example .env
+docker compose up -d postgres minio minio-init
+```
 
-Useful local URLs in `dev`:
+Health URL:
+
+```text
+http://localhost:8080/api/health
+```
+
+## Backend Smoke Options
+
+Default integration smoke for the current backend API surface:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\integration-smoke.ps1
+```
+
+Cloudlike storage smoke for PostgreSQL + MinIO mode:
+
+```powershell
+.\scripts\stage16-cloudlike-smoke.ps1 -BaseUrl http://127.0.0.1:8080
+```
+
+Daily cloudlike environment check:
+
+```powershell
+.\scripts\stage16-cloudlike-check.ps1
+```
+
+## Android Base URL Rules
+
+Android emulator:
+
+```text
+http://10.0.2.2:8080/
+```
+
+Physical phone on the same Wi-Fi:
+
+```text
+http://<your-pc-ip>:8080/
+```
+
+Do not use `127.0.0.1` on a physical phone. That usually points back to the phone itself.
+
+## Android Diagnostics Page
+
+Current entry:
+
+1. Open the app
+2. Go to `My`
+3. Open `Settings`
+4. Open `Backend Debug Diagnostics`
+
+Current page responsibilities:
+
+- show and edit `Base URL`
+- apply emulator and loopback presets
+- save and relogin the seeded demo account
+- clear local auth cache
+- switch `FAKE / REAL`
+- run a minimal health check
+- show the latest result
+
+The page is intentionally lightweight. Full backend coverage should rely on backend smoke scripts or real target pages.
+
+## Features Already Aligned With Android `REAL`
+
+- auth login / refresh / logout / current-user / profile update
+- shared-library and partner display
+- albums and posts list/detail flows
+- media feed and backend media-file delivery
+- post/media comments create/edit/delete
+- notifications list/detail/read/mark-all-read
+- uploads token + multipart file upload + task status + confirm + cancel
+- trash list/detail/restore/remove/purge/undo-remove/pending-cleanup
+
+## Known Intentional Gaps
+
+- Android life page now contains ledger and chat viewer only; the anniversary entry is intentionally removed
+- ledger is still intentionally local-only while the user prepares a larger redesign
+
+## Useful Local URLs
+
+In `dev`:
 
 - health: `http://localhost:8080/api/health`
 - Swagger UI: `http://localhost:8080/swagger-ui.html`
 - OpenAPI: `http://localhost:8080/v3/api-docs`
 - H2 console: `http://localhost:8080/h2-console`
 
-## 2. Run the Integration Smoke Script
+In `docker-local`:
 
-Run from the repo root:
+- PostgreSQL: `127.0.0.1:15432`
+- MinIO S3 API: `http://127.0.0.1:9000`
+- MinIO Console: `http://127.0.0.1:9001`
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\integration-smoke.ps1
-```
+## Common Problems
 
-Optional custom base URL:
+`401 AUTH_SESSION_INVALID`
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\integration-smoke.ps1 -BaseUrl http://192.168.1.100:8080
-```
+- old refresh token was reused after rotation
+- the current session was logged out
+- the app is using a stale token from another backend base URL
 
-Current smoke coverage:
+`Port 8080 already in use`
 
-- health
-- login token
-- refresh token
-- me
-- albums
-- album posts
-- posts list
-- post detail
-- post update
-- post cover
-- post media order
-- media feed
-- post comments
-- media comments
-- upload token
-- upload task status
-- local upload
-- upload confirm
-- upload cancel
-- avatar upload / avatar fetch
-- notifications list / detail / read / read-all
-- trash list / detail / restore
-
-Success output:
-
-```text
-Integration smoke completed with 0 failures.
-```
-
-## 3. Android Base URL Facts
-
-Current Android defaults:
-
-- app build default: `http://10.106.3.193:8080/`
-- diagnostics preset for emulator: `http://10.0.2.2:8080/`
-- diagnostics preset for loopback: `http://127.0.0.1:8080/`
-
-Guidance:
-
-- emulator should use `10.0.2.2`
-- physical phone should use the PC LAN IP
-- `127.0.0.1` on a phone usually points back to the phone itself
-
-## 4. Android Diagnostics Page
-
-Current entry path:
-
-1. Open the Android app
-2. Go to `我的`
-3. Open `设置`
-4. Open `后端联调诊断`
-
-Current page capabilities:
-
-- show and edit active `Base URL`
-- apply emulator / loopback presets
-- `保存并重登` seeded demo account
-- clear local auth cache
-- switch `FAKE / REAL`
-- run a minimal `health` check
-- show the latest result
-
-Important:
-
-- this page no longer contains the old combined buttons for albums/media/trash/upload smoke
-- Android notification center is still fake data, so do not use it to verify backend notifications
-- avatar upload is currently backend-ready but not yet exposed in Android UI
-
-## 5. Physical Device Acceptance Flow
-
-1. Start the backend with `.\mvnw.cmd spring-boot:run`
-2. Keep phone and PC on the same Wi-Fi
-3. Find the PC LAN IP with `ipconfig`
-4. Confirm Windows Firewall allows inbound `8080`
-5. Build Android debug
-6. Open `我的 -> 设置 -> 后端联调诊断`
-7. Replace `Base URL` with `http://<your-pc-ip>:8080/`
-8. Tap `保存并重登`
-9. Confirm login succeeds
-10. Tap `检查健康`
-11. Confirm latest result contains `health=UP`
-12. Switch Android to `REAL`
-13. Reopen target pages and verify:
-    - 我的 / 个人资料
-    - 照片流
-    - 相册与帖子详情
-    - 评论
-    - 回收站
-    - 系统媒体上传 / 导入
-
-## 6. Common Problems
-
-`401 AUTH_UNAUTHORIZED`
-
-- token missing
-- token expired after server restart
-- Android logged in against a different base URL
+- another backend or local tool is already using `8080`
+- stop that process or change the backend port
 
 Android emulator cannot connect:
 
 - used `localhost` instead of `10.0.2.2`
-- backend not actually running on `8080`
+- backend is not actually running on `8080`
 
 Android phone cannot connect:
 
 - used `127.0.0.1` instead of the PC LAN IP
 - phone and PC are not on the same Wi-Fi
-- Windows Firewall blocked inbound `8080`
-
-Smoke upload keeps adding media:
-
-- expected while the backend keeps running
-- restart the backend for a clean test state
-
-REAL pages still say “请先到后端联调诊断页登录”:
-
-- Android page was opened before REAL login completed
-- repository mode changed but the page was not reopened
-- backend restarted and old token became invalid
+- Windows Firewall is blocking inbound `8080`

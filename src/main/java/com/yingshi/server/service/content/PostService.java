@@ -6,12 +6,11 @@ import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.domain.AlbumEntity;
 import com.yingshi.server.domain.MediaEntity;
-import com.yingshi.server.domain.PostAlbumEntity;
 import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.dto.content.AddPostMediaRequest;
-import com.yingshi.server.dto.content.CreatePostRequest;
 import com.yingshi.server.dto.content.MediaDto;
+import com.yingshi.server.dto.content.CreatePostRequest;
 import com.yingshi.server.dto.content.PostDetailDto;
 import com.yingshi.server.dto.content.PostMediaDto;
 import com.yingshi.server.dto.content.PostSummaryDto;
@@ -21,7 +20,6 @@ import com.yingshi.server.dto.content.UpdatePostRequest;
 import com.yingshi.server.mapper.ContentMapper;
 import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.MediaRepository;
-import com.yingshi.server.repository.PostAlbumRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import org.springframework.http.HttpStatus;
@@ -30,10 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -49,7 +44,6 @@ public class PostService {
     private final MediaRepository mediaRepository;
     private final AlbumRepository albumRepository;
     private final PostMediaRepository postMediaRepository;
-    private final PostAlbumRepository postAlbumRepository;
     private final ContentMapper contentMapper;
 
     public PostService(
@@ -57,14 +51,12 @@ public class PostService {
             MediaRepository mediaRepository,
             AlbumRepository albumRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository,
             ContentMapper contentMapper
     ) {
         this.postRepository = postRepository;
         this.mediaRepository = mediaRepository;
         this.albumRepository = albumRepository;
         this.postMediaRepository = postMediaRepository;
-        this.postAlbumRepository = postAlbumRepository;
         this.contentMapper = contentMapper;
     }
 
@@ -84,19 +76,19 @@ public class PostService {
     @Transactional
     public PostDetailDto createPost(CreatePostRequest request, AuthenticatedUser currentUser) {
         String libraryId = currentUser.libraryId();
-        validateDistinctIds(request.albumIds(), ErrorCode.ALBUM_ASSIGNMENT_INVALID, "albumIds contains duplicates.");
-        validateDistinctIds(request.initialMediaIds(), ErrorCode.POST_MEDIA_ORDER_INVALID, "initialMediaIds contains duplicates.");
+        validateDistinctIds(request.initialMediaIds(), ErrorCode.SMALL_ALBUM_MEDIA_ORDER_INVALID, "initialMediaIds contains duplicates.");
 
-        List<AlbumEntity> albums = requireAlbums(libraryId, request.albumIds());
+        AlbumEntity album = requireAlbum(libraryId, request.albumId());
         requireMedia(libraryId, request.initialMediaIds());
         String coverMediaId = resolveCoverMediaId(request.coverMediaId(), request.initialMediaIds());
 
         PostEntity post = new PostEntity();
-        post.setId(IdGenerator.newId("post"));
+        post.setId(IdGenerator.newId("small_album"));
         post.setLibraryId(libraryId);
         post.setTitle(request.title().trim());
         post.setSummary(request.summary());
         post.setContributorLabel(normalizeContributorLabel(request.contributorLabel()));
+        post.setAlbumId(album.getId());
         post.setDisplayTimeMillis(request.displayTimeMillis());
         post.setEventStartedAtMillis(request.eventStartedAtMillis() != null ? request.eventStartedAtMillis() : request.displayTimeMillis());
         post.setEventEndedAtMillis(request.eventEndedAtMillis());
@@ -105,7 +97,6 @@ public class PostService {
         postRepository.save(post);
 
         savePostMediaRelations(post.getId(), libraryId, request.initialMediaIds());
-        savePostAlbumRelations(post.getId(), libraryId, albums.stream().map(AlbumEntity::getId).toList());
         return buildPostDetail(post);
     }
 
@@ -137,16 +128,11 @@ public class PostService {
         if (request.displayTimeSource() != null) {
             post.setDisplayTimeSource(normalizeDisplayTimeSource(request.displayTimeSource(), post.getDisplayTimeSource()));
         }
-
-        if (request.albumIds() != null) {
-            validateDistinctIds(request.albumIds(), ErrorCode.ALBUM_ASSIGNMENT_INVALID, "albumIds contains duplicates.");
-            if (request.albumIds().isEmpty()) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.ALBUM_ASSIGNMENT_INVALID, "albumIds must not be empty.");
+        if (request.albumId() != null) {
+            if (request.albumId().isBlank()) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.ALBUM_ASSIGNMENT_INVALID, "albumId must not be blank.");
             }
-            List<AlbumEntity> albums = requireAlbums(libraryId, request.albumIds());
-            postAlbumRepository.deleteAll(postAlbumRepository.findByLibraryIdAndPostId(libraryId, postId));
-            postAlbumRepository.flush();
-            savePostAlbumRelations(postId, libraryId, albums.stream().map(AlbumEntity::getId).toList());
+            post.setAlbumId(requireAlbum(libraryId, request.albumId()).getId());
         }
 
         postRepository.save(post);
@@ -157,14 +143,14 @@ public class PostService {
     public PostDetailDto addMediaToPost(String postId, AddPostMediaRequest request, AuthenticatedUser currentUser) {
         String libraryId = currentUser.libraryId();
         PostEntity post = requirePost(postId, libraryId);
-        validateDistinctIds(request.mediaIds(), ErrorCode.POST_MEDIA_ORDER_INVALID, "mediaIds contains duplicates.");
+        validateDistinctIds(request.mediaIds(), ErrorCode.SMALL_ALBUM_MEDIA_ORDER_INVALID, "mediaIds contains duplicates.");
         Map<String, MediaEntity> mediaById = requireMedia(libraryId, request.mediaIds());
 
         List<PostMediaEntity> existingRelations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, postId);
         Set<String> existingMediaIds = existingRelations.stream().map(PostMediaEntity::getMediaId).collect(Collectors.toSet());
         for (String mediaId : request.mediaIds()) {
             if (existingMediaIds.contains(mediaId)) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.POST_MEDIA_ORDER_INVALID, "mediaIds must not include media already attached to the post.");
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.SMALL_ALBUM_MEDIA_ORDER_INVALID, "mediaIds must not include media already attached to the small album.");
             }
             if (!mediaById.containsKey(mediaId)) {
                 throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.MEDIA_NOT_FOUND, "One or more mediaIds do not exist in the shared library.");
@@ -179,7 +165,7 @@ public class PostService {
 
         if (request.coverMediaId() != null && !request.coverMediaId().isBlank()) {
             if (!orderedMediaIds.contains(request.coverMediaId())) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.POST_COVER_INVALID, "coverMediaId must belong to the post.");
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.SMALL_ALBUM_COVER_INVALID, "coverMediaId must belong to the current small album.");
             }
             post.setCoverMediaId(request.coverMediaId());
             postRepository.save(post);
@@ -196,7 +182,7 @@ public class PostService {
         String libraryId = currentUser.libraryId();
         PostEntity post = requirePost(postId, libraryId);
         if (!postMediaRepository.existsByLibraryIdAndPostIdAndMediaId(libraryId, postId, request.coverMediaId())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.POST_COVER_INVALID, "Cover media must belong to the current post.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.SMALL_ALBUM_COVER_INVALID, "coverMediaId must belong to the current small album.");
         }
 
         post.setCoverMediaId(request.coverMediaId());
@@ -212,12 +198,12 @@ public class PostService {
         List<String> currentMediaIds = relations.stream().map(PostMediaEntity::getMediaId).toList();
         List<String> orderedMediaIds = request.orderedMediaIds();
 
-        validateDistinctIds(orderedMediaIds, ErrorCode.POST_MEDIA_ORDER_INVALID, "orderedMediaIds contains duplicates.");
+        validateDistinctIds(orderedMediaIds, ErrorCode.SMALL_ALBUM_MEDIA_ORDER_INVALID, "orderedMediaIds contains duplicates.");
         if (relations.isEmpty()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.POST_MEDIA_ORDER_INVALID, "Post has no media to reorder.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.SMALL_ALBUM_MEDIA_ORDER_INVALID, "Small album has no media to reorder.");
         }
         if (orderedMediaIds.size() != currentMediaIds.size() || !new HashSet<>(orderedMediaIds).equals(new HashSet<>(currentMediaIds))) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.POST_MEDIA_ORDER_INVALID, "orderedMediaIds must match the current post media set.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.SMALL_ALBUM_MEDIA_ORDER_INVALID, "orderedMediaIds must match the current small album media set.");
         }
 
         postMediaRepository.deleteAll(relations);
@@ -233,15 +219,15 @@ public class PostService {
 
     private PostEntity requirePost(String postId, String libraryId) {
         return postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(postId, libraryId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.POST_NOT_FOUND, "Post was not found."));
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.SMALL_ALBUM_NOT_FOUND, "Small album was not found."));
     }
 
-    private List<AlbumEntity> requireAlbums(String libraryId, Collection<String> albumIds) {
-        List<AlbumEntity> albums = albumRepository.findByLibraryIdAndIdIn(libraryId, albumIds);
-        if (albums.size() != albumIds.size()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.ALBUM_ASSIGNMENT_INVALID, "One or more albumIds do not exist in the shared library.");
+    private AlbumEntity requireAlbum(String libraryId, String albumId) {
+        if (albumId == null || albumId.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.ALBUM_ASSIGNMENT_INVALID, "albumId is required.");
         }
-        return albums;
+        return albumRepository.findByIdAndLibraryId(albumId, libraryId)
+                .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.ALBUM_ASSIGNMENT_INVALID, "albumId does not exist in the shared library."));
     }
 
     private Map<String, MediaEntity> requireMedia(String libraryId, Collection<String> mediaIds) {
@@ -255,7 +241,7 @@ public class PostService {
     private String resolveCoverMediaId(String coverMediaId, List<String> mediaIds) {
         if (mediaIds.isEmpty()) {
             if (coverMediaId != null && !coverMediaId.isBlank()) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.POST_COVER_INVALID, "coverMediaId requires initialMediaIds.");
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.SMALL_ALBUM_COVER_INVALID, "coverMediaId requires initialMediaIds.");
             }
             return null;
         }
@@ -263,7 +249,7 @@ public class PostService {
             return mediaIds.get(0);
         }
         if (!mediaIds.contains(coverMediaId)) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.POST_COVER_INVALID, "coverMediaId must exist in initialMediaIds.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.SMALL_ALBUM_COVER_INVALID, "coverMediaId must exist in initialMediaIds.");
         }
         return coverMediaId;
     }
@@ -277,29 +263,16 @@ public class PostService {
 
     private void savePostMediaRelations(String postId, String libraryId, List<String> mediaIds) {
         List<PostMediaEntity> relations = new ArrayList<>();
-        for (int i = 0; i < mediaIds.size(); i++) {
+        for (int index = 0; index < mediaIds.size(); index++) {
             PostMediaEntity relation = new PostMediaEntity();
-            relation.setId(IdGenerator.newId("post_media"));
+            relation.setId(IdGenerator.newId("small_album_media"));
             relation.setLibraryId(libraryId);
             relation.setPostId(postId);
-            relation.setMediaId(mediaIds.get(i));
-            relation.setSortOrder(i + 1);
+            relation.setMediaId(mediaIds.get(index));
+            relation.setSortOrder(index + 1);
             relations.add(relation);
         }
         postMediaRepository.saveAll(relations);
-    }
-
-    private void savePostAlbumRelations(String postId, String libraryId, List<String> albumIds) {
-        List<PostAlbumEntity> relations = new ArrayList<>();
-        for (String albumId : albumIds) {
-            PostAlbumEntity relation = new PostAlbumEntity();
-            relation.setId(IdGenerator.newId("post_album"));
-            relation.setLibraryId(libraryId);
-            relation.setPostId(postId);
-            relation.setAlbumId(albumId);
-            relations.add(relation);
-        }
-        postAlbumRepository.saveAll(relations);
     }
 
     private void validateDistinctIds(List<String> ids, ErrorCode errorCode, String message) {
@@ -313,12 +286,6 @@ public class PostService {
 
     private PostDetailDto buildPostDetail(PostEntity post) {
         String libraryId = post.getLibraryId();
-        List<PostAlbumEntity> albumRelations = postAlbumRepository.findByLibraryIdAndPostId(libraryId, post.getId());
-        List<String> albumIds = albumRelations.stream()
-                .map(PostAlbumEntity::getAlbumId)
-                .sorted(String::compareTo)
-                .toList();
-
         List<PostMediaEntity> mediaRelations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, post.getId());
         List<String> mediaIds = mediaRelations.stream().map(PostMediaEntity::getMediaId).toList();
         Map<String, MediaEntity> mediaById = mediaIds.isEmpty()
@@ -343,7 +310,7 @@ public class PostService {
                 .findFirst()
                 .orElse(null);
 
-        return contentMapper.toPostDetailDto(post, albumIds, resolvedCoverMediaId, mediaItems.size(), mediaItems);
+        return contentMapper.toPostDetailDto(post, post.getAlbumId(), resolvedCoverMediaId, mediaItems.size(), mediaItems);
     }
 
     private List<PostSummaryDto> buildPostSummaries(List<PostEntity> posts) {
@@ -352,23 +319,15 @@ public class PostService {
         }
         String libraryId = posts.get(0).getLibraryId();
         Set<String> postIds = posts.stream().map(PostEntity::getId).collect(Collectors.toSet());
-        Map<String, List<String>> albumIdsByPostId = new LinkedHashMap<>();
-        for (PostAlbumEntity relation : postAlbumRepository.findByLibraryIdAndPostIdIn(libraryId, postIds)) {
-            albumIdsByPostId.computeIfAbsent(relation.getPostId(), key -> new ArrayList<>()).add(relation.getAlbumId());
-        }
         Map<String, Long> mediaCountByPostId = postMediaRepository.findByLibraryIdAndPostIdIn(libraryId, postIds)
                 .stream()
                 .collect(Collectors.groupingBy(PostMediaEntity::getPostId, Collectors.counting()));
 
         List<PostSummaryDto> results = new ArrayList<>();
         for (PostEntity post : posts) {
-            List<String> albumIds = albumIdsByPostId.getOrDefault(post.getId(), List.of())
-                    .stream()
-                    .sorted(String::compareTo)
-                    .toList();
             results.add(contentMapper.toPostSummaryDto(
                     post,
-                    albumIds,
+                    post.getAlbumId(),
                     post.getCoverMediaId(),
                     mediaCountByPostId.getOrDefault(post.getId(), 0L)
             ));

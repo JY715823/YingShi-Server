@@ -1,18 +1,20 @@
 # Stage 16 Cloudlike Data Safety And Migration
 
+Updated: 2026-05-25
+
 ## Purpose
 
-This document makes the local cloudlike environment safe to use for the next 1-2 months before a real ECS + OSS migration.
+This document makes the local PostgreSQL + MinIO environment safe enough for the current 1-2 month development window before any real cloud migration.
 
-Current recommended development shape:
+Recommended shape today:
 
 ```text
 PostgreSQL + MinIO: Docker Desktop
 Server: Windows IDEA with docker-local profile
-Android REAL: LAN baseUrl or Cloudflare Quick Tunnel HTTPS baseUrl
+Android REAL: LAN or tunnel base URL to the backend API only
 ```
 
-The goal is not to move to cloud now. The goal is to ensure media uploaded today can be backed up, checked, and migrated later.
+The goal is not to move to cloud today. The goal is to make uploaded media inspectable, backupable, and restorable.
 
 ## Source Of Truth
 
@@ -20,14 +22,45 @@ In `docker-local` and `docker` profile:
 
 - PostgreSQL is the source of truth for business metadata and media metadata.
 - MinIO bucket `yingshi-media` is the source of truth for media binary objects.
-- Media rows should store relative object keys in `original_object_key`, `preview_object_key`, and `cover_object_key`.
-- Android only stores and calls backend API URLs. Android must not store object keys, MinIO URLs, OSS URLs, bucket names, access keys, or secret keys.
+- media rows must store relative object keys in `original_object_key`, `preview_object_key`, and `cover_object_key`
+- Android must store only backend API URLs, not object keys, bucket names, or storage credentials
 
-Local Docker volumes are implementation details. Do not rely on manually copying Docker Desktop volume internals as the only backup path.
+Old H2 + `local-storage` data is now legacy local development data, not the authoritative dataset.
 
-## Backup PostgreSQL
+## Recommended Backup Flow
 
-Run this from the Server repository root while the `postgres` container is running:
+Run from the Server repo root:
+
+```powershell
+.\scripts\stage16-cloudlike-backup.ps1
+```
+
+Optional inspectable SQL:
+
+```powershell
+.\scripts\stage16-cloudlike-backup.ps1 -IncludePlainSql
+```
+
+The script creates a timestamped backup set under `backups/` with:
+
+- PostgreSQL custom dump
+- optional PostgreSQL plain SQL dump
+- MinIO bucket mirror
+- `backup-manifest.json`
+
+Use the custom dump as the primary restore artifact. Use the plain SQL dump mainly for inspection.
+
+If you need only PostgreSQL:
+
+```powershell
+.\scripts\stage16-cloudlike-backup.ps1 -SkipMinio
+```
+
+Do not commit `backups/`.
+
+## Manual PostgreSQL Backup Fallback
+
+If you need the raw commands:
 
 ```powershell
 New-Item -ItemType Directory -Force backups | Out-Null
@@ -35,37 +68,14 @@ docker compose exec -T postgres pg_dump -U yingshi -d yingshi --format=custom --
 docker compose cp postgres:/tmp/yingshi.dump .\backups\yingshi-postgres.dump
 ```
 
-Optional plain SQL dump for inspection:
+Optional plain SQL:
 
 ```powershell
 docker compose exec -T postgres pg_dump -U yingshi -d yingshi --file=/tmp/yingshi.sql
 docker compose cp postgres:/tmp/yingshi.sql .\backups\yingshi-postgres.sql
 ```
 
-The custom dump is the better restore artifact. The SQL dump is easier to read.
-
-Do not commit `backups/`. It may contain private metadata.
-
-## Restore PostgreSQL
-
-Use restore only when intentionally rebuilding a local environment. It will overwrite data in the target database.
-
-```powershell
-docker compose cp .\backups\yingshi-postgres.dump postgres:/tmp/yingshi.dump
-docker compose exec -T postgres dropdb -U yingshi --if-exists yingshi
-docker compose exec -T postgres createdb -U yingshi yingshi
-docker compose exec -T postgres pg_restore -U yingshi -d yingshi --clean --if-exists /tmp/yingshi.dump
-```
-
-After restore, start Server with `docker-local` or `docker` profile and verify:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8080/api/health
-```
-
-## Backup MinIO Bucket
-
-Use the MinIO client container to mirror the bucket to a local backup folder:
+## Manual MinIO Backup Fallback
 
 ```powershell
 New-Item -ItemType Directory -Force backups\minio-yingshi-media | Out-Null
@@ -76,18 +86,26 @@ docker run --rm --network yingshi-server_default `
   -c "mc alias set local http://minio:9000 yingshi_minio_access yingshi_minio_secret && mc mirror --overwrite local/yingshi-media /backup"
 ```
 
-If your `.env` uses different MinIO credentials or bucket name, replace the values in the command.
+## Restore PostgreSQL
 
-The backup folder preserves object keys such as:
+Restore only when intentionally rebuilding a local environment:
 
-```text
-backups/minio-yingshi-media/originals/2026/05/media_xxx.jpg
-backups/minio-yingshi-media/previews/2026/05/media_xxx-preview-v2-1280.jpg
+```powershell
+docker compose cp .\backups\yingshi-postgres.dump postgres:/tmp/yingshi.dump
+docker compose exec -T postgres dropdb -U yingshi --if-exists yingshi
+docker compose exec -T postgres createdb -U yingshi yingshi
+docker compose exec -T postgres pg_restore -U yingshi -d yingshi --clean --if-exists /tmp/yingshi.dump
+```
+
+After restore, start the backend with `docker-local` or `docker` and verify:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8080/api/health
 ```
 
 ## Restore MinIO Bucket
 
-Run this after PostgreSQL restore or when rebuilding the bucket:
+Run this when rebuilding the bucket:
 
 ```powershell
 docker run --rm --network yingshi-server_default `
@@ -97,96 +115,74 @@ docker run --rm --network yingshi-server_default `
   -c "mc alias set local http://minio:9000 yingshi_minio_access yingshi_minio_secret && mc mb --ignore-existing local/yingshi-media && mc mirror --overwrite /backup local/yingshi-media"
 ```
 
-Then use MinIO Console at `http://127.0.0.1:9001` to inspect bucket `yingshi-media`.
+## Read-Only Audit And Smoke
 
-## Read-Only Migration Check
-
-Run:
+Object audit:
 
 ```powershell
 .\scripts\stage16-object-audit.ps1
 ```
 
-The script checks:
-
-- media rows missing `original_object_key`
-- object key columns that look like full URLs
-- referenced original/preview/cover objects missing from MinIO
-
-For a Cloudflare or local API smoke test, run:
+Cloudlike smoke:
 
 ```powershell
 .\scripts\stage16-cloudlike-smoke.ps1 -BaseUrl http://127.0.0.1:8080
-.\scripts\stage16-cloudlike-smoke.ps1 -BaseUrl https://your-temporary.trycloudflare.com
 ```
 
-These scripts are read-only except for the smoke upload itself. They do not delete local-storage files, do not mutate old H2 data, and do not direct Android to MinIO.
+Daily check entry point:
+
+```powershell
+.\scripts\stage16-cloudlike-check.ps1
+```
+
+These tools do not mutate PostgreSQL or MinIO, except for the smoke upload itself.
 
 ## Legacy local-storage Retirement
 
-Old H2 + `local-storage` data is legacy local development data. The current cloudlike source of truth is PostgreSQL + MinIO.
+Old H2 + `local-storage` media is not the migration target.
 
-For the current project state, old H2/local-storage media does not need to be preserved. Do not auto-migrate old H2/local-storage on normal startup.
-
-To inspect what would be removed:
+Inspect what would be removed:
 
 ```powershell
 .\scripts\stage16-retire-local-storage.ps1
 ```
 
-To delete the retired local test data after Server is stopped:
+Delete retired local test data only after the backend is stopped:
 
 ```powershell
 .\scripts\stage16-retire-local-storage.ps1 -Apply
 ```
 
-The cleanup script only removes retired directories under the Server repository's `local-storage` root, such as `dev-db`, `originals`, `previews`, `test`, `tmp`, and `videos`. It does not touch PostgreSQL, MinIO, Docker volumes, `.env`, `backups/`, or the small generated `local-storage/seed` dev fixtures.
-
-If old media ever becomes worth preserving after all, do not use the cleanup script first. Build a separate explicit migration tool with this shape:
-
-- default `dry-run`
-- scan old rows that still depend on `storagePath`
-- locate originals under `local-storage`
-- compute relative target object keys
-- upload objects to MinIO or OSS through `ObjectStorageService`
-- update PostgreSQL object fields only when explicitly requested
-- never delete old local files as part of the first migration
+This does not touch PostgreSQL, MinIO, Docker volumes, `.env`, or `backups/`.
 
 ## Future OSS Migration Shape
 
-For media uploaded in `docker-local`, migration to OSS should be a bucket/key copy plus configuration change:
+For media uploaded in `docker-local`, migration to OSS should stay a bucket/key copy plus configuration change:
 
 1. Export PostgreSQL dump.
-2. Mirror MinIO bucket `yingshi-media`.
-3. Copy objects to OSS using the same relative keys.
-4. Configure Server with OSS provider, bucket, endpoint/region, and credentials.
-5. Keep Android baseUrl pointed at the backend API, not OSS.
-6. Run object audit against the restored database and OSS-backed provider.
+2. Mirror the MinIO bucket.
+3. Copy objects to OSS with the same relative keys.
+4. Reconfigure the backend to use the OSS provider.
+5. Keep Android pointed at the backend API, not object storage.
+6. Run object audit after restore.
 
-Database object key columns must remain relative. Do not rewrite them to OSS URLs.
+Database object-key columns must remain relative. Do not rewrite them to MinIO or OSS URLs.
 
 ## Disaster Recovery Drill
 
-Use this flow before you trust the local cloudlike environment for important media:
+Use this before trusting the environment with important data:
 
-1. Upload one image from Android REAL.
-2. Run PostgreSQL backup.
-3. Run MinIO bucket backup.
-4. Stop Server.
-5. Restore PostgreSQL into a fresh or cleared local database.
-6. Restore MinIO bucket into a fresh or cleared bucket.
-7. Start Server with `docker-local`.
-8. Run:
+1. Upload one image from Android REAL or the smoke script.
+2. Run `stage16-cloudlike-backup.ps1`.
+3. Stop the backend.
+4. Restore PostgreSQL into a clean DB.
+5. Restore the MinIO bucket.
+6. Start the backend with `docker-local`.
+7. Run:
 
 ```powershell
 .\scripts\stage16-object-audit.ps1
 .\scripts\stage16-cloudlike-smoke.ps1 -BaseUrl http://127.0.0.1:8080
 ```
 
-9. Open Android REAL and verify the uploaded media still reads through `/api/media/files/{mediaId}?variant=...`.
-
-## Current Deferred Items
-
-- Native S3 ranged reads for large original media are now implemented behind the backend file endpoint. Keep validating video playback through `/api/media/files/{mediaId}` as larger files are introduced.
-- Docker image `ffmpeg` support should be added only when video cover generation becomes a test target.
-- PostgreSQL schema ownership now starts with Flyway in docker/docker-local profiles. Future table or column changes should be committed as new migration files under `src/main/resources/db/migration/postgresql`.
+8. Verify the same media still reads through `/api/media/files/{mediaId}?variant=...`.

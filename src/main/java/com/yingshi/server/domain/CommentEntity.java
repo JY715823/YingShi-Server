@@ -22,7 +22,7 @@ public class CommentEntity extends LibraryScopedEntity {
     @Column(nullable = false, length = 20)
     private CommentTargetType targetType;
 
-    @Column
+    @Column(name = "small_album_id")
     private String postId;
 
     @Column
@@ -30,6 +30,12 @@ public class CommentEntity extends LibraryScopedEntity {
 
     @Column(length = 2000)
     private String content;
+
+    @Column
+    private String lastEditedByUserId;
+
+    @Column
+    private String deletedByUserId;
 
     @Column
     private Instant deletedAt;
@@ -80,6 +86,22 @@ public class CommentEntity extends LibraryScopedEntity {
 
     public void setContent(String content) {
         this.content = content;
+    }
+
+    public String getLastEditedByUserId() {
+        return lastEditedByUserId;
+    }
+
+    public void setLastEditedByUserId(String lastEditedByUserId) {
+        this.lastEditedByUserId = lastEditedByUserId;
+    }
+
+    public String getDeletedByUserId() {
+        return deletedByUserId;
+    }
+
+    public void setDeletedByUserId(String deletedByUserId) {
+        this.deletedByUserId = deletedByUserId;
     }
 
     public Instant getDeletedAt() {

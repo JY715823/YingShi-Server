@@ -40,8 +40,8 @@ public class AlbumController {
         return ApiResponse.success(requestId(request), albumService.listAlbums(currentUser));
     }
 
-    @Operation(summary = "List posts under an album", security = @SecurityRequirement(name = "bearerAuth"))
-    @GetMapping("/{albumId}/posts")
+    @Operation(summary = "List small albums under an album", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping("/{albumId}/small-albums")
     public ApiResponse<List<PostSummaryDto>> listAlbumPosts(
             @PathVariable String albumId,
             @CurrentUser AuthenticatedUser currentUser,

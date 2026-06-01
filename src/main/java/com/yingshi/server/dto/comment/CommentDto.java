@@ -1,9 +1,11 @@
 package com.yingshi.server.dto.comment;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 public record CommentDto(
         String commentId,
         String targetType,
-        String postId,
+        String smallAlbumId,
         String mediaId,
         String authorId,
         String authorName,
@@ -12,4 +14,8 @@ public record CommentDto(
         Long updatedAtMillis,
         boolean isDeleted
 ) {
+    @JsonIgnore
+    public String postId() {
+        return smallAlbumId;
+    }
 }

@@ -1,58 +1,69 @@
 # Album API Contract
 
 ## Status
+
 - unified with current `yingshi-server` code
-- local-dev usable
+- outwardly this API represents large albums
 
 ## Base Rules
+
 - base path: `/api/albums`
-- bearer auth required for all endpoints
-- current backend does not paginate album APIs
-- album membership mutation is handled by `PATCH /api/posts/{postId}`, not a standalone album endpoint
+- bearer auth required
+- album APIs currently do not paginate
+
+## Album DTO
+
+```json
+{
+  "albumId": "album_001",
+  "title": "Spring Window",
+  "subtitle": "Light and slow daily fragments",
+  "coverMediaId": "media_001",
+  "smallAlbumCount": 2
+}
+```
+
+## Small Album Summary DTO
+
+```json
+{
+  "smallAlbumId": "post_001",
+  "title": "Night Walk",
+  "summary": "A quiet walk home",
+  "contributorLabel": "Demo A and Demo B",
+  "displayTimeMillis": 1777412800000,
+  "eventStartedAtMillis": 1777412800000,
+  "eventEndedAtMillis": null,
+  "displayTimeSource": "MANUAL",
+  "albumId": "album_001",
+  "coverMediaId": "media_001",
+  "mediaCount": 3
+}
+```
 
 ## Endpoints
 
 ### `GET /api/albums`
 
-Response data:
+Response:
 
-```json
-[
-  {
-    "albumId": "album_001",
-    "title": "Spring Window",
-    "subtitle": "Light and slow daily fragments",
-    "coverMediaId": "media_001",
-    "postCount": 2
-  }
-]
-```
+- returns `List<AlbumDto>`
 
-### `GET /api/albums/{albumId}/posts`
+### `GET /api/albums/{albumId}/small-albums`
 
-Response data:
+Response:
 
-```json
-[
-  {
-    "postId": "post_001",
-    "title": "Night Walk",
-    "summary": "A quiet walk home",
-    "contributorLabel": "Demo A and Demo B",
-    "displayTimeMillis": 1777412800000,
-    "albumIds": ["album_001", "album_002"],
-    "coverMediaId": "media_001",
-    "mediaCount": 3
-  }
-]
-```
+- returns `List<PostSummaryDto>`
+- each item belongs to exactly one parent `albumId`
 
 ## Notes
-- album APIs return summaries only
-- album detail media lists still belong to post detail
-- there is no `PATCH /api/posts/{postId}/albums` endpoint in current backend
+
+- large albums expose summary information only
+- small-album detail still belongs to `/api/small-albums/{smallAlbumId}`
+- parent reassignment is handled by `PATCH /api/small-albums/{smallAlbumId}`
 
 ## Error Codes
+
 - `ALBUM_NOT_FOUND`
-- `POST_NOT_FOUND`
+- `SMALL_ALBUM_NOT_FOUND`
 - `AUTH_UNAUTHORIZED`

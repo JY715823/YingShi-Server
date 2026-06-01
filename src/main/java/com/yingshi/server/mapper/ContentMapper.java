@@ -19,17 +19,17 @@ import java.util.Locale;
 @Component
 public class ContentMapper {
 
-    public AlbumDto toAlbumDto(AlbumEntity album, long postCount) {
+    public AlbumDto toAlbumDto(AlbumEntity album, long smallAlbumCount) {
         return new AlbumDto(
                 album.getId(),
                 album.getTitle(),
                 album.getSubtitle(),
                 album.getCoverMediaId(),
-                postCount
+                smallAlbumCount
         );
     }
 
-    public PostSummaryDto toPostSummaryDto(PostEntity post, List<String> albumIds, String coverMediaId, long mediaCount) {
+    public PostSummaryDto toPostSummaryDto(PostEntity post, String albumId, String coverMediaId, long mediaCount) {
         return new PostSummaryDto(
                 post.getId(),
                 post.getTitle(),
@@ -39,7 +39,7 @@ public class ContentMapper {
                 post.getEventStartedAtMillis(),
                 post.getEventEndedAtMillis(),
                 post.getDisplayTimeSource(),
-                albumIds,
+                albumId,
                 coverMediaId,
                 mediaCount
         );
@@ -47,7 +47,7 @@ public class ContentMapper {
 
     public PostDetailDto toPostDetailDto(
             PostEntity post,
-            List<String> albumIds,
+            String albumId,
             String coverMediaId,
             long mediaCount,
             List<PostMediaDto> mediaItems
@@ -61,11 +61,11 @@ public class ContentMapper {
                 post.getEventStartedAtMillis(),
                 post.getEventEndedAtMillis(),
                 post.getDisplayTimeSource(),
-                albumIds,
+                albumId,
                 coverMediaId,
                 mediaCount,
                 mediaItems
-        );
+            );
     }
 
     public PostMediaDto toPostMediaDto(PostMediaEntity relation, MediaDto mediaDto, boolean isCover) {
@@ -76,7 +76,7 @@ public class ContentMapper {
         );
     }
 
-    public MediaDto toMediaDto(MediaEntity media, List<String> postIds) {
+    public MediaDto toMediaDto(MediaEntity media, List<String> smallAlbumIds) {
         String localMediaUrl = localMediaUrl(media);
         String previewMediaUrl = previewMediaUrl(media);
         return new MediaDto(
@@ -97,7 +97,7 @@ public class ContentMapper {
                 media.getCapturedAtMillis(),
                 media.getImportedAtMillis(),
                 media.getDisplayTimeSource(),
-                postIds
+                smallAlbumIds
         );
     }
 

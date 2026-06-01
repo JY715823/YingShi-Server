@@ -1,6 +1,6 @@
 # Android Physical Device Acceptance Guide
 
-更新时间：2026-05-25
+Updated: 2026-05-25
 
 ## Scope
 
@@ -17,14 +17,21 @@
 - keep the phone and computer on the same Wi-Fi
 - confirm the backend machine IP is reachable from the phone
 - use the PC LAN IP rather than `localhost` or `127.0.0.1`
-- note that Android notification center is still fake data; backend notifications should be verified through smoke / Swagger
+- prefer the `docker-local` backend shape when doing serious Android acceptance
 
-## 1. Start the Backend
+## 1. Start The Backend
 
-From the repo root:
+Recommended cloudlike mode:
 
 ```powershell
-.\mvnw.cmd spring-boot:run
+Copy-Item .env.example .env
+docker compose up -d postgres minio minio-init
+```
+
+Then run the Spring app from IDEA with profile:
+
+```text
+docker-local
 ```
 
 Optional preflight:
@@ -52,7 +59,7 @@ Expected:
 - HTTP `200`
 - JSON `data.status = "UP"`
 
-## 3. Find the PC IP
+## 3. Find The PC IP
 
 Run:
 
@@ -89,7 +96,7 @@ Important:
 - use a debug build
 - debug build is the one that allows local cleartext HTTP
 
-## 6. Open the Diagnostics Page
+## 6. Open The Diagnostics Page
 
 In the Android app, open:
 
@@ -97,7 +104,7 @@ In the Android app, open:
 2. `设置`
 3. `后端联调诊断`
 
-## 7. Set the Base URL
+## 7. Set The Base URL
 
 On the diagnostics page:
 
@@ -107,7 +114,7 @@ On the diagnostics page:
 http://<your-pc-ip>:8080/
 ```
 
-2. Tap `保存并重登`
+2. Tap the save/relogin action
 
 Expected:
 
@@ -119,21 +126,22 @@ Do not use these for normal Wi-Fi phone testing:
 - `http://localhost:8080/`
 - `http://127.0.0.1:8080/`
 
-## 8. Run the Acceptance Flow
+## 8. Run The Acceptance Flow
 
-1. Tap `检查健康`
-2. Confirm latest result contains `health=UP`
-3. Switch repository mode to `REAL`
-4. Reopen `我的` and confirm current user, shared library, and partner info are visible
-5. Open `照片` and confirm the real feed loads
-6. Open `相册` and confirm real post cards load
-7. Open one post detail and confirm media and comments load
-8. Open `回收站` and confirm list/detail/restore/remove/purge work
-9. Test upload/import from system media and confirm the returned media can flow back into the feed
+1. Tap the health-check action.
+2. Confirm the latest result contains `health=UP`.
+3. Switch repository mode to `REAL`.
+4. Reopen `我的` and confirm current user, shared library, and partner info are visible.
+5. Open `照片` and confirm the real feed loads.
+6. Open `相册` and confirm real post cards load.
+7. Open one post detail and confirm media and comments load.
+8. Open the bell entry and confirm notification list/detail/read work.
+9. Open `回收站` and confirm list/detail/restore/remove/purge work.
+10. Test upload/import from system media and confirm the returned media can flow back into the feed.
 
 ## 9. Fast Troubleshooting
 
-`检查健康` fails:
+Health check fails:
 
 - backend not started
 - wrong LAN IP
@@ -155,7 +163,7 @@ Upload/import fails:
 - inspect Android logcat tag `SystemMediaUpload`
 - confirm backend multipart limits are still `1024MB` / `1100MB`
 
-Notifications still look fake:
+Notifications do not appear:
 
-- expected for current Android UI
-- verify backend notifications through smoke or Swagger instead
+- verify the backend has generated events for comments, trash, post updates, or uploads
+- use Swagger or smoke scripts to confirm `/api/notifications` returns data

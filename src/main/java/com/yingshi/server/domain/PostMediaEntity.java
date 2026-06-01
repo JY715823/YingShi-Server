@@ -8,10 +8,10 @@ import jakarta.persistence.UniqueConstraint;
 
 @Entity
 @Table(
-        name = "post_media",
+        name = "small_album_media",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_post_media_post_media", columnNames = {"libraryId", "postId", "mediaId"}),
-                @UniqueConstraint(name = "uk_post_media_post_sort", columnNames = {"libraryId", "postId", "sortOrder"})
+                @UniqueConstraint(name = "uk_small_album_media_small_album_media", columnNames = {"library_id", "small_album_id", "media_id"}),
+                @UniqueConstraint(name = "uk_small_album_media_small_album_sort", columnNames = {"library_id", "small_album_id", "sort_order"})
         }
 )
 public class PostMediaEntity extends LibraryScopedEntity {
@@ -19,7 +19,7 @@ public class PostMediaEntity extends LibraryScopedEntity {
     @Id
     private String id;
 
-    @Column(nullable = false)
+    @Column(name = "small_album_id", nullable = false)
     private String postId;
 
     @Column(nullable = false)

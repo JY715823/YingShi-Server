@@ -39,6 +39,17 @@ public class AuthenticatedUserLoader {
             );
         }
 
-        return new AuthenticatedUser(user.getId(), user.getAccount(), user.getDisplayName(), libraryId);
+        return new AuthenticatedUser(user.getId(), user.getAccount(), user.getDisplayName(), libraryId, null);
+    }
+
+    public AuthenticatedUser loadCurrentUser(ParsedJwtToken token) {
+        AuthenticatedUser currentUser = loadCurrentUser(token.userId(), token.libraryId());
+        return new AuthenticatedUser(
+                currentUser.userId(),
+                currentUser.account(),
+                currentUser.displayName(),
+                currentUser.libraryId(),
+                token.sessionId()
+        );
     }
 }

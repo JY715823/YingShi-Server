@@ -3,12 +3,10 @@ package com.yingshi.server.service.content;
 import com.yingshi.server.domain.AlbumEntity;
 import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.domain.MediaType;
-import com.yingshi.server.domain.PostAlbumEntity;
 import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.MediaRepository;
-import com.yingshi.server.repository.PostAlbumRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.service.auth.DevAuthSeedDataInitializer;
@@ -57,7 +55,6 @@ public class DevTestMediaImportInitializer {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository,
             LocalMediaStorageService localMediaStorageService
     ) {
         return args -> importTestMedia(
@@ -66,7 +63,6 @@ public class DevTestMediaImportInitializer {
                 postRepository,
                 mediaRepository,
                 postMediaRepository,
-                postAlbumRepository,
                 localMediaStorageService
         );
     }
@@ -77,13 +73,12 @@ public class DevTestMediaImportInitializer {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository,
             LocalMediaStorageService localMediaStorageService
     ) {
         List<ImportCandidate> candidates = localMediaStorageService.listFilesRecursively(TEST_IMPORT_ROOT)
                 .stream()
                 .filter(this::isSupportedMediaFile)
-                .map(path -> toImportCandidate(libraryId, path, localMediaStorageService))
+                .map(path -> toImportCandidate(path, localMediaStorageService))
                 .filter(candidate -> candidate != null)
                 .filter(candidate -> candidate.sizeBytes() > 0L)
                 .sorted(Comparator
@@ -137,6 +132,7 @@ public class DevTestMediaImportInitializer {
             post.setTitle(truncate("样例导入 - " + humanizeBucketKey(bucketKey), 120));
             post.setSummary(truncate("Auto-imported from local-storage test directory: " + bucketKey, 1000));
             post.setContributorLabel(TEST_IMPORT_CONTRIBUTOR_LABEL);
+            post.setAlbumId(TEST_IMPORT_ALBUM_ID);
             post.setDisplayTimeMillis(postDisplayTimeMillis);
             post.setEventStartedAtMillis(postDisplayTimeMillis);
             post.setEventEndedAtMillis(null);
@@ -144,13 +140,6 @@ public class DevTestMediaImportInitializer {
             post.setCoverMediaId(mediaIds.get(0));
             post.setDeletedAt(null);
             postRepository.save(post);
-
-            PostAlbumEntity postAlbum = postAlbumRepository.findById(postAlbumIdForPost(postId)).orElseGet(PostAlbumEntity::new);
-            postAlbum.setId(postAlbumIdForPost(postId));
-            postAlbum.setLibraryId(libraryId);
-            postAlbum.setPostId(postId);
-            postAlbum.setAlbumId(TEST_IMPORT_ALBUM_ID);
-            postAlbumRepository.save(postAlbum);
 
             attachMediaToPost(libraryId, postId, mediaIds, postMediaRepository);
         }
@@ -229,7 +218,6 @@ public class DevTestMediaImportInitializer {
     }
 
     private ImportCandidate toImportCandidate(
-            String libraryId,
             Path path,
             LocalMediaStorageService localMediaStorageService
     ) {
@@ -419,10 +407,6 @@ public class DevTestMediaImportInitializer {
 
     private String postMediaIdForRelation(String postId, String mediaId) {
         return "post_media_test_" + shortHash(postId + "::" + mediaId);
-    }
-
-    private String postAlbumIdForPost(String postId) {
-        return "post_album_test_" + shortHash(postId + "::" + TEST_IMPORT_ALBUM_ID);
     }
 
     private String shortHash(String value) {

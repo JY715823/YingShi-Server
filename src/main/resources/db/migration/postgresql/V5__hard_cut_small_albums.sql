@@ -1,0 +1,23 @@
+truncate table notification_reads restart identity cascade;
+truncate table auth_sessions restart identity cascade;
+truncate table comments restart identity cascade;
+truncate table trash_items restart identity cascade;
+truncate table upload_tasks restart identity cascade;
+truncate table post_media restart identity cascade;
+truncate table post_albums restart identity cascade;
+truncate table posts restart identity cascade;
+truncate table media restart identity cascade;
+truncate table albums restart identity cascade;
+
+alter table if exists comments drop constraint if exists comments_target_type_check;
+alter table if exists trash_items rename column source_post_id to source_small_album_id;
+alter table if exists trash_items rename column related_post_ids to related_small_album_ids;
+alter table if exists comments rename column post_id to small_album_id;
+alter table if exists post_media rename column post_id to small_album_id;
+alter table if exists post_media rename to small_album_media;
+drop table if exists post_albums;
+alter table if exists posts rename to small_albums;
+alter table if exists small_albums add column if not exists album_id varchar(255);
+update small_albums set album_id = 'album_001' where album_id is null;
+alter table if exists small_albums alter column album_id set not null;
+alter table if exists comments add constraint comments_target_type_check check (target_type in ('SMALL_ALBUM', 'MEDIA'));

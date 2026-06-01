@@ -75,14 +75,15 @@ public class AuthController {
     }
 
     @AuthRequired
-    @Operation(summary = "Logout placeholder", security = @SecurityRequirement(name = "bearerAuth"))
+    @Operation(summary = "Logout current session", security = @SecurityRequirement(name = "bearerAuth"))
     @PostMapping("/logout")
     public ApiResponse<AuthLogoutResponse> logout(
+            @CurrentUser AuthenticatedUser currentUser,
             @RequestBody(required = false) AuthLogoutRequest request,
             HttpServletRequest httpServletRequest
     ) {
         String requestId = (String) httpServletRequest.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
-        return ApiResponse.success(requestId, authService.logout());
+        return ApiResponse.success(requestId, authService.logout(currentUser, request));
     }
 
     @AuthRequired

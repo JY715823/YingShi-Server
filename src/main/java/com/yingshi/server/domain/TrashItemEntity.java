@@ -25,7 +25,7 @@ public class TrashItemEntity extends LibraryScopedEntity {
     @Column(nullable = false, length = 40)
     private TrashItemState state;
 
-    @Column
+    @Column(name = "source_small_album_id")
     private String sourcePostId;
 
     @Column
@@ -37,7 +37,7 @@ public class TrashItemEntity extends LibraryScopedEntity {
     @Column(nullable = false, length = 255)
     private String previewInfo;
 
-    @Column(length = 2000)
+    @Column(name = "related_small_album_ids", length = 2000)
     private String relatedPostIds;
 
     @Column(length = 2000)

@@ -7,6 +7,7 @@ import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.domain.CommentEntity;
 import com.yingshi.server.domain.CommentTargetType;
 import com.yingshi.server.domain.MediaEntity;
+import com.yingshi.server.domain.MediaType;
 import com.yingshi.server.domain.NotificationReadEntity;
 import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.TrashItemEntity;
@@ -29,7 +30,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -132,11 +132,7 @@ public class NotificationService {
 
     private List<NotificationEvent> collectNotificationEvents(AuthenticatedUser currentUser) {
         String libraryId = currentUser.libraryId();
-
-        List<CommentEntity> comments = commentRepository.findByLibraryIdOrderByCreatedAtDesc(libraryId).stream()
-                .filter(comment -> comment.getDeletedAt() == null)
-                .filter(comment -> !currentUser.userId().equals(comment.getAuthorId()))
-                .toList();
+        List<CommentEntity> comments = commentRepository.findByLibraryIdOrderByCreatedAtDesc(libraryId);
         List<PostEntity> posts = postRepository.findByLibraryIdAndDeletedAtIsNullOrderByUpdatedAtDesc(libraryId);
         List<TrashItemEntity> trashItems = trashItemRepository.findByLibraryIdOrderByUpdatedAtDesc(libraryId);
         List<UploadTaskEntity> uploadTasks = uploadTaskRepository.findByLibraryIdOrderByUpdatedAtDesc(libraryId).stream()
@@ -146,7 +142,7 @@ public class NotificationService {
         NotificationSupportContext context = buildSupportContext(libraryId, comments, posts, trashItems, uploadTasks);
 
         List<NotificationEvent> events = new ArrayList<>();
-        comments.forEach(comment -> events.add(toCommentEvent(comment, context)));
+        comments.forEach(comment -> events.addAll(toCommentEvents(comment, currentUser, context)));
         posts.forEach(post -> events.add(toPostEvent(post)));
         trashItems.forEach(item -> events.add(toTrashEvent(item)));
         uploadTasks.forEach(task -> events.add(toUploadEvent(task, context)));
@@ -188,15 +184,26 @@ public class NotificationService {
             List<TrashItemEntity> trashItems,
             List<UploadTaskEntity> uploadTasks
     ) {
-        Set<String> userIds = comments.stream()
+        Set<String> userIds = new HashSet<>();
+        comments.stream()
                 .map(CommentEntity::getAuthorId)
-                .collect(Collectors.toCollection(HashSet::new));
-        Map<String, UserEntity> usersById = userRepository.findByIdIn(userIds).stream()
+                .forEach(userIds::add);
+        comments.stream()
+                .map(CommentEntity::getLastEditedByUserId)
+                .filter(value -> value != null && !value.isBlank())
+                .forEach(userIds::add);
+        comments.stream()
+                .map(CommentEntity::getDeletedByUserId)
+                .filter(value -> value != null && !value.isBlank())
+                .forEach(userIds::add);
+        Map<String, UserEntity> usersById = userIds.isEmpty()
+                ? Map.of()
+                : userRepository.findByIdIn(userIds).stream()
                 .collect(Collectors.toMap(UserEntity::getId, user -> user));
 
         Set<String> postIds = new HashSet<>();
         comments.stream()
-                .filter(comment -> comment.getTargetType() == CommentTargetType.POST && comment.getPostId() != null)
+                .filter(comment -> comment.getTargetType() == CommentTargetType.SMALL_ALBUM && comment.getPostId() != null)
                 .map(CommentEntity::getPostId)
                 .forEach(postIds::add);
         trashItems.stream()
@@ -232,24 +239,101 @@ public class NotificationService {
         return new NotificationSupportContext(usersById, postsById, mediaById);
     }
 
-    private NotificationEvent toCommentEvent(CommentEntity comment, NotificationSupportContext context) {
+    private List<NotificationEvent> toCommentEvents(
+            CommentEntity comment,
+            AuthenticatedUser currentUser,
+            NotificationSupportContext context
+    ) {
+        List<NotificationEvent> events = new ArrayList<>();
+        if (comment.getDeletedAt() == null && !currentUser.userId().equals(comment.getAuthorId())) {
+            events.add(toCommentCreatedEvent(comment, context));
+        }
+
+        if (!currentUser.userId().equals(comment.getAuthorId())) {
+            return events;
+        }
+
+        String editorUserId = emptyToNull(comment.getLastEditedByUserId());
+        if (editorUserId != null && !editorUserId.equals(comment.getAuthorId())) {
+            events.add(toCommentEditedEvent(comment, editorUserId, context));
+        }
+
+        String deleterUserId = emptyToNull(comment.getDeletedByUserId());
+        if (deleterUserId != null && !deleterUserId.equals(comment.getAuthorId())) {
+            events.add(toCommentDeletedEvent(comment, deleterUserId, context));
+        }
+
+        return events;
+    }
+
+    private NotificationEvent toCommentCreatedEvent(CommentEntity comment, NotificationSupportContext context) {
         UserEntity author = context.usersById().get(comment.getAuthorId());
-        String authorName = author == null ? "另一位成员" : author.getDisplayName();
-        boolean postComment = comment.getTargetType() == CommentTargetType.POST;
-        String targetSummary = postComment
-                ? resolvePostSummary(context.postsById().get(comment.getPostId()))
-                : resolveMediaSummary(context.mediaById().get(comment.getMediaId()), comment.getMediaId());
-        String title = postComment ? authorName + " 评论了帖子" : authorName + " 评论了媒体";
-        String body = abbreviate(comment.getContent(), 120);
-        long createdAtMillis = comment.getCreatedAt() == null ? 0L : comment.getCreatedAt().toEpochMilli();
+        String actorName = resolveUserName(author);
+        CommentTargetDescriptor target = describeCommentTarget(comment, context);
+        String title = target.smallAlbumTarget()
+                ? actorName + " commented on a small album"
+                : actorName + " commented on a media item";
+        long createdAtMillis = toEpochMillis(comment.getCreatedAt());
         return new NotificationEvent(
                 "comment:" + comment.getId(),
                 "comment",
                 title,
-                body,
+                abbreviate(comment.getContent(), 120),
                 createdAtMillis,
-                targetSummary,
-                comment.getTargetType().name(),
+                target.targetSummary(),
+                target.targetType(),
+                comment.getPostId(),
+                comment.getMediaId(),
+                null
+        );
+    }
+
+    private NotificationEvent toCommentEditedEvent(
+            CommentEntity comment,
+            String editorUserId,
+            NotificationSupportContext context
+    ) {
+        UserEntity editor = context.usersById().get(editorUserId);
+        String actorName = resolveUserName(editor);
+        CommentTargetDescriptor target = describeCommentTarget(comment, context);
+        String title = target.smallAlbumTarget()
+                ? actorName + " edited your small album comment"
+                : actorName + " edited your media comment";
+        long createdAtMillis = toEpochMillis(comment.getUpdatedAt());
+        return new NotificationEvent(
+                "comment-edit:" + comment.getId() + ":" + createdAtMillis,
+                "comment_edit",
+                title,
+                abbreviate(comment.getContent(), 120),
+                createdAtMillis,
+                target.targetSummary(),
+                target.targetType(),
+                comment.getPostId(),
+                comment.getMediaId(),
+                null
+        );
+    }
+
+    private NotificationEvent toCommentDeletedEvent(
+            CommentEntity comment,
+            String deleterUserId,
+            NotificationSupportContext context
+    ) {
+        UserEntity deleter = context.usersById().get(deleterUserId);
+        String actorName = resolveUserName(deleter);
+        CommentTargetDescriptor target = describeCommentTarget(comment, context);
+        String title = target.smallAlbumTarget()
+                ? actorName + " deleted your small album comment"
+                : actorName + " deleted your media comment";
+        long createdAtMillis = toEpochMillis(comment.getDeletedAt());
+        return new NotificationEvent(
+                "comment-delete:" + comment.getId() + ":" + createdAtMillis,
+                "comment_delete",
+                title,
+                "Your comment was deleted.",
+                createdAtMillis,
+                target.targetSummary(),
+                target.targetType(),
                 comment.getPostId(),
                 comment.getMediaId(),
                 null
@@ -257,19 +341,19 @@ public class NotificationService {
     }
 
     private NotificationEvent toPostEvent(PostEntity post) {
-        long updatedAtMillis = post.getUpdatedAt() == null ? 0L : post.getUpdatedAt().toEpochMilli();
+        long updatedAtMillis = toEpochMillis(post.getUpdatedAt());
         String summary = abbreviate(post.getSummary(), 120);
         String body = summary == null || summary.isBlank()
-                ? "《" + safeTitle(post.getTitle()) + "》有新的内容变更。"
+                ? "\"" + safeTitle(post.getTitle()) + "\" was updated."
                 : summary;
         return new NotificationEvent(
                 "post:" + post.getId() + ":" + updatedAtMillis,
                 "content_update",
-                "帖子内容有更新",
+                "Small album updated",
                 body,
                 updatedAtMillis,
                 safeTitle(post.getTitle()),
-                "POST",
+                "SMALL_ALBUM",
                 post.getId(),
                 null,
                 null
@@ -277,16 +361,16 @@ public class NotificationService {
     }
 
     private NotificationEvent toTrashEvent(TrashItemEntity item) {
-        long createdAtMillis = item.getUpdatedAt() == null ? 0L : item.getUpdatedAt().toEpochMilli();
+        long createdAtMillis = toEpochMillis(item.getUpdatedAt());
         String title = switch (item.getState()) {
-            case IN_TRASH -> "内容已进入回收站";
-            case PENDING_CLEANUP -> "内容已移出回收站";
-            case RESTORED -> "内容已从回收站恢复";
+            case IN_TRASH -> "Content moved to trash";
+            case PENDING_CLEANUP -> "Content moved out of trash";
+            case RESTORED -> "Content restored from trash";
         };
         String body = switch (item.getState()) {
-            case IN_TRASH -> safeTitle(item.getTitle()) + " 已进入回收站。";
-            case PENDING_CLEANUP -> safeTitle(item.getTitle()) + " 已移出回收站，等待清理。";
-            case RESTORED -> safeTitle(item.getTitle()) + " 已恢复到原位置。";
+            case IN_TRASH -> safeTitle(item.getTitle()) + " was moved to trash.";
+            case PENDING_CLEANUP -> safeTitle(item.getTitle()) + " is waiting for permanent cleanup.";
+            case RESTORED -> safeTitle(item.getTitle()) + " was restored to its original location.";
         };
         return new NotificationEvent(
                 "trash:" + item.getId() + ":" + createdAtMillis,
@@ -305,14 +389,14 @@ public class NotificationService {
     private NotificationEvent toUploadEvent(UploadTaskEntity task, NotificationSupportContext context) {
         long createdAtMillis = task.getCompletedAt() != null
                 ? task.getCompletedAt().toEpochMilli()
-                : (task.getUpdatedAt() == null ? 0L : task.getUpdatedAt().toEpochMilli());
+                : toEpochMillis(task.getUpdatedAt());
         String mediaSummary = task.getMediaId() == null
                 ? safeTitle(task.getFileName())
                 : resolveMediaSummary(context.mediaById().get(task.getMediaId()), task.getMediaId());
-        String title = task.getState() == UploadState.SUCCESS ? "上传已完成" : "上传已取消";
+        String title = task.getState() == UploadState.SUCCESS ? "Upload completed" : "Upload cancelled";
         String body = task.getState() == UploadState.SUCCESS
-                ? safeTitle(task.getFileName()) + " 已导入共享空间。"
-                : safeTitle(task.getFileName()) + " 的上传任务已取消。";
+                ? safeTitle(task.getFileName()) + " was imported into the shared library."
+                : safeTitle(task.getFileName()) + " was cancelled before completion.";
         return new NotificationEvent(
                 "upload:" + task.getId() + ":" + createdAtMillis,
                 "system",
@@ -353,7 +437,7 @@ public class NotificationService {
                 isRead,
                 notification.targetSummary(),
                 notification.targetType(),
-                notification.postId(),
+                notification.smallAlbumId(),
                 notification.mediaId(),
                 notification.trashItemId()
         );
@@ -366,16 +450,37 @@ public class NotificationService {
         return Math.min(limit, MAX_LIMIT);
     }
 
+    private CommentTargetDescriptor describeCommentTarget(
+            CommentEntity comment,
+            NotificationSupportContext context
+    ) {
+        boolean smallAlbumTarget = comment.getTargetType() == CommentTargetType.SMALL_ALBUM;
+        String targetSummary = smallAlbumTarget
+                ? resolvePostSummary(context.postsById().get(comment.getPostId()))
+                : resolveMediaSummary(context.mediaById().get(comment.getMediaId()), comment.getMediaId());
+        return new CommentTargetDescriptor(targetSummary, comment.getTargetType().name(), smallAlbumTarget);
+    }
+
     private String resolvePostSummary(PostEntity post) {
-        return post == null ? "帖子" : safeTitle(post.getTitle());
+        return post == null ? "Small album" : safeTitle(post.getTitle());
     }
 
     private String resolveMediaSummary(MediaEntity media, String mediaId) {
         if (media == null) {
-            return mediaId == null || mediaId.isBlank() ? "媒体" : "媒体 " + mediaId;
+            return mediaId == null || mediaId.isBlank() ? "Media" : "Media " + mediaId;
         }
-        String label = media.getMediaType().name().toLowerCase(Locale.ROOT).equals("video") ? "视频" : "照片";
+        String label = media.getMediaType() == MediaType.VIDEO ? "Video" : "Photo";
         return label + " " + media.getId();
+    }
+
+    private String resolveUserName(UserEntity user) {
+        return user == null || user.getDisplayName() == null || user.getDisplayName().isBlank()
+                ? "Another member"
+                : user.getDisplayName().trim();
+    }
+
+    private long toEpochMillis(Instant instant) {
+        return instant == null ? 0L : instant.toEpochMilli();
     }
 
     private String abbreviate(String value, int maxLength) {
@@ -386,12 +491,12 @@ public class NotificationService {
         if (normalized.length() <= maxLength) {
             return normalized;
         }
-        return normalized.substring(0, Math.max(0, maxLength - 1)) + "…";
+        return normalized.substring(0, Math.max(0, maxLength - 1)) + "...";
     }
 
     private String safeTitle(String value) {
         if (value == null || value.isBlank()) {
-            return "未命名内容";
+            return "Untitled content";
         }
         return value.trim();
     }
@@ -410,6 +515,13 @@ public class NotificationService {
     ) {
     }
 
+    private record CommentTargetDescriptor(
+            String targetSummary,
+            String targetType,
+            boolean smallAlbumTarget
+    ) {
+    }
+
     private record NotificationEvent(
             String notificationId,
             String type,
@@ -418,7 +530,7 @@ public class NotificationService {
             long createdAtMillis,
             String targetSummary,
             String targetType,
-            String postId,
+            String smallAlbumId,
             String mediaId,
             String trashItemId
     ) {
@@ -432,7 +544,7 @@ public class NotificationService {
                     isRead,
                     targetSummary,
                     targetType,
-                    postId,
+                    smallAlbumId,
                     mediaId,
                     trashItemId
             );

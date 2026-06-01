@@ -1,5 +1,7 @@
 package com.yingshi.server.dto.notification;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 public record NotificationDto(
         String notificationId,
         String type,
@@ -9,8 +11,12 @@ public record NotificationDto(
         boolean isRead,
         String targetSummary,
         String targetType,
-        String postId,
+        String smallAlbumId,
         String mediaId,
         String trashItemId
 ) {
+    @JsonIgnore
+    public String postId() {
+        return smallAlbumId;
+    }
 }

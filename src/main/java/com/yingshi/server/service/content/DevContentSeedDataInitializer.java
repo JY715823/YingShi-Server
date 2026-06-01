@@ -3,13 +3,11 @@ package com.yingshi.server.service.content;
 import com.yingshi.server.domain.AlbumEntity;
 import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.domain.MediaType;
-import com.yingshi.server.domain.PostAlbumEntity;
 import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.domain.SharedLibraryEntity;
 import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.MediaRepository;
-import com.yingshi.server.repository.PostAlbumRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.SharedLibraryRepository;
@@ -37,7 +35,6 @@ public class DevContentSeedDataInitializer {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository,
             LocalMediaStorageService localMediaStorageService
     ) {
         return args -> {
@@ -55,7 +52,6 @@ public class DevContentSeedDataInitializer {
                     postRepository,
                     mediaRepository,
                     postMediaRepository,
-                    postAlbumRepository,
                     localMediaStorageService
             );
             seedHiddenLibrary(
@@ -64,7 +60,6 @@ public class DevContentSeedDataInitializer {
                     postRepository,
                     mediaRepository,
                     postMediaRepository,
-                    postAlbumRepository,
                     localMediaStorageService
             );
         };
@@ -76,7 +71,6 @@ public class DevContentSeedDataInitializer {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository,
             LocalMediaStorageService localMediaStorageService
     ) {
         mediaRepository.save(createImageMedia(libraryId, "media_001", 2400, 1600, 1777412800000L, localMediaStorageService.ensureSeedImage("media_001", 1), 505_464L));
@@ -88,14 +82,15 @@ public class DevContentSeedDataInitializer {
 
         albumRepository.save(createAlbum(libraryId, "album_001", "示例照片", "横图、竖图、方图和长图的本地示例数据", "media_001"));
         albumRepository.save(createAlbum(libraryId, "album_002", "视频检查", "用于视频封面、播放和导入检查的本地示例数据", "media_006"));
-        albumRepository.save(createAlbum(libraryId, "album_003", "长图检查", "用于长图预览、Viewer 阅读和原图加载检查", "media_005"));
+        albumRepository.save(createAlbum(libraryId, "album_003", "长图检查", "用于长图预览、viewer 阅读和原图加载检查", "media_005"));
 
         postRepository.save(createPost(
                 libraryId,
                 "post_001",
                 "示例照片组",
-                "用于照片流、相册封面和帖子详情检查的本地示例照片。",
+                "用于照片流、相册封面和小相册详情检查的本地示例照片。",
                 "演示用户 A 和 B",
+                "album_001",
                 1777412800000L,
                 "media_001"
         ));
@@ -103,8 +98,9 @@ public class DevContentSeedDataInitializer {
                 libraryId,
                 "post_002",
                 "长图阅读检查",
-                "用于检查长图预览、Viewer 滚动和原文件切换。",
+                "用于检查长图预览、viewer 滚动和原文件切换。",
                 "演示用户 A 和 B",
+                "album_003",
                 1777412200000L,
                 "media_005"
         ));
@@ -114,6 +110,7 @@ public class DevContentSeedDataInitializer {
                 "视频导入检查",
                 "包含本地 mp4 示例和方图，用于视频封面和播放检查。",
                 "演示用户 A 和 B",
+                "album_002",
                 1777411800000L,
                 "media_006"
         ));
@@ -125,11 +122,6 @@ public class DevContentSeedDataInitializer {
         postMediaRepository.save(createPostMedia(libraryId, "post_media_005", "post_002", "media_003", 2));
         postMediaRepository.save(createPostMedia(libraryId, "post_media_006", "post_003", "media_006", 1));
         postMediaRepository.save(createPostMedia(libraryId, "post_media_007", "post_003", "media_001", 2));
-
-        postAlbumRepository.save(createPostAlbum(libraryId, "post_album_001", "post_001", "album_001"));
-        postAlbumRepository.save(createPostAlbum(libraryId, "post_album_002", "post_002", "album_001"));
-        postAlbumRepository.save(createPostAlbum(libraryId, "post_album_003", "post_002", "album_003"));
-        postAlbumRepository.save(createPostAlbum(libraryId, "post_album_004", "post_003", "album_002"));
     }
 
     private void seedHiddenLibrary(
@@ -138,14 +130,12 @@ public class DevContentSeedDataInitializer {
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
-            PostAlbumRepository postAlbumRepository,
             LocalMediaStorageService localMediaStorageService
     ) {
         mediaRepository.save(createImageMedia(libraryId, "media_other_secret", 2400, 2400, 1777410000000L, localMediaStorageService.ensureSeedImage("media_other_secret", 6), 383_089L));
         albumRepository.save(createAlbum(libraryId, "album_other_secret", "内部相册", "用于共享图库隔离检查的内部数据", "media_other_secret"));
-        postRepository.save(createPost(libraryId, "post_other_secret", "内部帖子", "用于共享图库隔离检查的内部数据", "内部成员", 1777410000000L, "media_other_secret"));
+        postRepository.save(createPost(libraryId, "post_other_secret", "内部小相册", "用于共享图库隔离检查的内部数据", "内部成员", "album_other_secret", 1777410000000L, "media_other_secret"));
         postMediaRepository.save(createPostMedia(libraryId, "post_media_other_secret", "post_other_secret", "media_other_secret", 1));
-        postAlbumRepository.save(createPostAlbum(libraryId, "post_album_other_secret", "post_other_secret", "album_other_secret"));
     }
 
     private void ensureLibrary(SharedLibraryRepository libraryRepository, String id, String name) {
@@ -174,6 +164,7 @@ public class DevContentSeedDataInitializer {
             String title,
             String summary,
             String contributorLabel,
+            String albumId,
             long displayTimeMillis,
             String coverMediaId
     ) {
@@ -183,6 +174,7 @@ public class DevContentSeedDataInitializer {
         post.setTitle(title);
         post.setSummary(summary);
         post.setContributorLabel(contributorLabel);
+        post.setAlbumId(albumId);
         post.setDisplayTimeMillis(displayTimeMillis);
         post.setEventStartedAtMillis(displayTimeMillis);
         post.setEventEndedAtMillis(null);
@@ -270,15 +262,6 @@ public class DevContentSeedDataInitializer {
         relation.setPostId(postId);
         relation.setMediaId(mediaId);
         relation.setSortOrder(sortOrder);
-        return relation;
-    }
-
-    private PostAlbumEntity createPostAlbum(String libraryId, String id, String postId, String albumId) {
-        PostAlbumEntity relation = new PostAlbumEntity();
-        relation.setId(id);
-        relation.setLibraryId(libraryId);
-        relation.setPostId(postId);
-        relation.setAlbumId(albumId);
         return relation;
     }
 }

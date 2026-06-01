@@ -1,6 +1,7 @@
 package com.yingshi.server.dto.content;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.util.List;
 
@@ -23,6 +24,10 @@ public record MediaDto(
         Long capturedAtMillis,
         Long importedAtMillis,
         String displayTimeSource,
-        List<String> postIds
+        List<String> smallAlbumIds
 ) {
+    @JsonIgnore
+    public List<String> postIds() {
+        return smallAlbumIds;
+    }
 }

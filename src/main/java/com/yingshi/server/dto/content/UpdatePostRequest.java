@@ -1,5 +1,6 @@
 package com.yingshi.server.dto.content;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.validation.constraints.Size;
 
 import java.util.List;
@@ -23,6 +24,10 @@ public record UpdatePostRequest(
         @Size(max = 20, message = "displayTimeSource must be at most 20 characters.")
         String displayTimeSource,
 
-        List<String> albumIds
+        String albumId
 ) {
+    @JsonIgnore
+    public List<String> albumIds() {
+        return albumId == null || albumId.isBlank() ? List.of() : List.of(albumId);
+    }
 }

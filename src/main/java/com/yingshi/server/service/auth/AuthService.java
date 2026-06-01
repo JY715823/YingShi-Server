@@ -9,6 +9,7 @@ import com.yingshi.server.domain.UserEntity;
 import com.yingshi.server.dto.auth.AuthCurrentUserResponse;
 import com.yingshi.server.dto.auth.AuthLoginRequest;
 import com.yingshi.server.dto.auth.AuthLoginResponse;
+import com.yingshi.server.dto.auth.AuthLogoutRequest;
 import com.yingshi.server.dto.auth.AuthLogoutResponse;
 import com.yingshi.server.dto.auth.AuthPartnerProfileResponse;
 import com.yingshi.server.dto.auth.AuthRefreshTokenRequest;
@@ -22,8 +23,10 @@ import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +42,7 @@ public class AuthService {
     private final SharedLibraryMemberRepository libraryMemberRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
+    private final AuthSessionService authSessionService;
     private final LocalMediaStorageService localMediaStorageService;
 
     public AuthService(
@@ -47,6 +51,7 @@ public class AuthService {
             SharedLibraryMemberRepository libraryMemberRepository,
             PasswordEncoder passwordEncoder,
             JwtTokenService jwtTokenService,
+            AuthSessionService authSessionService,
             LocalMediaStorageService localMediaStorageService
     ) {
         this.userRepository = userRepository;
@@ -54,9 +59,11 @@ public class AuthService {
         this.libraryMemberRepository = libraryMemberRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
+        this.authSessionService = authSessionService;
         this.localMediaStorageService = localMediaStorageService;
     }
 
+    @Transactional
     public AuthLoginResponse login(AuthLoginRequest request) {
         UserEntity user = userRepository.findByAccount(request.account())
                 .orElseThrow(() -> invalidCredentials());
@@ -70,9 +77,18 @@ public class AuthService {
                 user.getId(),
                 user.getAccount(),
                 user.getDisplayName(),
-                library.getId()
+                library.getId(),
+                null
         );
-        JwtTokenBundle tokenBundle = jwtTokenService.issueTokens(authenticatedUser);
+        JwtTokenBundle tokenBundle = jwtTokenService.issueTokensForNewSession(authenticatedUser);
+        authSessionService.createSession(
+                tokenBundle.sessionId(),
+                user.getId(),
+                library.getId(),
+                tokenBundle.refreshTokenId(),
+                tokenBundle.refreshExpireAt(),
+                Instant.now()
+        );
 
         return buildLoginResponse(user, library, tokenBundle);
     }
@@ -84,17 +100,32 @@ public class AuthService {
         return buildCurrentUserResponse(user, library);
     }
 
+    @Transactional
     public AuthRefreshTokenResponse refreshToken(AuthRefreshTokenRequest request) {
-        AuthenticatedUser refreshUser = jwtTokenService.parseRefreshToken(request.refreshToken().trim());
-        UserEntity user = requireCurrentUser(refreshUser.userId());
-        SharedLibraryEntity library = getLibrary(refreshUser.libraryId());
+        ParsedJwtToken refreshToken = jwtTokenService.parseRefreshToken(request.refreshToken().trim());
+        UserEntity user = requireCurrentUser(refreshToken.userId());
+        SharedLibraryEntity library = getLibrary(refreshToken.libraryId());
+        var session = authSessionService.requireActiveRefreshSession(
+                refreshToken.sessionId(),
+                refreshToken.userId(),
+                refreshToken.libraryId(),
+                refreshToken.tokenId()
+        );
         JwtTokenBundle tokenBundle = jwtTokenService.issueTokens(
                 new AuthenticatedUser(
                         user.getId(),
                         user.getAccount(),
                         user.getDisplayName(),
-                        library.getId()
-                )
+                        library.getId(),
+                        session.getId()
+                ),
+                session.getId()
+        );
+        authSessionService.rotateRefreshToken(
+                session,
+                tokenBundle.refreshTokenId(),
+                tokenBundle.refreshExpireAt(),
+                Instant.now()
         );
         return new AuthRefreshTokenResponse(
                 tokenBundle.accessToken(),
@@ -150,7 +181,22 @@ public class AuthService {
         return localMediaStorageService.load(storagePath);
     }
 
-    public AuthLogoutResponse logout() {
+    @Transactional
+    public AuthLogoutResponse logout(AuthenticatedUser currentUser, AuthLogoutRequest request) {
+        String sessionId = currentUser.sessionId();
+        if (request != null && request.refreshToken() != null && !request.refreshToken().isBlank()) {
+            ParsedJwtToken refreshToken = jwtTokenService.parseRefreshToken(request.refreshToken().trim());
+            if (!currentUser.userId().equals(refreshToken.userId())
+                    || !currentUser.libraryId().equals(refreshToken.libraryId())) {
+                throw new ApiException(
+                        HttpStatus.UNAUTHORIZED,
+                        ErrorCode.AUTH_SESSION_INVALID,
+                        "Refresh token does not belong to the current user session."
+                );
+            }
+            sessionId = refreshToken.sessionId();
+        }
+        authSessionService.revokeSession(sessionId, currentUser.userId(), currentUser.libraryId());
         return new AuthLogoutResponse(true);
     }
 

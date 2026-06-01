@@ -26,7 +26,7 @@ public class DevCommentSeedDataInitializer {
                     "library_shared",
                     "user_demo_a",
                     "post_001",
-                    "这条帖子用于检查照片流、相册封面和帖子详情。"
+                    "这条小相册用于检查照片流、相册封面和小相册详情。"
             ));
             commentRepository.save(createPostComment(
                     "comment_post_002",
@@ -40,14 +40,14 @@ public class DevCommentSeedDataInitializer {
                     "library_shared",
                     "user_demo_a",
                     "post_003",
-                    "视频帖子用于检查播放和封面稳定性。"
+                    "视频小相册用于检查播放和封面稳定性。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_001",
                     "library_shared",
                     "user_demo_b",
                     "media_001",
-                    "同一个媒体可以出现在照片流和多个帖子里，媒体评论仍按 mediaId 隔离。"
+                    "同一个媒体可以出现在照片流和多个小相册里，媒体评论仍按 mediaId 隔离。"
             ));
             commentRepository.save(createMediaComment(
                     "comment_media_002",
@@ -84,7 +84,7 @@ public class DevCommentSeedDataInitializer {
         comment.setId(id);
         comment.setLibraryId(libraryId);
         comment.setAuthorId(authorId);
-        comment.setTargetType(CommentTargetType.POST);
+        comment.setTargetType(CommentTargetType.SMALL_ALBUM);
         comment.setPostId(postId);
         comment.setContent(content);
         return comment;

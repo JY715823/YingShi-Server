@@ -1,847 +1,180 @@
-# Yingshi Server 手动测试与联调教�?
+﻿# Yingshi Server 手动测试与联调教程
 
-## 1. 这份文档是干什么的
+## 1. 文档目的
 
-这是一份给开发者自己使用的后端手动测试和客户端联调教程�?
+这是一份给开发者自测后端与联调 Android REAL 模式的手册。
 
-目标有两个：
-
-1. 先确�?`yingshi-server` 本身能正常启动、登录、读写数据、上传文件、删除和恢复�?
-2. 再把 Android 客户端或别的前端指到这个服务上，做真正联调�?
-
-建议你不要一上来就直接打开客户端点页面�?
-
-最稳的顺序是：
+推荐顺序：
 
 1. 启动后端
-2. �?Swagger �?Postman 自测
-3. 确认核心接口都�?
-4. 再接客户�?
+2. 用 Swagger 或 Postman 自测
+3. 确认登录、大相册、小相册、媒体、评论、上传、回收站都正常
+4. 再接客户端
 
----
+## 2. 当前后端支持的核心能力
 
-## 2. 当前后端已经支持什�?
-
-截至现在，这个后端已经有这些能力�?
-
-- 健康检�?
-- Swagger / OpenAPI
-- 账号密码登录
-- `current user`
-- 相册列表
-- 相册下帖子列�?
-- 帖子详情
-- 全局媒体�?
-- 帖子评论和媒体评�?
+- 健康检查
+- 登录与当前用户
+- 大相册列表
+- 大相册下小相册列表
+- 小相册详情
+- 全局媒体流
+- 小相册评论和媒体评论
 - 本地上传
-- 创建帖子
-- 向已有帖子加媒体
-- 调整帖子内媒体顺�?
-- 设置帖子封面
-- 删除帖子
-- 帖子内目录删媒体
-- 媒体系统�?
-- 回收站列表、详情、恢复、移出回收站、撤销移出
+- 创建小相册
+- 向已有小相册加媒体
+- 调整小相册内媒体顺序
+- 设置小相册封面
+- 删除小相册
+- 小相册内目录删媒体
+- 媒体系统删
+- 回收站列表、详情、恢复、移出、撤销移出
 
-当前开发环境特征：
-
-- 端口固定�?`8080`
-- profile 默认�?`dev`
-- 数据库是内存 H2
-- JPA �?`create-drop`
-- 本地上传文件写到项目根目录下�?`local-storage`
-
-这几个点很重要：
-
-- 重启服务后，数据库里的数据会重置�?seed 初始状�?
-- 但是 `local-storage` 目录里的文件不会自动回滚
-- 所以如果你想彻底回到初始环境，除了重启服务，也可以手动删掉 `local-storage`
-
----
-
-## 3. 你需要准备什�?
-
-### 3.1 本机环境
-
-- Java 17
-- 可用�?`8080` 端口
-- Windows PowerShell、Terminal、Git Bash 任意一�?
-
-### 3.2 你至少准备一种调接口工具
-
-推荐优先级：
-
-1. Swagger UI
-2. Postman / Apifox
-3. `curl.exe`
-
-如果你在 Windows PowerShell 里直接敲 `curl`，它可能会走 PowerShell 自己的别名，不一定是你想要的 cURL�?
-
-如果你想严格按命令行来，建议用：
-
-```powershell
-curl.exe
-```
-
-或者直接用 Swagger，最省心�?
-
-### 3.3 准备一个本地测试文�?
-
-为了测试上传，建议你提前准备�?
-
-- 一张小图片，比�?`demo.jpg`
-- 或一个很小的视频，比�?`demo.mp4`
-
-注意�?
-
-- 上传接口会校�?`fileSizeBytes`
-- 所以你在申请上传凭证时，填的大小必须和实际文件大小一�?
-
----
-
-## 4. 如何启动后端
-
-在项目根目录执行�?
+## 3. 启动
 
 ```powershell
 .\mvnw.cmd spring-boot:run
 ```
 
-启动成功后，优先检查下面几个地址�?
-
-- 健康检查：http://localhost:8080/api/health
-- Swagger UI：http://localhost:8080/swagger-ui.html
-- OpenAPI 文档：http://localhost:8080/v3/api-docs
-- H2 Console：http://localhost:8080/h2-console
-
-如果你想先确认构建和测试没问题，可以先跑�?
+如需先跑测试：
 
 ```powershell
 .\mvnw.cmd test
 ```
 
----
+## 4. Seed 数据
 
-## 5. 先认识一�?seed 测试数据
-
-### 5.1 测试账号
+### 4.1 测试账号
 
 - `demo.a@yingshi.local / demo123456`
 - `demo.b@yingshi.local / demo123456`
 
-### 5.2 当前共享空间
-
-- `library_shared`
-
-### 5.3 现成可用的相�?
+### 4.2 大相册
 
 - `album_001` `Spring Window`
 - `album_002` `Weekend Notes`
 - `album_003` `Gear Edit Picks`
 
-### 5.4 现成可用的帖�?
+### 4.3 小相册
 
 - `post_001` `Night Walk`
 - `post_002` `Desk Light`
 - `post_003` `Train Window`
 
-### 5.5 现成可用的媒�?
+### 4.4 媒体
 
-- `media_001`
-- `media_002`
-- `media_003`
-- `media_004`
-- `media_005`
-- `media_006`
+- `media_001` 到 `media_006`
 
-### 5.6 现成评论
+## 5. 推荐 Swagger 流程
 
-- `post_001` 下已经有 2 条帖子评�?
-- `media_001` 下已经有 2 条媒体评�?
-
----
-
-## 6. 最推荐的测试方式：先走 Swagger
-
-### 6.1 打开 Swagger
-
-浏览器打开�?
-
-```text
-http://localhost:8080/swagger-ui.html
-```
-
-### 6.2 先登�?
-
-找到�?
-
-- `POST /api/auth/login`
-
-请求体填�?
-
-```json
-{
-  "account": "demo.a@yingshi.local",
-  "password": "demo123456"
-}
-```
-
-执行成功后，返回里会有：
-
-- `accessToken`
-- `refreshToken`
-
-### 6.3 设置 Bearer Token
-
-点击 Swagger 页面右上角的 `Authorize`�?
-
-�?`accessToken` 填进去�?
-
-建议只填 token 本体，不要自己手动加 `Bearer ` 前缀。Swagger 会自动按 bearer 方式带出去�?
-
-### 6.4 然后按这个顺序点
-
-建议你按下面顺序测试�?
+按这个顺序验证：
 
 1. `GET /api/auth/me`
 2. `GET /api/albums`
-3. `GET /api/albums/{albumId}/posts`
-4. `GET /api/posts/{postId}`
+3. `GET /api/albums/{albumId}/small-albums`
+4. `GET /api/small-albums/{smallAlbumId}`
 5. `GET /api/media/feed`
-6. `GET /api/posts/{postId}/comments`
+6. `GET /api/small-albums/{smallAlbumId}/comments`
 7. `GET /api/media/{mediaId}/comments`
 8. `POST /api/uploads/token`
 9. `POST /api/uploads/{uploadId}/file`
-10. `POST /api/posts/{postId}/media`
-11. `DELETE /api/posts/{postId}/media/{mediaId}`
+10. `POST /api/small-albums/{smallAlbumId}/media`
+11. `DELETE /api/small-albums/{smallAlbumId}/media/{mediaId}`
 12. `DELETE /api/media/{mediaId}`
 13. `GET /api/trash/items`
 14. `POST /api/trash/items/{trashItemId}/restore`
 
-如果�?14 步都通，后端主链路基本就顺了�?
+## 6. 关键手测点
 
----
+### 6.1 大相册与小相册
 
-## 7. 一套完整的手动测试流程
+- `GET /api/albums` 应返回 `smallAlbumCount`
+- `GET /api/albums/album_001/small-albums` 应能看到 `post_001` 和 `post_002`
+- `GET /api/small-albums/post_001` 应返回 `albumId`、`coverMediaId` 与 `mediaItems`
 
-这一段是最核心的，你可以直接照着做�?
+### 6.2 评论分流
 
-### 7.1 第一步：确认服务活着
+- `GET /api/small-albums/post_001/comments` 的 `targetType` 应为 `SMALL_ALBUM`
+- `GET /api/media/media_001/comments` 的 `targetType` 应为 `MEDIA`
 
-访问�?
+### 6.3 上传闭环
 
-```text
-GET http://localhost:8080/api/health
-```
+- 先调用 `POST /api/uploads/token`
+- 再用 `POST /api/uploads/{uploadId}/file` 上传 `multipart/form-data` 字段 `file`
+- 成功后应返回 `media.mediaId`
+- 返回的媒体 `smallAlbumIds` 初始可以为空
 
-你应该看到：
-
-- HTTP 200
-- `data.status = "UP"`
-- 响应头里�?`X-Request-Id`
-
-### 7.2 第二步：登录
-
-请求�?
+### 6.4 加入已有小相册
 
 ```text
-POST http://localhost:8080/api/auth/login
+POST /api/small-albums/post_003/media
 ```
 
-请求体：
-
-```json
-{
-  "account": "demo.a@yingshi.local",
-  "password": "demo123456"
-}
-```
-
-你要重点确认�?
+预期：
 
 - 返回 200
-- `data.userId = user_demo_a`
-- `data.libraryId = library_shared`
-- �?`accessToken`
+- `coverMediaId` 与 `mediaItems` 更新成功
+- `GET /api/media/feed` 中对应媒体的 `smallAlbumIds` 包含 `post_003`
 
-### 7.3 第三步：验证鉴权是否生效
-
-�?token 请求�?
+### 6.5 创建小相册
 
 ```text
-GET /api/auth/me
+POST /api/small-albums
 ```
 
-预期�?
+请求里只传一个 `albumId`，不再支持多大相册归属。
 
-- 返回 200
-- 能看到当前用户信�?
+### 6.6 目录删与系统删
 
-再故意不�?token 调一次：
+- `DELETE /api/small-albums/post_001/media/media_002?deleteMode=directory`
+  - 只删除当前小相册关系，返回 `mediaRemoved`
+- `DELETE /api/media/media_001`
+  - 全局删除媒体，返回 `mediaSystemDeleted`
 
-```text
-GET /api/auth/me
-```
+### 6.7 回收站恢复
 
-预期�?
+- `smallAlbumDeleted` 恢复小相册本体、评论和关系
+- `mediaRemoved` 恢复小相册内媒体关系
+- `mediaSystemDeleted` 恢复媒体本体及关联关系
 
-- 返回 401
-- `error.code = AUTH_UNAUTHORIZED`
-
-这一步是为了确认“公开接口”和“受保护接口”分界没坏�?
-
-### 7.4 第四步：验证现成内容数据
-
-先调�?
-
-```text
-GET /api/albums
-```
-
-预期�?
-
-- 至少能看�?3 个相�?
-
-再调�?
-
-```text
-GET /api/albums/album_001/posts
-```
-
-预期�?
-
-- 能看�?`post_001`
-- 能看�?`post_002`
-
-再调�?
-
-```text
-GET /api/posts/post_001
-```
-
-预期�?
-
-- `coverMediaId = media_001`
-- `mediaItems` �?3 �?
-- 顺序是按 `sortOrder` 返回
-
-再调�?
-
-```text
-GET /api/media/feed
-```
-
-预期�?
-
-- 能看�?6 条全局媒体
-- `media_001` 会带多个 `postIds`
-- 这是按媒体去重后的流，不是按帖子重复铺开
-
-### 7.5 第五步：验证评论分流
-
-调帖子评论：
-
-```text
-GET /api/posts/post_001/comments
-```
-
-预期�?
-
-- `targetType` 都是 `POST`
-- `postId` 有�?
-- `mediaId` �?`null`
-
-调媒体评论：
-
-```text
-GET /api/media/media_001/comments
-```
-
-预期�?
-
-- `targetType` 都是 `MEDIA`
-- `mediaId` 有�?
-- `postId` �?`null`
-
-这一步主要确认评论流没有混�?
-
-### 7.6 第六步：测试上传闭环
-
-先准备一个本地图片，比如�?
-
-```text
-E:\tmp\demo.jpg
-```
-
-先获取文件真实大小�?
-
-�?PowerShell 可以这样看：
-
-```powershell
-(Get-Item E:\tmp\demo.jpg).Length
-```
-
-假设大小�?`12345`，那就去申请上传凭证�?
-
-请求�?
-
-```text
-POST /api/uploads/token
-```
-
-请求体示例：
-
-```json
-{
-  "fileName": "demo.jpg",
-  "mimeType": "image/jpeg",
-  "fileSizeBytes": 12345,
-  "mediaType": "image",
-  "width": 800,
-  "height": 600,
-  "durationMillis": null,
-  "displayTimeMillis": 1777416600000
-}
-```
-
-预期�?
-
-- 返回 200
-- `provider = local`
-- `state = waiting`
-- 返回一�?`uploadId`
-
-然后上传文件�?
-
-```text
-POST /api/uploads/{uploadId}/file
-```
-
-这是 `multipart/form-data`，字段名必须是：
-
-```text
-file
-```
-
-预期�?
-
-- 返回 200
-- `state = success`
-- 返回 `media.mediaId`
-- `media.url` �?`/api/media/files/{mediaId}`
-
-然后马上访问�?
-
-```text
-GET /api/media/files/{mediaId}
-```
-
-预期�?
-
-- 返回 200
-- `Content-Type` 是你上传时的 `mimeType`
-
-### 7.7 第七步：把上传后的媒体加入已有帖�?
-
-请求�?
-
-```text
-POST /api/posts/post_003/media
-```
-
-请求体：
-
-```json
-{
-  "mediaIds": ["刚刚上传得到�?mediaId"],
-  "coverMediaId": "刚刚上传得到�?mediaId"
-}
-```
-
-预期�?
-
-- 返回 200
-- `coverMediaId` 变成你这次上传的媒体
-- `mediaItems` 数量增加
-
-然后再查�?
-
-```text
-GET /api/media/feed
-```
-
-预期�?
-
-- 新上传的媒体应该出现在媒体流�?
-- `postIds` 里应该包�?`post_003`
-
-### 7.8 第八步：创建一个新帖子
-
-如果你已经有现成媒体 ID，可以直接建一个帖子�?
-
-请求�?
-
-```text
-POST /api/posts
-```
-
-请求体示例：
-
-```json
-{
-  "title": "Manual Test Post",
-  "summary": "Created during backend manual testing",
-  "contributorLabel": "Demo A",
-  "displayTimeMillis": 1777413000000,
-  "albumIds": ["album_001"],
-  "initialMediaIds": ["media_003", "media_005"],
-  "coverMediaId": "media_005"
-}
-```
-
-预期�?
-
-- 返回 200
-- 帖子创建成功
-- `albumIds` 绑定成功
-- `coverMediaId` 正常回显
-
-### 7.9 第九步：测试帖子媒体排序和封�?
-
-改封面：
-
-```text
-PATCH /api/posts/{postId}/cover
-```
-
-请求体：
-
-```json
-{
-  "coverMediaId": "media_003"
-}
-```
-
-改顺序：
-
-```text
-PATCH /api/posts/{postId}/media-order
-```
-
-请求体：
-
-```json
-{
-  "orderedMediaIds": ["media_005", "media_003"]
-}
-```
-
-预期�?
-
-- 返回 200
-- 帖子详情里的 `mediaItems` 顺序改变
-- 封面变成新的 `coverMediaId`
-
-### 7.10 第十步：测试目录�?
-
-目录删代表“只把这张媒体从这个帖子里拿掉”，不是全局删除�?
-
-请求�?
-
-```text
-DELETE /api/posts/post_001/media/media_002?deleteMode=directory
-```
-
-预期�?
-
-- 返回 200
-- 返回一�?`trashItemId`
-- `itemType = mediaRemoved`
-
-然后再查�?
-
-```text
-GET /api/posts/post_001
-```
-
-预期�?
-
-- `media_002` 不在这个帖子里了
-- 但它如果还属于别的帖子，或者还在全局媒体里，依然应该可见
-
-### 7.11 第十一步：测试系统�?
-
-系统删代表“这个媒体全局失效”�?
-
-请求�?
-
-```text
-DELETE /api/media/media_001
-```
-
-预期�?
-
-- 返回 200
-- `itemType = mediaSystemDeleted`
-- 返回一�?`trashItemId`
-
-然后检查几个地方：
-
-1. `GET /api/media/feed`
-   预期：`media_001` 不见�?
-
-2. `GET /api/posts/post_001`
-   预期：这个帖子里 `media_001` 不见了，封面可能自动换成别的媒体
-
-3. `GET /api/media/media_001/comments`
-   预期：返�?404
-
-这三步很关键，因为它们能验证系统删和目录删的区别�?
-
-### 7.12 第十二步：测试回收站
-
-先看列表�?
-
-```text
-GET /api/trash/items
-```
-
-预期�?
-
-- 能看到刚才删出来的条�?
-
-再看详情�?
-
-```text
-GET /api/trash/items/{trashItemId}
-```
-
-预期�?
-
-- 能看�?`itemType`
-- 能看到关联的 `postId` �?`mediaId`
-- 能看到是否可恢复
-
-### 7.13 第十三步：测试恢�?
-
-恢复目录删：
-
-```text
-POST /api/trash/items/{trashItemId}/restore
-```
-
-预期�?
-
-- 返回 200
-- `state = restored`
-
-再查原帖子：
-
-```text
-GET /api/posts/post_001
-```
-
-预期�?
-
-- 原来的媒体关系回来了
-- �?`sortOrder` 尽量恢复
-
-恢复系统删也是同一个接口�?
-
-恢复后你要再看：
-
-1. `GET /api/media/feed`
-2. `GET /api/posts/{postId}`
-3. `GET /api/media/{mediaId}/comments`
-
-预期�?
-
-- 媒体重新出现
-- 相关帖子重新挂回该媒�?
-- 媒体评论入口重新可访�?
-
-### 7.14 第十四步：测试“移出回收站”和“撤销移出�?
-
-先移出回收站�?
-
-```text
-POST /api/trash/items/{trashItemId}/remove
-```
-
-预期�?
-
-- 返回 `removedAtMillis`
-- 返回 `undoDeadlineMillis`
-
-再查�?
-
-```text
-GET /api/trash/pending-cleanup
-```
-
-预期�?
-
-- 能看到刚刚移出的条目
-
-然后撤销�?
-
-```text
-POST /api/trash/items/{trashItemId}/undo-remove
-```
-
-预期�?
-
-- 条目重新回到 `inTrash`
-
-注意�?
-
-- 现在还没有真实的 24 小时后台清理
-- `pending cleanup` 目前只是状态占�?
-
----
-
-## 8. 如果你想用命令行测，推荐这样�?
-
-如果你不想全�?Swagger，建议至少把登录�?token 保存跑一下�?
-
-### 8.1 登录
-
-```powershell
-curl.exe -X POST http://localhost:8080/api/auth/login `
-  -H "Content-Type: application/json" `
-  -d "{\"account\":\"demo.a@yingshi.local\",\"password\":\"demo123456\"}"
-```
-
-### 8.2 之后所有受保护接口都带�?
-
-```text
-Authorization: Bearer <accessToken>
-```
-
-### 8.3 一个简单自测组�?
+## 7. curl 简例
 
 ```powershell
 curl.exe http://localhost:8080/api/albums -H "Authorization: Bearer <accessToken>"
-curl.exe http://localhost:8080/api/posts/post_001 -H "Authorization: Bearer <accessToken>"
+curl.exe http://localhost:8080/api/small-albums/post_001 -H "Authorization: Bearer <accessToken>"
 curl.exe http://localhost:8080/api/media/feed -H "Authorization: Bearer <accessToken>"
-curl.exe http://localhost:8080/api/posts/post_001/comments -H "Authorization: Bearer <accessToken>"
+curl.exe http://localhost:8080/api/small-albums/post_001/comments -H "Authorization: Bearer <accessToken>"
 ```
 
----
+## 8. Android 联调建议
 
-## 9. 客户端联调怎么�?
+推荐顺序：
 
-推荐按“先确认网络通，再确认登录通，再确认页面通”的顺序来�?
+1. 登录页接 `POST /api/auth/login` 与 `GET /api/auth/me`
+2. 相册页接 `GET /api/albums`
+3. 大相册下小相册列表接 `GET /api/albums/{albumId}/small-albums`
+4. 小相册详情接 `GET /api/small-albums/{smallAlbumId}`
+5. 照片流接 `GET /api/media/feed`
+6. 评论区接小相册评论与媒体评论接口
+7. 再接上传、加入小相册、删除和回收站
 
-### 9.1 先决定客户端访问哪个 base URL
+## 9. 回归建议
 
-如果客户端和后端都在同一台电脑上�?
-
-- 浏览�?/ Postman：`http://localhost:8080`
-
-如果�?Android Emulator�?
-
-- 通常用：`http://10.0.2.2:8080`
-
-如果是真机：
-
-- 用你电脑在局域网里的 IP，比如：`http://192.168.1.100:8080`
-
-你要保证�?
-
-- 手机和电脑在同一个局域网
-- 电脑防火墙允�?`8080`
-
-### 9.2 在客户端里先只接登录
-
-先只打通：
-
-- `POST /api/auth/login`
-- `GET /api/auth/me`
-
-这一阶段先不要急着接复杂页面�?
-
-先确认：
-
-- 登录成功能拿�?token
-- token 能持久化
-- 后续请求会自动带 `Authorization: Bearer <token>`
-- 401 时客户端能正确处�?
-
-### 9.3 再接只读页面
-
-推荐顺序�?
-
-1. 相册页接 `GET /api/albums`
-2. 相册详情页接 `GET /api/albums/{albumId}/posts`
-3. 帖子详情页接 `GET /api/posts/{postId}`
-4. 照片流接 `GET /api/media/feed`
-5. 评论区接 `GET /api/posts/{postId}/comments` �?`GET /api/media/{mediaId}/comments`
-
-这样做的好处是：
-
-- 先把读接口稳定下�?
-- 再去碰上传、删除、恢复这些状态更复杂的能�?
-
-### 9.4 再接写接�?
-
-推荐顺序�?
-
-1. `POST /api/posts/{postId}/comments`
-2. `PATCH /api/comments/{commentId}`
-3. `DELETE /api/comments/{commentId}`
-4. `POST /api/uploads/token`
-5. `POST /api/uploads/{uploadId}/file`
-6. `POST /api/posts/{postId}/media`
-7. `PATCH /api/posts/{postId}/cover`
-8. `PATCH /api/posts/{postId}/media-order`
-9. 删除和回收站接口
-
-### 9.5 如果客户端要做上�?
-
-本地上传链路是两段式�?
-
-1. 先申请上传任�?
-2. 再把文件传到 `uploadUrl`
-
-所以客户端要做的不是“直接传文件到一个固定地址”，而是�?
-
-1. �?`POST /api/uploads/token`
-2. 拿到 `uploadId` �?`uploadUrl`
-3. �?multipart 上传 `file`
-4. 从返回里�?`mediaId`
-5. 再把这个 `mediaId` 挂到帖子
-
-### 9.6 如果联调时页面表现不对，先这样排�?
-
-如果页面空白、列表为空、详情打不开，优先按这个顺序查：
-
-1. 请求 URL 对不�?
-2. token 有没有带�?
-3. 是否误用�?`localhost`
-4. 目标 `postId` / `albumId` / `mediaId` 是否存在
-5. 该数据是否被你前一步删进回收站�?
-6. 服务是否中途重启，导致 H2 数据被重�?
-
----
-
-## 10. 我推荐你按这个回归顺序测一�?
-
-如果你想做一次比较完整的回归，建议照下面顺序�?
+完整回归建议按下面顺序：
 
 1. `health`
 2. `login`
 3. `me`
 4. `albums`
-5. `album posts`
-6. `post detail`
+5. `album small albums`
+6. `small album detail`
 7. `media feed`
-8. `post comments`
+8. `small album comments`
 9. `media comments`
 10. `upload token`
 11. `upload file`
-12. `attach media to post`
-13. `create post`
+12. `attach media to small album`
+13. `create small album`
 14. `update cover`
 15. `update media order`
 16. `directory delete`
@@ -851,85 +184,3 @@ curl.exe http://localhost:8080/api/posts/post_001/comments -H "Authorization: Be
 20. `restore`
 21. `remove from trash`
 22. `undo remove`
-
-你每完成一个步骤，最好记一下：
-
-- 请求�?
-- 返回�?
-- 关键 ID
-- 这个操作是否影响了后面的测试数据
-
-这样出了问题会很好定位�?
-
----
-
-## 11. 常见�?
-
-### 11.1 重启服务后数据没�?
-
-这是正常的�?
-
-因为开发环境是�?
-
-- H2 内存�?
-- `ddl-auto: create-drop`
-
-所以重启后数据会回�?seed 初始状态�?
-
-### 11.2 上传时报文件大小不匹�?
-
-最常见原因是：
-
-- `fileSizeBytes` 不是实际文件大小
-- `mimeType` 填错
-
-### 11.3 Swagger 里明明登录了，接口还�?401
-
-优先检查：
-
-- 有没有点 `Authorize`
-- 填进去的是不�?`accessToken`
-- 有没有把 `refreshToken` 误填进去
-
-### 11.4 真机联调一直连不上
-
-优先检查：
-
-- 后端是不是监听成功了
-- 手机和电脑是否同网段
-- base URL 是否写成�?`localhost`
-- 电脑防火墙有没有�?`8080`
-
-### 11.5 发现评论或媒体“突然没了�?
-
-先看是不是你刚做过：
-
-- 删帖�?
-- 系统删媒�?
-- 恢复回收�?
-
-现在评论和媒体可见性会跟随帖子/媒体状态变化�?
-
----
-
-## 12. 建议你记录一份联调结�?
-
-每次联调完成后，建议你至少记这几项：
-
-- 后端分支名或 commit
-- 客户端分支名�?commit
-- 测试时间
-- base URL
-- 登录是否通过
-- 上传是否通过
-- 创建帖子是否通过
-- 删除和恢复是否通过
-- 未解决问题列�?
-
-如果后面要多人协作，这份记录会非常有用�?
-
----
-
-## 13. 一句话版建�?
-
-先用 Swagger 把登录、相册、帖子、评论、上传、删除、回收站全点通，再让客户端接 `http://10.0.2.2:8080` 或你电脑局域网 IP，这样联调最稳�?

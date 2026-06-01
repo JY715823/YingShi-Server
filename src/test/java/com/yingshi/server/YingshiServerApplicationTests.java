@@ -3,6 +3,8 @@ package com.yingshi.server;
 import com.jayway.jsonpath.JsonPath;
 import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.repository.MediaRepository;
+import com.yingshi.server.repository.TrashItemRepository;
+import com.yingshi.server.service.trash.PendingCleanupScheduler;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,6 +21,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -52,6 +55,12 @@ class YingshiServerApplicationTests {
 
     @Autowired
     private MediaRepository mediaRepository;
+
+    @Autowired
+    private PendingCleanupScheduler pendingCleanupScheduler;
+
+    @Autowired
+    private TrashItemRepository trashItemRepository;
 
     @Test
     void contextLoads() {
@@ -119,6 +128,95 @@ class YingshiServerApplicationTests {
                         .content("{}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.success").value(true));
+    }
+
+    @Test
+    void logoutRevokesCurrentAccessToken() throws Exception {
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "account": "demo.a@yingshi.local",
+                                  "password": "demo123456"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String accessToken = readField(loginResult, "/data/accessToken");
+
+        mockMvc.perform(post("/api/auth/logout")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.success").value(true));
+
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("AUTH_SESSION_INVALID"));
+    }
+
+    @Test
+    void refreshRotationInvalidatesOldRefreshTokenAndSupportsLogoutBody() throws Exception {
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "account": "demo.a@yingshi.local",
+                                  "password": "demo123456"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String accessToken = readField(loginResult, "/data/accessToken");
+        String refreshToken = readField(loginResult, "/data/refreshToken");
+
+        MvcResult refreshResult = mockMvc.perform(post("/api/auth/refresh-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "refreshToken": "%s"
+                                }
+                                """.formatted(refreshToken)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String rotatedAccessToken = readField(refreshResult, "/data/accessToken");
+        String rotatedRefreshToken = readField(refreshResult, "/data/refreshToken");
+
+        mockMvc.perform(post("/api/auth/refresh-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "refreshToken": "%s"
+                                }
+                                """.formatted(refreshToken)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("AUTH_SESSION_INVALID"));
+
+        mockMvc.perform(post("/api/auth/logout")
+                        .header("Authorization", "Bearer " + rotatedAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "refreshToken": "%s"
+                                }
+                                """.formatted(rotatedRefreshToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.success").value(true));
+
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("AUTH_SESSION_INVALID"));
+
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + rotatedAccessToken))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("AUTH_SESSION_INVALID"));
     }
 
     @Test
@@ -197,17 +295,16 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(3));
 
-        mockMvc.perform(get("/api/albums/album_001/posts")
+        mockMvc.perform(get("/api/albums/album_001/small-albums")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(2))
-                .andExpect(jsonPath("$.data[0].postId").value("post_001"))
-                .andExpect(jsonPath("$.data[1].postId").value("post_002"));
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].smallAlbumId").value("post_001"));
 
-        mockMvc.perform(get("/api/posts/post_001")
+        mockMvc.perform(get("/api/small-albums/post_001")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.postId").value("post_001"))
+                .andExpect(jsonPath("$.data.smallAlbumId").value("post_001"))
                 .andExpect(jsonPath("$.data.coverMediaId").value("media_001"))
                 .andExpect(jsonPath("$.data.mediaItems.length()").value(3))
                 .andExpect(jsonPath("$.data.mediaItems[0].sortOrder").value(1))
@@ -223,7 +320,7 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.length()").value(6))
                 .andExpect(jsonPath("$.data[0].mediaId").value("media_001"))
                 .andExpect(jsonPath("$.data[0].url").value("/api/media/files/media_001"))
-                .andExpect(jsonPath("$.data[0].postIds.length()").value(2));
+                .andExpect(jsonPath("$.data[0].smallAlbumIds.length()").value(2));
 
         MvcResult firstFeedPageResult = mockMvc.perform(get("/api/media/feed")
                         .queryParam("pageSize", "2")
@@ -267,7 +364,7 @@ class YingshiServerApplicationTests {
     void contentMutationApisWorkForCurrentSpace() throws Exception {
         String accessToken = loginAndGetAccessToken();
 
-        MvcResult createResult = mockMvc.perform(post("/api/posts")
+        MvcResult createResult = mockMvc.perform(post("/api/small-albums")
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -276,20 +373,20 @@ class YingshiServerApplicationTests {
                                   "summary": "Built from seeded media",
                                   "contributorLabel": "Demo A",
                                   "displayTimeMillis": 1777413000000,
-                                  "albumIds": ["album_001", "album_003"],
+                                  "albumId": "album_003",
                                   "initialMediaIds": ["media_003", "media_005"],
                                   "coverMediaId": "media_005"
                                 }
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.title").value("Fresh Layout"))
-                .andExpect(jsonPath("$.data.albumIds.length()").value(2))
+                .andExpect(jsonPath("$.data.albumId").value("album_003"))
                 .andExpect(jsonPath("$.data.coverMediaId").value("media_005"))
                 .andReturn();
 
-        String postId = readField(createResult, "/data/postId");
+        String postId = readField(createResult, "/data/smallAlbumId");
 
-        mockMvc.perform(post("/api/posts")
+        mockMvc.perform(post("/api/small-albums")
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -298,7 +395,7 @@ class YingshiServerApplicationTests {
                                   "summary": "Created before media is attached",
                                   "contributorLabel": "Demo A",
                                   "displayTimeMillis": 1777413100000,
-                                  "albumIds": ["album_001"],
+                                  "albumId": "album_001",
                                   "initialMediaIds": []
                                 }
                                 """))
@@ -308,37 +405,35 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.mediaCount").value(0))
                 .andExpect(jsonPath("$.data.mediaItems.length()").value(0));
 
-        mockMvc.perform(patch("/api/posts/" + postId)
+        mockMvc.perform(patch("/api/small-albums/" + postId)
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                   "title": "Fresh Layout Updated",
                                   "summary": "Updated summary",
-                                  "albumIds": ["album_002"]
+                                  "albumId": "album_002"
                                 }
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.title").value("Fresh Layout Updated"))
-                .andExpect(jsonPath("$.data.albumIds.length()").value(1))
-                .andExpect(jsonPath("$.data.albumIds[0]").value("album_002"));
+                .andExpect(jsonPath("$.data.albumId").value("album_002"));
 
-        mockMvc.perform(patch("/api/posts/" + postId)
+        mockMvc.perform(patch("/api/small-albums/" + postId)
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                   "title": "Fresh Layout Stable",
                                   "summary": "Updated summary again",
-                                  "albumIds": ["album_002"]
+                                  "albumId": "album_002"
                                 }
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.title").value("Fresh Layout Stable"))
-                .andExpect(jsonPath("$.data.albumIds.length()").value(1))
-                .andExpect(jsonPath("$.data.albumIds[0]").value("album_002"));
+                .andExpect(jsonPath("$.data.albumId").value("album_002"));
 
-        mockMvc.perform(patch("/api/posts/" + postId + "/cover")
+        mockMvc.perform(patch("/api/small-albums/" + postId + "/cover")
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -349,7 +444,7 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.coverMediaId").value("media_003"));
 
-        mockMvc.perform(patch("/api/posts/" + postId + "/media-order")
+        mockMvc.perform(patch("/api/small-albums/" + postId + "/media-order")
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -366,22 +461,22 @@ class YingshiServerApplicationTests {
     void currentUserCannotAccessOtherSpacePost() throws Exception {
         String accessToken = loginAndGetAccessToken();
 
-        mockMvc.perform(get("/api/posts/post_other_secret")
+        mockMvc.perform(get("/api/small-albums/post_other_secret")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error.code").value("POST_NOT_FOUND"));
+                .andExpect(jsonPath("$.error.code").value("SMALL_ALBUM_NOT_FOUND"));
     }
 
     @Test
     void commentApisWorkAndPostMediaFlowsStaySeparated() throws Exception {
         String accessToken = loginAndGetAccessToken();
 
-        mockMvc.perform(get("/api/posts/post_001/comments")
+        mockMvc.perform(get("/api/small-albums/post_001/comments")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.comments.length()").value(2))
-                .andExpect(jsonPath("$.data.comments[0].targetType").value("POST"))
-                .andExpect(jsonPath("$.data.comments[0].postId").value("post_001"))
+                .andExpect(jsonPath("$.data.comments[0].targetType").value("SMALL_ALBUM"))
+                .andExpect(jsonPath("$.data.comments[0].smallAlbumId").value("post_001"))
                 .andExpect(jsonPath("$.data.comments[0].mediaId").value(nullValue()));
 
         mockMvc.perform(get("/api/media/media_001/comments")
@@ -390,9 +485,9 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.comments.length()").value(2))
                 .andExpect(jsonPath("$.data.comments[0].targetType").value("MEDIA"))
                 .andExpect(jsonPath("$.data.comments[0].mediaId").value("media_001"))
-                .andExpect(jsonPath("$.data.comments[0].postId").value(nullValue()));
+                .andExpect(jsonPath("$.data.comments[0].smallAlbumId").value(nullValue()));
 
-        MvcResult postCommentResult = mockMvc.perform(post("/api/posts/post_001/comments")
+        MvcResult postCommentResult = mockMvc.perform(post("/api/small-albums/post_001/comments")
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -401,8 +496,8 @@ class YingshiServerApplicationTests {
                                 }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.targetType").value("POST"))
-                .andExpect(jsonPath("$.data.postId").value("post_001"))
+                .andExpect(jsonPath("$.data.targetType").value("SMALL_ALBUM"))
+                .andExpect(jsonPath("$.data.smallAlbumId").value("post_001"))
                 .andExpect(jsonPath("$.data.mediaId").value(nullValue()))
                 .andReturn();
 
@@ -417,7 +512,7 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.targetType").value("MEDIA"))
                 .andExpect(jsonPath("$.data.mediaId").value("media_001"))
-                .andExpect(jsonPath("$.data.postId").value(nullValue()))
+                .andExpect(jsonPath("$.data.smallAlbumId").value(nullValue()))
                 .andReturn();
 
         String postCommentId = readField(postCommentResult, "/data/commentId");
@@ -469,10 +564,80 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.commentId").value("comment_post_002"))
                 .andExpect(jsonPath("$.data.isDeleted").value(true));
 
-        mockMvc.perform(get("/api/posts/post_other_secret/comments")
+        mockMvc.perform(get("/api/small-albums/post_other_secret/comments")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("COMMENT_TARGET_NOT_FOUND"));
+    }
+
+    @Test
+    void notificationsIncludeCommentCreateEditDeleteVariants() throws Exception {
+        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
+        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+
+        MvcResult createdCommentResult = mockMvc.perform(post("/api/small-albums/post_001/comments")
+                        .header("Authorization", "Bearer " + demoBAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "B created comment for notifications"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+        String createdCommentId = readField(createdCommentResult, "/data/commentId");
+
+        MvcResult authorCommentResult = mockMvc.perform(post("/api/media/media_001/comments")
+                        .header("Authorization", "Bearer " + demoAAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "A original comment for edit/delete notifications"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+        String authorCommentId = readField(authorCommentResult, "/data/commentId");
+
+        mockMvc.perform(patch("/api/comments/" + authorCommentId)
+                        .header("Authorization", "Bearer " + demoBAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "B edited A's comment"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content").value("B edited A's comment"));
+
+        mockMvc.perform(delete("/api/comments/" + authorCommentId)
+                        .header("Authorization", "Bearer " + demoBAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isDeleted").value(true));
+
+        MvcResult notificationsResult = mockMvc.perform(get("/api/notifications")
+                        .queryParam("limit", "20")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        List<Map<String, Object>> notifications = JsonPath.parse(
+                        notificationsResult.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .read("$.data");
+
+        assertTrue(notifications.stream().anyMatch(notification ->
+                ("comment:" + createdCommentId).equals(notification.get("notificationId"))
+                        && "comment".equals(notification.get("type"))
+        ));
+        assertTrue(notifications.stream().anyMatch(notification ->
+                String.valueOf(notification.get("notificationId")).startsWith("comment-edit:" + authorCommentId + ":")
+                        && "comment_edit".equals(notification.get("type"))
+                        && "media_001".equals(notification.get("mediaId"))
+        ));
+        assertTrue(notifications.stream().anyMatch(notification ->
+                String.valueOf(notification.get("notificationId")).startsWith("comment-delete:" + authorCommentId + ":")
+                        && "comment_delete".equals(notification.get("type"))
+        ));
     }
 
     @Test
@@ -527,7 +692,7 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Type", "image/jpeg"));
 
-        mockMvc.perform(post("/api/posts/post_003/media")
+        mockMvc.perform(post("/api/small-albums/post_003/media")
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -549,8 +714,8 @@ class YingshiServerApplicationTests {
                 .read("$.data[?(@.mediaId=='%s')]".formatted(mediaId));
         assertEquals(1, matchedItems.size());
         @SuppressWarnings("unchecked")
-        List<String> postIds = (List<String>) matchedItems.get(0).get("postIds");
-        assertTrue(postIds.contains("post_003"));
+        List<String> smallAlbumIds = (List<String>) matchedItems.get(0).get("smallAlbumIds");
+        assertTrue(smallAlbumIds.contains("post_003"));
 
         MvcResult duplicateTokenResult = mockMvc.perform(post("/api/uploads/token")
                         .header("Authorization", "Bearer " + accessToken)
@@ -593,7 +758,7 @@ class YingshiServerApplicationTests {
     void directoryDeleteAndSystemDeleteHaveDifferentTrashBehavior() throws Exception {
         String accessToken = loginAndGetAccessToken();
 
-        MvcResult directoryDeleteResult = mockMvc.perform(delete("/api/posts/post_001/media/media_002")
+        MvcResult directoryDeleteResult = mockMvc.perform(delete("/api/small-albums/post_001/media/media_002")
                         .queryParam("deleteMode", "directory")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
@@ -604,7 +769,7 @@ class YingshiServerApplicationTests {
 
         String mediaRemovedTrashId = readField(directoryDeleteResult, "/data/trashItemId");
 
-        mockMvc.perform(get("/api/posts/post_001")
+        mockMvc.perform(get("/api/small-albums/post_001")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.mediaCount").value(2))
@@ -622,7 +787,7 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.state").value("restored"));
 
-        mockMvc.perform(get("/api/posts/post_001")
+        mockMvc.perform(get("/api/small-albums/post_001")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.mediaCount").value(3))
@@ -655,7 +820,7 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.length()").value(5))
                 .andExpect(jsonPath("$.data[0].mediaId").value("media_002"));
 
-        mockMvc.perform(get("/api/posts/post_001")
+        mockMvc.perform(get("/api/small-albums/post_001")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.mediaCount").value(2))
@@ -695,7 +860,7 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.state").value("restored"));
 
-        mockMvc.perform(get("/api/posts/post_001")
+        mockMvc.perform(get("/api/small-albums/post_001")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.mediaCount").value(3));
@@ -791,25 +956,25 @@ class YingshiServerApplicationTests {
     void deletedPostCanBeRestoredFromTrashWithCommentVisibility() throws Exception {
         String accessToken = loginAndGetAccessToken();
 
-        MvcResult deleteResult = mockMvc.perform(delete("/api/posts/post_002")
+        MvcResult deleteResult = mockMvc.perform(delete("/api/small-albums/post_002")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.itemType").value("postDeleted"))
+                .andExpect(jsonPath("$.data.itemType").value("smallAlbumDeleted"))
                 .andReturn();
 
         String trashItemId = readField(deleteResult, "/data/trashItemId");
 
-        mockMvc.perform(get("/api/posts/post_002")
+        mockMvc.perform(get("/api/small-albums/post_002")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error.code").value("POST_NOT_FOUND"));
+                .andExpect(jsonPath("$.error.code").value("SMALL_ALBUM_NOT_FOUND"));
 
-        mockMvc.perform(get("/api/posts/post_002/comments")
+        mockMvc.perform(get("/api/small-albums/post_002/comments")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.comments.length()").value(0));
 
-        mockMvc.perform(get("/api/albums/album_003/posts")
+        mockMvc.perform(get("/api/albums/album_003/small-albums")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(0));
@@ -819,15 +984,46 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.state").value("restored"));
 
-        mockMvc.perform(get("/api/posts/post_002")
+        mockMvc.perform(get("/api/small-albums/post_002")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.postId").value("post_002"));
+                .andExpect(jsonPath("$.data.smallAlbumId").value("post_002"));
 
-        mockMvc.perform(get("/api/posts/post_002/comments")
+        mockMvc.perform(get("/api/small-albums/post_002/comments")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.comments.length()").value(0));
+    }
+
+    @Test
+    void pendingCleanupSchedulerPurgesExpiredItems() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        MvcResult deleteResult = mockMvc.perform(delete("/api/media/media_001")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        String trashItemId = readField(deleteResult, "/data/trashItemId");
+
+        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/remove")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trashItemId").value(trashItemId));
+
+        var trashItem = trashItemRepository.findById(trashItemId).orElseThrow();
+        trashItem.setUndoDeadlineAt(Instant.now().minusSeconds(5));
+        trashItemRepository.save(trashItem);
+
+        pendingCleanupScheduler.purgeExpiredPendingCleanupItems();
+
+        mockMvc.perform(get("/api/trash/items/" + trashItemId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("TRASH_ITEM_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/media/files/media_001")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound());
     }
 
     private String loginAndGetAccessToken() throws Exception {

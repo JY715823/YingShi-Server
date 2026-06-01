@@ -19,13 +19,16 @@ public class JwtAuthenticationInterceptor implements HandlerInterceptor {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final JwtTokenService jwtTokenService;
+    private final AuthSessionService authSessionService;
     private final AuthenticatedUserLoader authenticatedUserLoader;
 
     public JwtAuthenticationInterceptor(
             JwtTokenService jwtTokenService,
+            AuthSessionService authSessionService,
             AuthenticatedUserLoader authenticatedUserLoader
     ) {
         this.jwtTokenService = jwtTokenService;
+        this.authSessionService = authSessionService;
         this.authenticatedUserLoader = authenticatedUserLoader;
     }
 
@@ -53,8 +56,13 @@ public class JwtAuthenticationInterceptor implements HandlerInterceptor {
             );
         }
 
-        AuthenticatedUser tokenUser = jwtTokenService.parseAccessToken(token);
-        AuthenticatedUser currentUser = authenticatedUserLoader.loadCurrentUser(tokenUser.userId(), tokenUser.libraryId());
+        ParsedJwtToken tokenUser = jwtTokenService.parseAccessToken(token);
+        authSessionService.requireActiveAccessSession(
+                tokenUser.sessionId(),
+                tokenUser.userId(),
+                tokenUser.libraryId()
+        );
+        AuthenticatedUser currentUser = authenticatedUserLoader.loadCurrentUser(tokenUser);
         request.setAttribute(CURRENT_USER_ATTRIBUTE, currentUser);
         return true;
     }
