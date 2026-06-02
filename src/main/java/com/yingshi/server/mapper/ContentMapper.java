@@ -23,8 +23,10 @@ public class ContentMapper {
         return new AlbumDto(
                 album.getId(),
                 album.getTitle(),
-                album.getSubtitle(),
+                album.getSubtitle() == null ? "" : album.getSubtitle(),
                 album.getCoverMediaId(),
+                album.getSystemKey(),
+                Boolean.TRUE.equals(album.getIncludeInPhotoFeed()),
                 smallAlbumCount
         );
     }
@@ -40,6 +42,7 @@ public class ContentMapper {
                 post.getEventEndedAtMillis(),
                 post.getDisplayTimeSource(),
                 albumId,
+                post.getSystemKey(),
                 coverMediaId,
                 mediaCount
         );
@@ -62,6 +65,7 @@ public class ContentMapper {
                 post.getEventEndedAtMillis(),
                 post.getDisplayTimeSource(),
                 albumId,
+                post.getSystemKey(),
                 coverMediaId,
                 mediaCount,
                 mediaItems
@@ -97,6 +101,8 @@ public class ContentMapper {
                 media.getCapturedAtMillis(),
                 media.getImportedAtMillis(),
                 media.getDisplayTimeSource(),
+                media.getRecordOwnerUserId(),
+                media.getUploadedByUserId(),
                 smallAlbumIds
         );
     }

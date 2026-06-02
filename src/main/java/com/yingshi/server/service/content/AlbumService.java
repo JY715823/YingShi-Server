@@ -1,5 +1,6 @@
 package com.yingshi.server.service.content;
 
+import com.yingshi.server.common.IdGenerator;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
@@ -7,6 +8,7 @@ import com.yingshi.server.domain.AlbumEntity;
 import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.dto.content.AlbumDto;
+import com.yingshi.server.dto.content.CreateAlbumRequest;
 import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.mapper.ContentMapper;
 import com.yingshi.server.repository.AlbumRepository;
@@ -14,6 +16,7 @@ import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +43,19 @@ public class AlbumService {
         this.contentMapper = contentMapper;
     }
 
+    @Transactional
+    public AlbumDto createAlbum(CreateAlbumRequest request, AuthenticatedUser currentUser) {
+        AlbumEntity album = new AlbumEntity();
+        album.setId(IdGenerator.newId("album"));
+        album.setLibraryId(currentUser.libraryId());
+        album.setTitle(request.title().trim());
+        album.setSubtitle(request.subtitle() == null ? "" : request.subtitle().trim());
+        album.setCoverMediaId(null);
+        albumRepository.save(album);
+        return contentMapper.toAlbumDto(album, 0L);
+    }
+
+    @Transactional(readOnly = true)
     public List<AlbumDto> listAlbums(AuthenticatedUser currentUser) {
         String libraryId = currentUser.libraryId();
         List<AlbumEntity> albums = albumRepository.findByLibraryIdOrderByTitleAsc(libraryId);
@@ -55,6 +71,7 @@ public class AlbumService {
         return results;
     }
 
+    @Transactional(readOnly = true)
     public List<PostSummaryDto> listAlbumPosts(String albumId, AuthenticatedUser currentUser) {
         String libraryId = currentUser.libraryId();
         requireAlbum(albumId, libraryId);

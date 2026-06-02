@@ -44,6 +44,9 @@ public class PostEntity extends LibraryScopedEntity {
     @Column
     private Instant deletedAt;
 
+    @Column(length = 80)
+    private String systemKey;
+
     public String getId() {
         return id;
     }
@@ -130,5 +133,13 @@ public class PostEntity extends LibraryScopedEntity {
 
     public void setDeletedAt(Instant deletedAt) {
         this.deletedAt = deletedAt;
+    }
+
+    public String getSystemKey() {
+        return systemKey;
+    }
+
+    public void setSystemKey(String systemKey) {
+        this.systemKey = systemKey;
     }
 }

@@ -13,6 +13,8 @@ public interface PostRepository extends JpaRepository<PostEntity, String> {
 
     Optional<PostEntity> findByIdAndLibraryIdAndDeletedAtIsNull(String id, String libraryId);
 
+    Optional<PostEntity> findByLibraryIdAndAlbumIdAndSystemKeyAndDeletedAtIsNull(String libraryId, String albumId, String systemKey);
+
     List<PostEntity> findByLibraryIdAndIdIn(String libraryId, Collection<String> ids);
 
     List<PostEntity> findByLibraryIdAndIdInAndDeletedAtIsNull(String libraryId, Collection<String> ids);

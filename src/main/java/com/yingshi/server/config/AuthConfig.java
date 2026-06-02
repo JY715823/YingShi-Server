@@ -7,7 +7,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 @Configuration
-@EnableConfigurationProperties({AuthProperties.class, StorageProperties.class})
+@EnableConfigurationProperties({AuthProperties.class, StorageProperties.class, FcmProperties.class})
 public class AuthConfig {
 
     @Bean

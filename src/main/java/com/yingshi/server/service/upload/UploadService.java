@@ -78,6 +78,7 @@ public class UploadService {
         task.setImportedAtMillis(importedAtMillis);
         task.setDisplayTimeSource(displayTimeSource);
         task.setSourceFingerprint(normalizeSourceFingerprint(request.sourceFingerprint()));
+        task.setUploadedByUserId(currentUser.userId());
         task.setState(UploadState.WAITING);
         task.setExpireAt(Instant.now().plus(UPLOAD_TTL));
         uploadTaskRepository.save(task);
@@ -281,6 +282,7 @@ public class UploadService {
         media.setOriginalObjectKey(storedFile.objectKey());
         media.setChecksum(storedFile.checksum());
         media.setSourceFingerprint(task.getSourceFingerprint());
+        media.setUploadedByUserId(task.getUploadedByUserId());
         return media;
     }
 

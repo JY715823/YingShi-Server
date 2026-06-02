@@ -13,5 +13,7 @@ public interface AlbumRepository extends JpaRepository<AlbumEntity, String> {
 
     Optional<AlbumEntity> findByIdAndLibraryId(String id, String libraryId);
 
+    Optional<AlbumEntity> findByLibraryIdAndSystemKey(String libraryId, String systemKey);
+
     List<AlbumEntity> findByLibraryIdAndIdIn(String libraryId, Collection<String> ids);
 }

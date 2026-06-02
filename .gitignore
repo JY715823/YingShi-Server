@@ -4,6 +4,9 @@ local-storage/
 .env
 .env.*
 !.env.example
+firebase-service-account*.json
+*firebase*service*account*.json
+service-account*.json
 minio-data/
 postgres-data/
 pg-data/

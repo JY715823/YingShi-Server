@@ -14,6 +14,7 @@ public record PostSummaryDto(
         Long eventEndedAtMillis,
         String displayTimeSource,
         String albumId,
+        String systemKey,
         String coverMediaId,
         long mediaCount
 ) {

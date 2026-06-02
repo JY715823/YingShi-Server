@@ -24,6 +24,8 @@ public record MediaDto(
         Long capturedAtMillis,
         Long importedAtMillis,
         String displayTimeSource,
+        String recordOwnerUserId,
+        String uploadedByUserId,
         List<String> smallAlbumIds
 ) {
     @JsonIgnore

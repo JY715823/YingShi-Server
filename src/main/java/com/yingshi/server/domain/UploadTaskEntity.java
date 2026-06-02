@@ -69,6 +69,9 @@ public class UploadTaskEntity extends LibraryScopedEntity {
     @Column(length = 128)
     private String sourceFingerprint;
 
+    @Column(length = 255)
+    private String uploadedByUserId;
+
     public String getId() {
         return id;
     }
@@ -211,5 +214,13 @@ public class UploadTaskEntity extends LibraryScopedEntity {
 
     public void setSourceFingerprint(String sourceFingerprint) {
         this.sourceFingerprint = sourceFingerprint;
+    }
+
+    public String getUploadedByUserId() {
+        return uploadedByUserId;
+    }
+
+    public void setUploadedByUserId(String uploadedByUserId) {
+        this.uploadedByUserId = uploadedByUserId;
     }
 }

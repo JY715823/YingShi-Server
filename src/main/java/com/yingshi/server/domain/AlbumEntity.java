@@ -21,6 +21,12 @@ public class AlbumEntity extends LibraryScopedEntity {
     @Column
     private String coverMediaId;
 
+    @Column(length = 80)
+    private String systemKey;
+
+    @Column(nullable = false)
+    private Boolean includeInPhotoFeed = true;
+
     public String getId() {
         return id;
     }
@@ -51,5 +57,21 @@ public class AlbumEntity extends LibraryScopedEntity {
 
     public void setCoverMediaId(String coverMediaId) {
         this.coverMediaId = coverMediaId;
+    }
+
+    public String getSystemKey() {
+        return systemKey;
+    }
+
+    public void setSystemKey(String systemKey) {
+        this.systemKey = systemKey;
+    }
+
+    public Boolean getIncludeInPhotoFeed() {
+        return includeInPhotoFeed;
+    }
+
+    public void setIncludeInPhotoFeed(Boolean includeInPhotoFeed) {
+        this.includeInPhotoFeed = includeInPhotoFeed;
     }
 }

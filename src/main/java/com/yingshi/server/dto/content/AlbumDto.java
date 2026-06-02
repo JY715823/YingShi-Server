@@ -7,6 +7,8 @@ public record AlbumDto(
         String title,
         String subtitle,
         String coverMediaId,
+        String systemKey,
+        boolean includeInPhotoFeed,
         long smallAlbumCount
 ) {
     @JsonIgnore

@@ -112,7 +112,7 @@ public class TrashService {
         PostEntity post = requireActivePost(postId, currentUser.libraryId());
         PostMediaEntity relation = requireRelation(currentUser.libraryId(), postId, mediaId);
         if (deleteMode == PostMediaDeleteMode.SYSTEM) {
-            return systemDeleteMediaInternal(mediaId, currentUser, Optional.of(post.getId()));
+            return systemDeleteMediaInternal(mediaId, currentUser, Optional.of(post.getId()), false);
         }
 
         assertPostKeepsVisibleMedia(
@@ -147,7 +147,12 @@ public class TrashService {
 
     @Transactional
     public TrashItemDto systemDeleteMedia(String mediaId, AuthenticatedUser currentUser) {
-        return systemDeleteMediaInternal(mediaId, currentUser, Optional.empty());
+        return systemDeleteMediaInternal(mediaId, currentUser, Optional.empty(), false);
+    }
+
+    @Transactional
+    public TrashItemDto systemDeleteMediaAllowingEmptySmallAlbums(String mediaId, AuthenticatedUser currentUser) {
+        return systemDeleteMediaInternal(mediaId, currentUser, Optional.empty(), true);
     }
 
     @Transactional(readOnly = true)
@@ -277,7 +282,12 @@ public class TrashService {
                 .toList();
     }
 
-    private TrashItemDto systemDeleteMediaInternal(String mediaId, AuthenticatedUser currentUser, Optional<String> requestedPostId) {
+    private TrashItemDto systemDeleteMediaInternal(
+            String mediaId,
+            AuthenticatedUser currentUser,
+            Optional<String> requestedPostId,
+            boolean allowEmptySmallAlbums
+    ) {
         MediaEntity media = requireActiveMedia(mediaId, currentUser.libraryId());
         List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndMediaIdIn(currentUser.libraryId(), List.of(mediaId));
         if (requestedPostId.isPresent() && relations.stream().noneMatch(relation -> relation.getPostId().equals(requestedPostId.get()))) {
@@ -295,12 +305,14 @@ public class TrashService {
         List<PostEntity> posts = relatedPostIds.isEmpty()
                 ? List.of()
                 : postRepository.findByLibraryIdAndIdIn(currentUser.libraryId(), relatedPostIds);
-        for (String relatedPostId : relatedPostIds) {
-            assertPostKeepsVisibleMedia(
-                    currentUser.libraryId(),
-                    relatedPostId,
-                    Set.of(mediaId)
-            );
+        if (!allowEmptySmallAlbums) {
+            for (String relatedPostId : relatedPostIds) {
+                assertPostKeepsVisibleMedia(
+                        currentUser.libraryId(),
+                        relatedPostId,
+                        Set.of(mediaId)
+                );
+            }
         }
         Set<String> coverPostIds = posts.stream()
                 .filter(post -> mediaId.equals(post.getCoverMediaId()))

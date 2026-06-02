@@ -3,12 +3,14 @@ package com.yingshi.server.service.content;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
+import com.yingshi.server.domain.AlbumEntity;
 import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.dto.content.MediaDto;
 import com.yingshi.server.dto.content.MediaFeedPage;
 import com.yingshi.server.mapper.ContentMapper;
+import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
@@ -28,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.nio.charset.StandardCharsets;
+import java.util.stream.Collectors;
 
 @Service
 public class MediaService {
@@ -37,6 +40,7 @@ public class MediaService {
     private final MediaRepository mediaRepository;
     private final PostMediaRepository postMediaRepository;
     private final PostRepository postRepository;
+    private final AlbumRepository albumRepository;
     private final ContentMapper contentMapper;
     private final LocalMediaStorageService localMediaStorageService;
     private final MediaStorageFieldService mediaStorageFieldService;
@@ -47,6 +51,7 @@ public class MediaService {
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
             PostRepository postRepository,
+            AlbumRepository albumRepository,
             ContentMapper contentMapper,
             LocalMediaStorageService localMediaStorageService,
             MediaStorageFieldService mediaStorageFieldService
@@ -54,6 +59,7 @@ public class MediaService {
         this.mediaRepository = mediaRepository;
         this.postMediaRepository = postMediaRepository;
         this.postRepository = postRepository;
+        this.albumRepository = albumRepository;
         this.contentMapper = contentMapper;
         this.localMediaStorageService = localMediaStorageService;
         this.mediaStorageFieldService = mediaStorageFieldService;
@@ -69,17 +75,30 @@ public class MediaService {
             return List.of();
         }
 
-        Set<String> activePostIds = postRepository.findAll().stream()
-                .filter(post -> libraryId.equals(post.getLibraryId()) && post.getDeletedAt() == null)
-                .map(PostEntity::getId)
-                .collect(java.util.stream.Collectors.toCollection(HashSet::new));
+        Map<String, PostEntity> activePostsById = postRepository
+                .findByLibraryIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(libraryId)
+                .stream()
+                .collect(Collectors.toMap(PostEntity::getId, post -> post));
+        Set<String> albumIds = activePostsById.values().stream().map(PostEntity::getAlbumId).collect(Collectors.toSet());
+        Map<String, AlbumEntity> albumsById = albumIds.isEmpty()
+                ? Map.of()
+                : albumRepository.findByLibraryIdAndIdIn(libraryId, albumIds)
+                .stream()
+                .collect(Collectors.toMap(AlbumEntity::getId, album -> album));
 
+        Set<String> activeRelatedMediaIds = new HashSet<>();
         Map<String, List<String>> postIdsByMediaId = new LinkedHashMap<>();
         for (PostMediaEntity relation : postMediaRepository.findByLibraryIdAndMediaIdIn(
                 libraryId,
                 mediaItems.stream().map(MediaEntity::getId).toList()
         )) {
-            if (!activePostIds.contains(relation.getPostId())) {
+            PostEntity post = activePostsById.get(relation.getPostId());
+            if (post == null) {
+                continue;
+            }
+            activeRelatedMediaIds.add(relation.getMediaId());
+            AlbumEntity album = albumsById.get(post.getAlbumId());
+            if (album != null && !Boolean.TRUE.equals(album.getIncludeInPhotoFeed())) {
                 continue;
             }
             postIdsByMediaId.computeIfAbsent(relation.getMediaId(), key -> new ArrayList<>());
@@ -92,7 +111,7 @@ public class MediaService {
         List<MediaDto> results = new ArrayList<>();
         for (MediaEntity media : mediaItems) {
             List<String> postIds = postIdsByMediaId.getOrDefault(media.getId(), List.of());
-            if (!isRenderableMedia(media, postIds)) {
+            if (!isRenderableMedia(media, postIds, activeRelatedMediaIds.contains(media.getId()))) {
                 continue;
             }
             results.add(contentMapper.toMediaDto(media, postIds));
@@ -186,8 +205,8 @@ public class MediaService {
                 ("preview".equalsIgnoreCase(variant) || "cover".equalsIgnoreCase(variant));
     }
 
-    private boolean isRenderableMedia(MediaEntity media, List<String> postIds) {
-        return true;
+    private boolean isRenderableMedia(MediaEntity media, List<String> visiblePostIds, boolean hasAnyActivePostRelation) {
+        return !hasAnyActivePostRelation || !visiblePostIds.isEmpty();
     }
 
     private int normalizePageSize(Integer pageSize) {

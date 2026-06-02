@@ -41,3 +41,10 @@ app:
     region: ${STORAGE_REGION:us-east-1}
     access-key: ${STORAGE_ACCESS_KEY:}
     secret-key: ${STORAGE_SECRET_KEY:}
+  push:
+    fcm:
+      enabled: ${FCM_ENABLED:false}
+      dry-run: ${FCM_DRY_RUN:false}
+      project-id: ${FCM_PROJECT_ID:}
+      service-account-path: ${FCM_SERVICE_ACCOUNT_PATH:}
+      service-account-json-base64: ${FCM_SERVICE_ACCOUNT_JSON_BASE64:}

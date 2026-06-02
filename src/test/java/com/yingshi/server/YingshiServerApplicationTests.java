@@ -1,14 +1,20 @@
 package com.yingshi.server;
 
 import com.jayway.jsonpath.JsonPath;
+import com.yingshi.server.domain.PushDeviceTokenEntity;
 import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.TrashItemRepository;
+import com.yingshi.server.service.push.PushDeliveryResult;
+import com.yingshi.server.service.push.PushMessageSender;
 import com.yingshi.server.service.trash.PendingCleanupScheduler;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.annotation.DirtiesContext;
@@ -22,6 +28,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.YearMonth;
+import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -36,6 +45,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -61,6 +71,9 @@ class YingshiServerApplicationTests {
 
     @Autowired
     private TrashItemRepository trashItemRepository;
+
+    @Autowired
+    private CapturingPushMessageSender capturingPushMessageSender;
 
     @Test
     void contextLoads() {
@@ -128,6 +141,129 @@ class YingshiServerApplicationTests {
                         .content("{}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.success").value(true));
+    }
+
+    @Test
+    void ledgerSnapshotCanRoundTripAcrossSharedLibrary() throws Exception {
+        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
+        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+
+        mockMvc.perform(get("/api/ledger/snapshot")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.versionMillis").value(0))
+                .andExpect(jsonPath("$.data.payload").doesNotExist());
+
+        mockMvc.perform(put("/api/ledger/snapshot")
+                        .header("Authorization", "Bearer " + demoAAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "payload": {
+                                    "books": [
+                                      {
+                                        "id": "book-001",
+                                        "name": "共享账本",
+                                        "template": "daily",
+                                        "currencyCode": "CNY",
+                                        "currencySymbol": "¥",
+                                        "coverColor": 4283215696,
+                                        "sortOrder": 0,
+                                        "createdAtMillis": 1780000000000,
+                                        "updatedAtMillis": 1780000000000,
+                                        "isDeleted": false
+                                      }
+                                    ],
+                                    "categories": [],
+                                    "accounts": [],
+                                    "transactions": [],
+                                    "budgets": [],
+                                    "categoryBudgets": [],
+                                    "deletedItems": [],
+                                    "recurringRules": [],
+                                    "recurringOccurrences": []
+                                }
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.versionMillis").isNumber())
+                .andExpect(jsonPath("$.data.payload.books[0].id").value("book-001"))
+                .andExpect(jsonPath("$.data.payload.books[0].name").value("共享账本"));
+
+        mockMvc.perform(get("/api/ledger/snapshot")
+                        .header("Authorization", "Bearer " + demoBAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.versionMillis").isNumber())
+                .andExpect(jsonPath("$.data.payload.books[0].id").value("book-001"))
+                .andExpect(jsonPath("$.data.payload.books[0].name").value("共享账本"));
+    }
+
+    @Test
+    void chatSnapshotCanRoundTripAcrossSharedLibrary() throws Exception {
+        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
+        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+
+        mockMvc.perform(get("/api/chat/imported/snapshot")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.versionMillis").value(0))
+                .andExpect(jsonPath("$.data.payload").doesNotExist());
+
+        mockMvc.perform(put("/api/chat/imported/snapshot")
+                        .header("Authorization", "Bearer " + demoAAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "payload": {
+                                    "sessions": [
+                                      {
+                                        "chatId": "chat-import-001",
+                                        "title": "June trip chat",
+                                        "subtitle": "Hangzhou plan",
+                                        "coverPreset": "sunset",
+                                        "importedAtMillis": 1780000000000,
+                                        "updatedAtMillis": 1780000005000,
+                                        "messageCount": 12,
+                                        "unreadCount": 1,
+                                        "lastMessagePreview": "Add the West Lake night walk too",
+                                        "participants": [
+                                          {
+                                            "id": "user-a",
+                                            "displayName": "A"
+                                          },
+                                          {
+                                            "id": "user-b",
+                                            "displayName": "B"
+                                          }
+                                        ],
+                                        "messages": [
+                                          {
+                                            "id": "msg-001",
+                                            "senderId": "user-a",
+                                            "senderName": "A",
+                                            "text": "Add the West Lake night walk too",
+                                            "timestampMillis": 1780000004000,
+                                            "isDeleted": false
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.versionMillis").isNumber())
+                .andExpect(jsonPath("$.data.payload.sessions[0].chatId").value("chat-import-001"))
+                .andExpect(jsonPath("$.data.payload.sessions[0].title").value("June trip chat"))
+                .andExpect(jsonPath("$.data.payload.sessions[0].messages[0].text").value("Add the West Lake night walk too"));
+
+        mockMvc.perform(get("/api/chat/imported/snapshot")
+                        .header("Authorization", "Bearer " + demoBAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.versionMillis").isNumber())
+                .andExpect(jsonPath("$.data.payload.sessions[0].chatId").value("chat-import-001"))
+                .andExpect(jsonPath("$.data.payload.sessions[0].title").value("June trip chat"))
+                .andExpect(jsonPath("$.data.payload.sessions[0].messages[0].text").value("Add the West Lake night walk too"));
     }
 
     @Test
@@ -755,6 +891,194 @@ class YingshiServerApplicationTests {
     }
 
     @Test
+    void lifeConsoleArchivesMediaAndEnforcesOwnershipRules() throws Exception {
+        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
+        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+        String personMediaId = uploadTestMedia(
+                demoAAccessToken,
+                "life-person.jpg",
+                "life-console-person-" + System.nanoTime()
+        );
+        String mealMediaId = uploadTestMedia(
+                demoAAccessToken,
+                "life-meal.jpg",
+                "life-console-meal-" + System.nanoTime()
+        );
+
+        mockMvc.perform(post("/api/life-console/media")
+                        .header("Authorization", "Bearer " + demoAAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "category": "PERSON",
+                                  "mediaIds": ["%s"]
+                                }
+                                """.formatted(personMediaId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.personSelf.editable").value(true))
+                .andExpect(jsonPath("$.data.personSelf.mediaItems.length()").value(1))
+                .andExpect(jsonPath("$.data.personSelf.mediaItems[0].mediaId").value(personMediaId))
+                .andExpect(jsonPath("$.data.personSelf.mediaItems[0].recordOwnerUserId").value("user_demo_a"))
+                .andExpect(jsonPath("$.data.personPartner.editable").value(false));
+
+        mockMvc.perform(post("/api/life-console/media")
+                        .header("Authorization", "Bearer " + demoAAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "category": "MEAL",
+                                  "mediaIds": ["%s"]
+                                }
+                                """.formatted(mealMediaId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mealSelf.editable").value(true))
+                .andExpect(jsonPath("$.data.mealSelf.mediaItems.length()").value(1))
+                .andExpect(jsonPath("$.data.mealSelf.mediaItems[0].mediaId").value(mealMediaId))
+                .andExpect(jsonPath("$.data.mealSelf.mediaItems[0].recordOwnerUserId").value("user_demo_a"))
+                .andExpect(jsonPath("$.data.mealPartner.editable").value(false));
+
+        mockMvc.perform(get("/api/life-console/today")
+                        .header("Authorization", "Bearer " + demoBAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.personSelf.mediaItems.length()").value(0))
+                .andExpect(jsonPath("$.data.personPartner.mediaItems.length()").value(1))
+                .andExpect(jsonPath("$.data.personPartner.mediaItems[0].mediaId").value(personMediaId))
+                .andExpect(jsonPath("$.data.personPartner.editable").value(false))
+                .andExpect(jsonPath("$.data.mealPartner.mediaItems[0].mediaId").value(mealMediaId));
+
+        MvcResult albumsResult = mockMvc.perform(get("/api/albums")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        List<Map<String, Object>> personAlbums = readFilteredList(albumsResult, "$.data[?(@.systemKey=='life.person')]");
+        List<Map<String, Object>> mealAlbums = readFilteredList(albumsResult, "$.data[?(@.systemKey=='life.meal')]");
+        assertEquals(1, personAlbums.size());
+        assertEquals(1, mealAlbums.size());
+        assertEquals(Boolean.TRUE, personAlbums.get(0).get("includeInPhotoFeed"));
+        assertEquals(Boolean.FALSE, mealAlbums.get(0).get("includeInPhotoFeed"));
+
+        YearMonth currentMonth = YearMonth.now(ZoneId.of("Asia/Shanghai"));
+        String expectedMonthTitle = "%04d年%02d月".formatted(currentMonth.getYear(), currentMonth.getMonthValue());
+        String personAlbumId = (String) personAlbums.get(0).get("albumId");
+        String mealAlbumId = (String) mealAlbums.get(0).get("albumId");
+        MvcResult personSmallAlbumsResult = mockMvc.perform(get("/api/albums/" + personAlbumId + "/small-albums")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        MvcResult mealSmallAlbumsResult = mockMvc.perform(get("/api/albums/" + mealAlbumId + "/small-albums")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        List<Map<String, Object>> personSmallAlbums = readFilteredList(personSmallAlbumsResult, "$.data[?(@.systemKey=='%s')]".formatted(currentMonth));
+        List<Map<String, Object>> mealSmallAlbums = readFilteredList(mealSmallAlbumsResult, "$.data[?(@.systemKey=='%s')]".formatted(currentMonth));
+        assertEquals(1, personSmallAlbums.size());
+        assertEquals(1, mealSmallAlbums.size());
+        assertEquals(expectedMonthTitle, personSmallAlbums.get(0).get("title"));
+        assertEquals(expectedMonthTitle, mealSmallAlbums.get(0).get("title"));
+
+        MvcResult feedResult = mockMvc.perform(get("/api/media/feed")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        List<Map<String, Object>> personFeedItems = readFilteredList(feedResult, "$.data[?(@.mediaId=='%s')]".formatted(personMediaId));
+        List<Map<String, Object>> mealFeedItems = readFilteredList(feedResult, "$.data[?(@.mediaId=='%s')]".formatted(mealMediaId));
+        assertEquals(1, personFeedItems.size());
+        assertEquals(0, mealFeedItems.size());
+
+        mockMvc.perform(delete("/api/life-console/media/" + personMediaId)
+                        .queryParam("category", "PERSON")
+                        .header("Authorization", "Bearer " + demoBAccessToken))
+                .andExpect(status().isForbidden());
+
+        MvcResult deleteResult = mockMvc.perform(delete("/api/life-console/media/" + personMediaId)
+                        .queryParam("category", "PERSON")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("mediaSystemDeleted"))
+                .andExpect(jsonPath("$.data.sourceMediaId").value(personMediaId))
+                .andReturn();
+        assertNotNull(readField(deleteResult, "/data/trashItemId"));
+
+        mockMvc.perform(get("/api/life-console/today")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.personSelf.mediaItems.length()").value(0))
+                .andExpect(jsonPath("$.data.mealSelf.mediaItems.length()").value(1));
+    }
+
+    @Test
+    void lifeConsoleBowelEventsAreVisibleToBothUsersButOnlyMutateCurrentUser() throws Exception {
+        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
+        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+
+        mockMvc.perform(post("/api/life-console/bowel-events")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.bowel.users[0].count").value(1));
+        mockMvc.perform(post("/api/life-console/bowel-events")
+                        .header("Authorization", "Bearer " + demoBAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.bowel.users[0].count").value(1));
+
+        MvcResult todayForA = mockMvc.perform(get("/api/life-console/today")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertEquals(1, readBowelCount(todayForA, "user_demo_a"));
+        assertEquals(1, readBowelCount(todayForA, "user_demo_b"));
+
+        MvcResult deletedForA = mockMvc.perform(delete("/api/life-console/bowel-events/latest")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertEquals(0, readBowelCount(deletedForA, "user_demo_a"));
+        assertEquals(1, readBowelCount(deletedForA, "user_demo_b"));
+    }
+
+    @Test
+    void pushDeviceTokenRegistrationAndLifeConsoleChangePushWork() throws Exception {
+        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
+        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+        capturingPushMessageSender.clear();
+
+        mockMvc.perform(post("/api/push/device-tokens")
+                        .header("Authorization", "Bearer " + demoAAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "platform": "android",
+                                  "token": "fcm-token-a"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.platform").value("android"))
+                .andExpect(jsonPath("$.data.enabled").value(true));
+
+        mockMvc.perform(post("/api/push/device-tokens")
+                        .header("Authorization", "Bearer " + demoBAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "platform": "android",
+                                  "token": "fcm-token-b"
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/life-console/bowel-events")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk());
+
+        assertEquals(1, capturingPushMessageSender.deliveries.size());
+        CapturedPushDelivery delivery = capturingPushMessageSender.deliveries.get(0);
+        assertEquals(List.of("fcm-token-b"), delivery.tokens);
+        assertEquals("life_console.changed", delivery.data.get("type"));
+        assertEquals("life_console.changed", delivery.data.get("event"));
+        assertEquals("user_demo_a", delivery.data.get("actorUserId"));
+        assertEquals("bowel_added", delivery.data.get("reason"));
+    }
+
+    @Test
     void directoryDeleteAndSystemDeleteHaveDifferentTrashBehavior() throws Exception {
         String accessToken = loginAndGetAccessToken();
 
@@ -1044,6 +1368,46 @@ class YingshiServerApplicationTests {
         return readField(loginResult, "/data/accessToken");
     }
 
+    private String uploadTestMedia(String accessToken, String fileName, String sourceFingerprint) throws Exception {
+        byte[] fileBytes = jpegBytes();
+        MvcResult tokenResult = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fileName": "%s",
+                                  "mimeType": "image/jpeg",
+                                  "fileSizeBytes": %d,
+                                  "mediaType": "image",
+                                  "width": 4,
+                                  "height": 3,
+                                  "durationMillis": null,
+                                  "displayTimeMillis": %d,
+                                  "sourceFingerprint": "%s"
+                                }
+                                """.formatted(fileName, fileBytes.length, System.currentTimeMillis(), sourceFingerprint)))
+                .andExpect(status().isOk())
+                .andReturn();
+        String uploadId = readField(tokenResult, "/data/uploadId");
+        MockMultipartFile multipartFile = new MockMultipartFile("file", fileName, "image/jpeg", fileBytes);
+        MvcResult uploadResult = mockMvc.perform(multipart("/api/uploads/" + uploadId + "/file")
+                        .file(multipartFile)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        return readField(uploadResult, "/data/media/mediaId");
+    }
+
+    private List<Map<String, Object>> readFilteredList(MvcResult mvcResult, String jsonPath) throws Exception {
+        return JsonPath.parse(mvcResult.getResponse().getContentAsString(StandardCharsets.UTF_8)).read(jsonPath);
+    }
+
+    private int readBowelCount(MvcResult mvcResult, String userId) throws Exception {
+        List<Integer> counts = JsonPath.parse(mvcResult.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .read("$.data.bowel.users[?(@.userId=='%s')].count".formatted(userId));
+        return counts.isEmpty() ? 0 : counts.get(0);
+    }
+
     private byte[] jpegBytes() throws Exception {
         BufferedImage image = new BufferedImage(4, 3, BufferedImage.TYPE_INT_RGB);
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
@@ -1053,6 +1417,38 @@ class YingshiServerApplicationTests {
 
     private String readField(MvcResult mvcResult, String pointer) throws Exception {
         return JsonPath.read(mvcResult.getResponse().getContentAsString(), "$" + pointer.replace("/", "."));
+    }
+
+    @TestConfiguration
+    static class PushTestConfig {
+        @Bean
+        @Primary
+        CapturingPushMessageSender capturingPushMessageSender() {
+            return new CapturingPushMessageSender();
+        }
+    }
+
+    static class CapturingPushMessageSender implements PushMessageSender {
+        private final List<CapturedPushDelivery> deliveries = new ArrayList<>();
+
+        @Override
+        public PushDeliveryResult sendDataMessage(List<PushDeviceTokenEntity> targetTokens, Map<String, String> data) {
+            deliveries.add(new CapturedPushDelivery(
+                    targetTokens.stream().map(PushDeviceTokenEntity::getToken).toList(),
+                    Map.copyOf(data)
+            ));
+            return new PushDeliveryResult(targetTokens.size(), targetTokens.size(), List.of());
+        }
+
+        void clear() {
+            deliveries.clear();
+        }
+    }
+
+    record CapturedPushDelivery(
+            List<String> tokens,
+            Map<String, String> data
+    ) {
     }
 
 }

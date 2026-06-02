@@ -6,14 +6,18 @@ import com.yingshi.server.common.auth.CurrentUser;
 import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.content.AlbumDto;
+import com.yingshi.server.dto.content.CreateAlbumRequest;
 import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.service.content.AlbumService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -29,6 +33,16 @@ public class AlbumController {
 
     public AlbumController(AlbumService albumService) {
         this.albumService = albumService;
+    }
+
+    @Operation(summary = "Create large album", security = @SecurityRequirement(name = "bearerAuth"))
+    @PostMapping
+    public ApiResponse<AlbumDto> createAlbum(
+            @Valid @RequestBody CreateAlbumRequest createAlbumRequest,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), albumService.createAlbum(createAlbumRequest, currentUser));
     }
 
     @Operation(summary = "List albums in the shared library", security = @SecurityRequirement(name = "bearerAuth"))

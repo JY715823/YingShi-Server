@@ -89,6 +89,12 @@ public class MediaEntity extends LibraryScopedEntity {
     @Column(length = 128)
     private String sourceFingerprint;
 
+    @Column(length = 255)
+    private String recordOwnerUserId;
+
+    @Column(length = 255)
+    private String uploadedByUserId;
+
     @Column
     private Instant deletedAt;
 
@@ -290,6 +296,22 @@ public class MediaEntity extends LibraryScopedEntity {
 
     public void setSourceFingerprint(String sourceFingerprint) {
         this.sourceFingerprint = sourceFingerprint;
+    }
+
+    public String getRecordOwnerUserId() {
+        return recordOwnerUserId;
+    }
+
+    public void setRecordOwnerUserId(String recordOwnerUserId) {
+        this.recordOwnerUserId = recordOwnerUserId;
+    }
+
+    public String getUploadedByUserId() {
+        return uploadedByUserId;
+    }
+
+    public void setUploadedByUserId(String uploadedByUserId) {
+        this.uploadedByUserId = uploadedByUserId;
     }
 
     public Instant getDeletedAt() {
