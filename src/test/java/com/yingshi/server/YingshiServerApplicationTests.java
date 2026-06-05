@@ -1196,6 +1196,45 @@ class YingshiServerApplicationTests {
     }
 
     @Test
+    void directoryDeleteCanLeaveSmallAlbumEmpty() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        MvcResult createResult = mockMvc.perform(post("/api/small-albums")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Single Memory",
+                                  "summary": "Only one media inside",
+                                  "contributorLabel": "Demo A",
+                                  "displayTimeMillis": 1777418800000,
+                                  "albumId": "album_001",
+                                  "initialMediaIds": ["media_005"],
+                                  "coverMediaId": "media_005"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mediaCount").value(1))
+                .andReturn();
+
+        String postId = readField(createResult, "/data/smallAlbumId");
+
+        mockMvc.perform(delete("/api/small-albums/" + postId + "/media/media_005")
+                        .queryParam("deleteMode", "directory")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("mediaRemoved"))
+                .andExpect(jsonPath("$.data.sourceSmallAlbumId").value(postId))
+                .andExpect(jsonPath("$.data.sourceMediaId").value("media_005"));
+
+        mockMvc.perform(get("/api/small-albums/" + postId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mediaCount").value(0))
+                .andExpect(jsonPath("$.data.mediaItems.length()").value(0));
+    }
+
+    @Test
     void permanentDeleteSystemDeletedMediaRemovesRecordAndLocalFiles() throws Exception {
         String accessToken = loginAndGetAccessToken();
         byte[] fileBytes = jpegBytes();

@@ -113,14 +113,8 @@ public class TrashService {
         PostEntity post = requireActivePost(postId, currentUser.libraryId());
         PostMediaEntity relation = requireRelation(currentUser.libraryId(), postId, mediaId);
         if (deleteMode == PostMediaDeleteMode.SYSTEM) {
-            return systemDeleteMediaInternal(mediaId, currentUser, Optional.of(post.getId()), false);
+            return systemDeleteMediaInternal(mediaId, currentUser, Optional.of(post.getId()), true);
         }
-
-        assertPostKeepsVisibleMedia(
-                currentUser.libraryId(),
-                postId,
-                Set.of(mediaId)
-        );
 
         MediaEntity media = requireActiveMedia(mediaId, currentUser.libraryId());
         boolean wasCover = mediaId.equals(post.getCoverMediaId());
@@ -149,7 +143,7 @@ public class TrashService {
 
     @Transactional
     public TrashItemDto systemDeleteMedia(String mediaId, AuthenticatedUser currentUser) {
-        return systemDeleteMediaInternal(mediaId, currentUser, Optional.empty(), false);
+        return systemDeleteMediaInternal(mediaId, currentUser, Optional.empty(), true);
     }
 
     @Transactional
