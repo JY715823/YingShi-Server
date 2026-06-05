@@ -90,6 +90,7 @@ public class TrashService {
 
         TrashItemEntity item = createTrashItem(
                 currentUser.libraryId(),
+                currentUser.userId(),
                 TrashItemType.SMALL_ALBUM_DELETED,
                 postId,
                 null,
@@ -133,6 +134,7 @@ public class TrashService {
 
         TrashItemEntity item = createTrashItem(
                 currentUser.libraryId(),
+                currentUser.userId(),
                 TrashItemType.MEDIA_REMOVED,
                 postId,
                 mediaId,
@@ -336,6 +338,7 @@ public class TrashService {
 
         TrashItemEntity item = createTrashItem(
                 currentUser.libraryId(),
+                currentUser.userId(),
                 TrashItemType.MEDIA_SYSTEM_DELETED,
                 requestedPostId.orElse(null),
                 mediaId,
@@ -444,6 +447,7 @@ public class TrashService {
 
     private TrashItemEntity createTrashItem(
             String libraryId,
+            String actorUserId,
             TrashItemType itemType,
             String sourcePostId,
             String sourceMediaId,
@@ -458,6 +462,7 @@ public class TrashService {
         item.setLibraryId(libraryId);
         item.setItemType(itemType);
         item.setState(TrashItemState.IN_TRASH);
+        item.setActorUserId(actorUserId);
         item.setSourcePostId(sourcePostId);
         item.setSourceMediaId(sourceMediaId);
         item.setTitle(title);

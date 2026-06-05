@@ -59,6 +59,9 @@ public class TrashItemEntity extends LibraryScopedEntity {
     @Column
     private Instant restoredAt;
 
+    @Column(name = "actor_user_id", length = 255)
+    private String actorUserId;
+
     public String getId() {
         return id;
     }
@@ -169,5 +172,13 @@ public class TrashItemEntity extends LibraryScopedEntity {
 
     public void setRestoredAt(Instant restoredAt) {
         this.restoredAt = restoredAt;
+    }
+
+    public String getActorUserId() {
+        return actorUserId;
+    }
+
+    public void setActorUserId(String actorUserId) {
+        this.actorUserId = actorUserId;
     }
 }

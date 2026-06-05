@@ -6,6 +6,7 @@ import com.yingshi.server.common.auth.CurrentUser;
 import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.life.LifeConsoleBowelMutationResponse;
+import com.yingshi.server.dto.life.LifeConsoleHistoryResponse;
 import com.yingshi.server.dto.life.LifeConsoleMediaRequest;
 import com.yingshi.server.dto.life.LifeConsoleTodayResponse;
 import com.yingshi.server.dto.trash.TrashItemDto;
@@ -45,6 +46,20 @@ public class LifeConsoleController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), lifeConsoleService.getToday(date, zoneId, currentUser));
+    }
+
+    @Operation(summary = "Get life console history", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping("/history")
+    public ApiResponse<LifeConsoleHistoryResponse> getHistory(
+            @RequestParam(required = false) String zoneId,
+            @RequestParam(required = false, defaultValue = "60") Integer limitDays,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(
+                requestId(request),
+                lifeConsoleService.getHistory(zoneId, limitDays, currentUser)
+        );
     }
 
     @Operation(summary = "Attach uploaded media to the current user's life console frame", security = @SecurityRequirement(name = "bearerAuth"))

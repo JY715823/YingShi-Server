@@ -8,6 +8,7 @@ public record TrashItemDto(
         String trashItemId,
         String itemType,
         String state,
+        String actorUserId,
         String sourceSmallAlbumId,
         String sourceMediaId,
         String commentTargetMediaId,

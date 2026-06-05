@@ -41,6 +41,12 @@ public class PostEntity extends LibraryScopedEntity {
     @Column
     private String coverMediaId;
 
+    @Column(name = "creator_user_id", length = 255)
+    private String creatorUserId;
+
+    @Column(name = "participant_user_ids", length = 2000)
+    private String participantUserIds;
+
     @Column
     private Instant deletedAt;
 
@@ -125,6 +131,22 @@ public class PostEntity extends LibraryScopedEntity {
 
     public void setCoverMediaId(String coverMediaId) {
         this.coverMediaId = coverMediaId;
+    }
+
+    public String getCreatorUserId() {
+        return creatorUserId;
+    }
+
+    public void setCreatorUserId(String creatorUserId) {
+        this.creatorUserId = creatorUserId;
+    }
+
+    public String getParticipantUserIds() {
+        return participantUserIds;
+    }
+
+    public void setParticipantUserIds(String participantUserIds) {
+        this.participantUserIds = participantUserIds;
     }
 
     public Instant getDeletedAt() {

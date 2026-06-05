@@ -13,9 +13,12 @@ import com.yingshi.server.domain.SharedLibraryMemberEntity;
 import com.yingshi.server.domain.UserEntity;
 import com.yingshi.server.dto.content.MediaDto;
 import com.yingshi.server.dto.life.LifeConsoleBowelEventDto;
+import com.yingshi.server.dto.life.LifeConsoleBowelHistoryDayDto;
 import com.yingshi.server.dto.life.LifeConsoleBowelMutationResponse;
 import com.yingshi.server.dto.life.LifeConsoleBowelSummaryDto;
 import com.yingshi.server.dto.life.LifeConsoleBowelUserSummaryDto;
+import com.yingshi.server.dto.life.LifeConsoleHistoryDayDto;
+import com.yingshi.server.dto.life.LifeConsoleHistoryResponse;
 import com.yingshi.server.dto.life.LifeConsoleMediaRequest;
 import com.yingshi.server.dto.life.LifeConsoleMediaSlotDto;
 import com.yingshi.server.dto.life.LifeConsoleTodayResponse;
@@ -101,6 +104,22 @@ public class LifeConsoleService {
         LifeUsers users = resolveLifeUsers(currentUser);
 
         return buildTodayResponse(resolvedDate, resolvedZone, dateRange, users, currentUser);
+    }
+
+    @Transactional(readOnly = true)
+    public LifeConsoleHistoryResponse getHistory(String zoneId, Integer limitDays, AuthenticatedUser currentUser) {
+        ZoneId resolvedZone = parseZoneId(zoneId);
+        int safeLimitDays = Math.max(7, Math.min(limitDays == null ? 60 : limitDays, 365));
+        LifeUsers users = resolveLifeUsers(currentUser);
+
+        return new LifeConsoleHistoryResponse(
+                resolvedZone.getId(),
+                toUserDto(users.currentUser()),
+                users.partner() == null ? null : toUserDto(users.partner()),
+                buildHistoryDays(LifeConsoleCategory.PERSON, users, currentUser.libraryId(), resolvedZone, safeLimitDays),
+                buildHistoryDays(LifeConsoleCategory.MEAL, users, currentUser.libraryId(), resolvedZone, safeLimitDays),
+                buildBowelHistoryDays(users, currentUser.libraryId(), resolvedZone, safeLimitDays)
+        );
     }
 
     @Transactional
@@ -282,13 +301,13 @@ public class LifeConsoleService {
         List<String> mediaIds = todayRelations.stream().map(PostMediaEntity::getMediaId).toList();
         Map<String, MediaEntity> mediaById = mediaRepository.findByLibraryIdAndIdInAndDeletedAtIsNull(libraryId, mediaIds)
                 .stream()
-                .filter(media -> ownerUserId.equals(media.getRecordOwnerUserId()))
+                .filter(media -> mediaBelongsToUser(media, ownerUserId))
                 .collect(Collectors.toMap(MediaEntity::getId, Function.identity()));
 
         List<MediaDto> mediaDtos = new ArrayList<>();
         for (PostMediaEntity relation : todayRelations) {
             MediaEntity media = mediaById.get(relation.getMediaId());
-            if (media != null) {
+            if (media != null && mediaBelongsToUser(media, ownerUserId)) {
                 mediaDtos.add(contentMapper.toMediaDto(media, List.of(monthlySmallAlbum.getId())));
             }
         }
@@ -331,6 +350,218 @@ public class LifeConsoleService {
             ));
         }
         return new LifeConsoleBowelSummaryDto(summaries);
+    }
+
+    private List<LifeConsoleHistoryDayDto> buildHistoryDays(
+            LifeConsoleCategory category,
+            LifeUsers users,
+            String libraryId,
+            ZoneId zone,
+            int limitDays
+    ) {
+        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKey(libraryId, category.albumSystemKey()).orElse(null);
+        if (album == null) {
+            return List.of();
+        }
+        List<PostEntity> posts = postRepository.findByLibraryIdAndAlbumIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(
+                libraryId,
+                album.getId()
+        );
+        if (posts.isEmpty()) {
+            return List.of();
+        }
+
+        LocalDate today = LocalDate.now(zone);
+        LocalDate earliestDate = LocalDate.now(zone).minusDays(limitDays - 1L);
+        List<String> postIds = posts.stream().map(PostEntity::getId).toList();
+        Map<String, PostEntity> postsById = posts.stream().collect(Collectors.toMap(PostEntity::getId, Function.identity()));
+        List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdIn(libraryId, postIds);
+        if (relations.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> mediaIds = relations.stream().map(PostMediaEntity::getMediaId).distinct().toList();
+        Map<String, MediaEntity> mediaById = mediaRepository.findByLibraryIdAndIdInAndDeletedAtIsNull(libraryId, mediaIds)
+                .stream()
+                .collect(Collectors.toMap(MediaEntity::getId, Function.identity()));
+
+        Map<LocalDate, List<HistoryMediaEntry>> selfByDay = new LinkedHashMap<>();
+        Map<LocalDate, List<HistoryMediaEntry>> partnerByDay = new LinkedHashMap<>();
+
+        relations.stream()
+                .sorted(Comparator.comparing((PostMediaEntity relation) -> {
+                    MediaEntity media = mediaById.get(relation.getMediaId());
+                    return media == null ? Long.MIN_VALUE : resolveHistoryTimeMillis(relation, media);
+                }).reversed())
+                .forEach(relation -> {
+                    MediaEntity media = mediaById.get(relation.getMediaId());
+                    PostEntity post = postsById.get(relation.getPostId());
+                    if (media == null || post == null) {
+                        return;
+                    }
+                    long effectiveTimeMillis = resolveHistoryTimeMillis(relation, media);
+                    LocalDate mediaDate = Instant.ofEpochMilli(effectiveTimeMillis).atZone(zone).toLocalDate();
+                    if (mediaDate.isBefore(earliestDate)) {
+                        return;
+                    }
+                    if (!mediaDate.isBefore(today)) {
+                        return;
+                    }
+                    HistoryMediaEntry entry = new HistoryMediaEntry(media, effectiveTimeMillis);
+                    if (mediaBelongsToUser(media, users.currentUser().getId())) {
+                        selfByDay.computeIfAbsent(mediaDate, ignored -> new ArrayList<>()).add(entry);
+                    } else if (mediaBelongsToUser(media, users.partnerUserId())) {
+                        partnerByDay.computeIfAbsent(mediaDate, ignored -> new ArrayList<>()).add(entry);
+                    }
+                });
+
+        List<LocalDate> orderedDates = new ArrayList<>();
+        orderedDates.addAll(selfByDay.keySet());
+        partnerByDay.keySet().forEach(date -> {
+            if (!orderedDates.contains(date)) {
+                orderedDates.add(date);
+            }
+        });
+        orderedDates.sort(Comparator.reverseOrder());
+
+        return orderedDates.stream()
+                .map(date -> new LifeConsoleHistoryDayDto(
+                        date.toString(),
+                        formatHistoryDate(date),
+                        selfByDay.getOrDefault(date, List.of()).stream()
+                                .sorted(Comparator.comparingLong(HistoryMediaEntry::effectiveTimeMillis).reversed())
+                                .map(entry -> withDisplayTime(contentMapper.toMediaDto(entry.media(), List.of()), entry.effectiveTimeMillis()))
+                                .toList(),
+                        partnerByDay.getOrDefault(date, List.of()).stream()
+                                .sorted(Comparator.comparingLong(HistoryMediaEntry::effectiveTimeMillis).reversed())
+                                .map(entry -> withDisplayTime(contentMapper.toMediaDto(entry.media(), List.of()), entry.effectiveTimeMillis()))
+                                .toList()
+                ))
+                .toList();
+    }
+
+    private long resolveHistoryTimeMillis(PostMediaEntity relation, MediaEntity media) {
+        if (relation.getCreatedAt() != null) {
+            return relation.getCreatedAt().toEpochMilli();
+        }
+        if (media.getImportedAtMillis() != null) {
+            return media.getImportedAtMillis();
+        }
+        if (media.getCapturedAtMillis() != null) {
+            return media.getCapturedAtMillis();
+        }
+        return media.getDisplayTimeMillis() != null ? media.getDisplayTimeMillis() : 0L;
+    }
+
+    private boolean mediaBelongsToUser(MediaEntity media, String userId) {
+        if (userId == null || userId.isBlank()) {
+            return false;
+        }
+        if (Objects.equals(media.getRecordOwnerUserId(), userId)) {
+            return true;
+        }
+        return media.getRecordOwnerUserId() == null
+                && Objects.equals(media.getUploadedByUserId(), userId);
+    }
+
+    private MediaDto withDisplayTime(MediaDto source, long displayTimeMillis) {
+        return new MediaDto(
+                source.mediaId(),
+                source.mediaType(),
+                source.url(),
+                source.previewUrl(),
+                source.originalUrl(),
+                source.videoUrl(),
+                source.coverUrl(),
+                source.mimeType(),
+                source.sizeBytes(),
+                source.width(),
+                source.height(),
+                source.aspectRatio(),
+                source.durationMillis(),
+                displayTimeMillis,
+                source.capturedAtMillis(),
+                source.importedAtMillis(),
+                source.displayTimeSource(),
+                source.recordOwnerUserId(),
+                source.uploadedByUserId(),
+                source.smallAlbumIds()
+        );
+    }
+
+    private record HistoryMediaEntry(
+            MediaEntity media,
+            long effectiveTimeMillis
+    ) {
+    }
+
+    private List<LifeConsoleBowelHistoryDayDto> buildBowelHistoryDays(
+            LifeUsers users,
+            String libraryId,
+            ZoneId zone,
+            int limitDays
+    ) {
+        LocalDate today = LocalDate.now(zone);
+        LocalDate earliestDate = today.minusDays(limitDays - 1L);
+        DateRange range = new DateRange(
+                earliestDate.atStartOfDay(zone).toInstant().toEpochMilli(),
+                today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        );
+
+        List<String> userIds = new ArrayList<>();
+        userIds.add(users.currentUser().getId());
+        if (users.partnerUserId() != null) {
+            userIds.add(users.partnerUserId());
+        }
+
+        Map<LocalDate, List<BowelEventEntity>> eventsByDay = bowelEventRepository
+                .findByLibraryIdAndOccurredAtMillisGreaterThanEqualAndOccurredAtMillisLessThanOrderByOccurredAtMillisAsc(
+                        libraryId,
+                        range.startMillis(),
+                        range.endMillis()
+                )
+                .stream()
+                .filter(event -> userIds.contains(event.getUserId()))
+                .collect(Collectors.groupingBy(
+                        event -> Instant.ofEpochMilli(event.getOccurredAtMillis()).atZone(zone).toLocalDate(),
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+
+        List<LocalDate> orderedDates = new ArrayList<>(eventsByDay.keySet());
+        orderedDates.sort(Comparator.reverseOrder());
+
+        return orderedDates.stream()
+                .map(date -> {
+                    if (!date.isBefore(today)) {
+                        return null;
+                    }
+                    List<BowelEventEntity> events = eventsByDay.getOrDefault(date, List.of());
+                    List<LifeConsoleBowelUserSummaryDto> summaries = userIds.stream()
+                            .map(userId -> {
+                                List<Long> times = events.stream()
+                                        .filter(event -> Objects.equals(event.getUserId(), userId))
+                                        .map(BowelEventEntity::getOccurredAtMillis)
+                                        .sorted()
+                                        .toList();
+                                return new LifeConsoleBowelUserSummaryDto(
+                                        userId,
+                                        times.size(),
+                                        times.isEmpty() ? null : times.get(times.size() - 1),
+                                        times
+                                );
+                            })
+                            .filter(summary -> summary.count() > 0)
+                            .toList();
+                    return new LifeConsoleBowelHistoryDayDto(
+                            date.toString(),
+                            formatHistoryDate(date),
+                            summaries
+                    );
+                })
+                .filter(Objects::nonNull)
+                .filter(day -> !day.users().isEmpty())
+                .toList();
     }
 
     private AlbumEntity ensureSystemAlbum(String libraryId, LifeConsoleCategory category) {
@@ -448,6 +679,10 @@ public class LifeConsoleService {
 
     private String monthTitle(YearMonth yearMonth) {
         return String.format(Locale.ROOT, "%04d年%02d月", yearMonth.getYear(), yearMonth.getMonthValue());
+    }
+
+    private String formatHistoryDate(LocalDate date) {
+        return String.format(Locale.CHINA, "%d月%d日", date.getMonthValue(), date.getDayOfMonth());
     }
 
     private String normalizeNullable(String value) {

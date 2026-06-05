@@ -9,7 +9,7 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-15432}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - E:/Study/App/YingShi_Storage/postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-yingshi} -d ${POSTGRES_DB:-yingshi}"]
       interval: 10s
@@ -28,7 +28,7 @@ services:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
     volumes:
-      - minio-data:/data
+      - E:/Study/App/YingShi_Storage/minio-data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
@@ -84,6 +84,4 @@ services:
       - "${SERVER_HOST_PORT:-8080}:8080"
     restart: unless-stopped
 
-volumes:
-  postgres-data:
-  minio-data:
+

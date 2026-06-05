@@ -13,6 +13,7 @@ import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.service.storage.ObjectKeyPolicy;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -37,6 +38,8 @@ public class ContentMapper {
                 post.getTitle(),
                 post.getSummary(),
                 post.getContributorLabel(),
+                post.getCreatorUserId(),
+                splitUserIds(post.getParticipantUserIds()),
                 post.getDisplayTimeMillis(),
                 post.getEventStartedAtMillis(),
                 post.getEventEndedAtMillis(),
@@ -60,6 +63,8 @@ public class ContentMapper {
                 post.getTitle(),
                 post.getSummary(),
                 post.getContributorLabel(),
+                post.getCreatorUserId(),
+                splitUserIds(post.getParticipantUserIds()),
                 post.getDisplayTimeMillis(),
                 post.getEventStartedAtMillis(),
                 post.getEventEndedAtMillis(),
@@ -126,5 +131,16 @@ public class ContentMapper {
             return localMediaUrl + "?variant=preview";
         }
         return null;
+    }
+
+    private List<String> splitUserIds(String rawUserIds) {
+        if (rawUserIds == null || rawUserIds.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(rawUserIds.split(","))
+                .map(String::trim)
+                .filter(part -> !part.isBlank())
+                .distinct()
+                .toList();
     }
 }

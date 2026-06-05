@@ -31,6 +31,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -94,6 +95,8 @@ public class PostService {
         post.setEventEndedAtMillis(request.eventEndedAtMillis());
         post.setDisplayTimeSource(normalizeDisplayTimeSource(request.displayTimeSource(), "MANUAL"));
         post.setCoverMediaId(coverMediaId);
+        post.setCreatorUserId(currentUser.userId());
+        post.setParticipantUserIds(joinParticipantUserIds(List.of(currentUser.userId())));
         postRepository.save(post);
 
         savePostMediaRelations(post.getId(), libraryId, request.initialMediaIds());
@@ -173,6 +176,7 @@ public class PostService {
             post.setCoverMediaId(orderedMediaIds.get(0));
             postRepository.save(post);
         }
+        mergeParticipant(post, currentUser.userId());
 
         return buildPostDetail(post);
     }
@@ -259,6 +263,39 @@ public class PostService {
             return DEFAULT_CONTRIBUTOR_LABEL;
         }
         return contributorLabel.trim();
+    }
+
+    private void mergeParticipant(PostEntity post, String userId) {
+        if (userId == null || userId.isBlank()) {
+            return;
+        }
+        LinkedHashSet<String> participantIds = new LinkedHashSet<>();
+        if (post.getCreatorUserId() != null && !post.getCreatorUserId().isBlank()) {
+            participantIds.add(post.getCreatorUserId().trim());
+        }
+        splitParticipantUserIds(post.getParticipantUserIds()).forEach(participantIds::add);
+        participantIds.add(userId.trim());
+        post.setParticipantUserIds(joinParticipantUserIds(participantIds.stream().toList()));
+        postRepository.save(post);
+    }
+
+    private List<String> splitParticipantUserIds(String rawUserIds) {
+        if (rawUserIds == null || rawUserIds.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(rawUserIds.split(","))
+                .map(String::trim)
+                .filter(part -> !part.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private String joinParticipantUserIds(List<String> userIds) {
+        return userIds.stream()
+                .filter(userId -> userId != null && !userId.isBlank())
+                .map(String::trim)
+                .distinct()
+                .collect(Collectors.joining(","));
     }
 
     private void savePostMediaRelations(String postId, String libraryId, List<String> mediaIds) {

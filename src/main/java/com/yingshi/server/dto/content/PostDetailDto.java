@@ -9,6 +9,8 @@ public record PostDetailDto(
         String title,
         String summary,
         String contributorLabel,
+        String creatorUserId,
+        List<String> participantUserIds,
         Long displayTimeMillis,
         Long eventStartedAtMillis,
         Long eventEndedAtMillis,

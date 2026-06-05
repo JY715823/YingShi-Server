@@ -24,6 +24,7 @@ public class TrashMapper {
                 item.getId(),
                 toItemType(item.getItemType().name()),
                 toItemType(item.getState().name()),
+                item.getActorUserId(),
                 item.getSourcePostId(),
                 item.getSourceMediaId(),
                 resolveCommentTargetMediaId(item, relatedMediaIds),
