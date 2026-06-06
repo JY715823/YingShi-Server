@@ -1235,6 +1235,57 @@ class YingshiServerApplicationTests {
     }
 
     @Test
+    void emptySmallAlbumCanStillBeDeletedToTrash() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        MvcResult createResult = mockMvc.perform(post("/api/small-albums")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "Disposable Memory",
+                                  "summary": "Create, empty, then delete",
+                                  "contributorLabel": "Demo A",
+                                  "displayTimeMillis": 1777419800000,
+                                  "albumId": "album_001",
+                                  "initialMediaIds": ["media_004"],
+                                  "coverMediaId": "media_004"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mediaCount").value(1))
+                .andReturn();
+
+        String postId = readField(createResult, "/data/smallAlbumId");
+
+        mockMvc.perform(delete("/api/small-albums/" + postId + "/media/media_004")
+                        .queryParam("deleteMode", "directory")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("mediaRemoved"));
+
+        MvcResult deleteResult = mockMvc.perform(delete("/api/small-albums/" + postId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("smallAlbumDeleted"))
+                .andExpect(jsonPath("$.data.sourceSmallAlbumId").value(postId))
+                .andReturn();
+
+        String trashItemId = readField(deleteResult, "/data/trashItemId");
+
+        mockMvc.perform(get("/api/small-albums/" + postId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("SMALL_ALBUM_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/trash/items/" + trashItemId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.item.itemType").value("smallAlbumDeleted"))
+                .andExpect(jsonPath("$.data.item.relatedMediaIds.length()").value(0));
+    }
+
+    @Test
     void permanentDeleteSystemDeletedMediaRemovesRecordAndLocalFiles() throws Exception {
         String accessToken = loginAndGetAccessToken();
         byte[] fileBytes = jpegBytes();
