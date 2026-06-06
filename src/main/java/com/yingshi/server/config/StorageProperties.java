@@ -2,6 +2,8 @@ package com.yingshi.server.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.time.Duration;
+
 @ConfigurationProperties(prefix = "app.storage")
 public record StorageProperties(
         String provider,
@@ -10,7 +12,14 @@ public record StorageProperties(
         String endpoint,
         String region,
         String accessKey,
-        String secretKey
+        String secretKey,
+        String cdnDomain,
+        String cdnAuthKey,
+        String cdnSignParam,
+        String cdnTimestampParam,
+        Duration signedUrlTtl,
+        Boolean directUploadEnabled,
+        Boolean forcePathStyle
 ) {
 
     public StorageProperties {
@@ -21,6 +30,13 @@ public record StorageProperties(
         region = defaultIfBlank(region, "us-east-1");
         accessKey = trimToNull(accessKey);
         secretKey = trimToNull(secretKey);
+        cdnDomain = trimToNull(cdnDomain);
+        cdnAuthKey = trimToNull(cdnAuthKey);
+        cdnSignParam = defaultIfBlank(cdnSignParam, "sign");
+        cdnTimestampParam = defaultIfBlank(cdnTimestampParam, "t");
+        signedUrlTtl = signedUrlTtl == null ? Duration.ofMinutes(15) : signedUrlTtl;
+        directUploadEnabled = directUploadEnabled != null && directUploadEnabled;
+        forcePathStyle = forcePathStyle == null || forcePathStyle;
     }
 
     private static String defaultIfBlank(String value, String fallback) {

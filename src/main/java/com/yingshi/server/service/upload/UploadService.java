@@ -4,6 +4,7 @@ import com.yingshi.server.common.IdGenerator;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
+import com.yingshi.server.config.StorageProperties;
 import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.domain.MediaType;
 import com.yingshi.server.domain.UploadState;
@@ -17,6 +18,10 @@ import com.yingshi.server.dto.upload.UploadTokenResponse;
 import com.yingshi.server.mapper.ContentMapper;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.UploadTaskRepository;
+import com.yingshi.server.service.storage.ObjectKeyPolicy;
+import com.yingshi.server.service.storage.ObjectMetadata;
+import com.yingshi.server.service.storage.ObjectStorageService;
+import com.yingshi.server.service.storage.PresignedObjectUrl;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +31,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 @Service
 public class UploadService {
@@ -37,17 +43,23 @@ public class UploadService {
     private final MediaRepository mediaRepository;
     private final ContentMapper contentMapper;
     private final LocalMediaStorageService localMediaStorageService;
+    private final ObjectStorageService objectStorageService;
+    private final StorageProperties storageProperties;
 
     public UploadService(
             UploadTaskRepository uploadTaskRepository,
             MediaRepository mediaRepository,
             ContentMapper contentMapper,
-            LocalMediaStorageService localMediaStorageService
+            LocalMediaStorageService localMediaStorageService,
+            ObjectStorageService objectStorageService,
+            StorageProperties storageProperties
     ) {
         this.uploadTaskRepository = uploadTaskRepository;
         this.mediaRepository = mediaRepository;
         this.contentMapper = contentMapper;
         this.localMediaStorageService = localMediaStorageService;
+        this.objectStorageService = objectStorageService;
+        this.storageProperties = storageProperties;
     }
 
     @Transactional
@@ -63,11 +75,20 @@ public class UploadService {
                 capturedAtMillis != null ? "ORIGINAL" : "IMPORTED"
         );
 
+        MediaType mediaType = parseMediaType(request.mediaType());
+        String mediaId = IdGenerator.newId("media");
+        String objectKey = localMediaStorageService.originalObjectKeyForUpload(
+                mediaId,
+                displayTimeMillis,
+                mediaType,
+                request.fileName()
+        );
+
         UploadTaskEntity task = new UploadTaskEntity();
         task.setId(IdGenerator.newId("upload"));
         task.setLibraryId(currentUser.libraryId());
         task.setFileName(request.fileName().trim());
-        task.setMediaType(parseMediaType(request.mediaType()));
+        task.setMediaType(mediaType);
         task.setMimeType(request.mimeType().trim());
         task.setFileSizeBytes(request.fileSizeBytes());
         task.setWidth(request.width());
@@ -81,13 +102,47 @@ public class UploadService {
         task.setUploadedByUserId(currentUser.userId());
         task.setState(UploadState.WAITING);
         task.setExpireAt(Instant.now().plus(UPLOAD_TTL));
+        task.setMediaId(mediaId);
+        boolean directUpload = storageProperties.directUploadEnabled() && objectStorageService.supportsPresignedPut();
+        if (directUpload) {
+            task.setStoredPath(objectKey);
+        }
         uploadTaskRepository.save(task);
+
+        if (directUpload) {
+            PresignedObjectUrl presignedUrl = objectStorageService.presignPut(
+                    objectKey,
+                    task.getMimeType(),
+                    task.getFileSizeBytes(),
+                    storageProperties.signedUrlTtl()
+            ).orElseThrow(() -> new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    ErrorCode.UPLOAD_STORAGE_ERROR,
+                    "Storage provider does not support direct upload."
+            ));
+            return new UploadTokenResponse(
+                    task.getId(),
+                    localMediaStorageService.provider(),
+                    presignedUrl.url(),
+                    presignedUrl.expiresAtMillis(),
+                    task.getState().name().toLowerCase(Locale.ROOT),
+                    "presigned-put",
+                    objectKey,
+                    presignedUrl.headers(),
+                    "/api/uploads/" + task.getId() + "/confirm"
+            );
+        }
+
         return new UploadTokenResponse(
                 task.getId(),
                 localMediaStorageService.provider(),
                 "/api/uploads/" + task.getId() + "/file",
                 task.getExpireAt().toEpochMilli(),
-                task.getState().name().toLowerCase(Locale.ROOT)
+                task.getState().name().toLowerCase(Locale.ROOT),
+                "multipart",
+                null,
+                Map.of(),
+                "/api/uploads/" + task.getId() + "/confirm"
         );
     }
 
@@ -98,10 +153,10 @@ public class UploadService {
             throw new ApiException(HttpStatus.CONFLICT, ErrorCode.UPLOAD_ALREADY_COMPLETED, "Upload task has already been completed.");
         }
         if (task.getExpireAt().isBefore(Instant.now())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_FILE_MISMATCH, "Upload task has expired.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_EXPIRED, "Upload task has expired.");
         }
         if (file.isEmpty()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_FILE_MISMATCH, "Uploaded file must not be empty.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_OBJECT_INVALID, "Uploaded file must not be empty.");
         }
 
         long actualFileSize = file.getSize();
@@ -124,7 +179,10 @@ public class UploadService {
             return new UploadCompleteResponse(task.getId(), "success", mediaDto);
         }
 
-        String mediaId = IdGenerator.newId("media");
+        String mediaId = normalizeNullable(task.getMediaId());
+        if (mediaId == null) {
+            mediaId = IdGenerator.newId("media");
+        }
         LocalMediaStorageService.StoredFile storedFile = localMediaStorageService.storeOriginal(
                 mediaId,
                 task.getDisplayTimeMillis(),
@@ -163,18 +221,44 @@ public class UploadService {
         if (task.getState() == UploadState.CANCELLED) {
             throw new ApiException(HttpStatus.CONFLICT, ErrorCode.UPLOAD_ALREADY_COMPLETED, "Upload task has already been cancelled.");
         }
+        if (task.getState() == UploadState.SUCCESS) {
+            return toUploadTaskResponse(task);
+        }
         if (task.getExpireAt().isBefore(Instant.now()) && task.getState() == UploadState.WAITING) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_FILE_MISMATCH, "Upload task has expired.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_EXPIRED, "Upload task has expired.");
         }
         if (task.getState() == UploadState.WAITING) {
-            String objectKey = normalizeNullable(request.objectKey());
-            if (objectKey != null && !localMediaStorageService.objectExists(objectKey)) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_FILE_MISMATCH, "Uploaded object was not found.");
+            String objectKey = normalizeConfirmObjectKey(task, request);
+            ObjectMetadata metadata = localMediaStorageService.metadataForObjectKey(objectKey);
+            if (metadata == null) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_OBJECT_INVALID, "Uploaded object was not found.");
             }
-            if (objectKey != null && task.getStoredPath() == null) {
-                task.setStoredPath(objectKey);
+            validateUploadedObject(task, metadata);
+
+            MediaEntity duplicateMedia = findDuplicateMedia(task);
+            if (duplicateMedia != null) {
+                task.setState(UploadState.SUCCESS);
+                task.setCompletedAt(Instant.now());
+                task.setMediaId(duplicateMedia.getId());
+                task.setStoredPath(duplicateMedia.getStoragePath());
                 uploadTaskRepository.save(task);
+                return toUploadTaskResponse(task);
             }
+
+            String mediaId = normalizeNullable(task.getMediaId());
+            if (mediaId == null) {
+                mediaId = IdGenerator.newId("media");
+            }
+            LocalMediaStorageService.StoredFile storedFile = storedFileFromMetadata(objectKey, metadata);
+            MediaEntity media = buildMediaFromTask(mediaId, task, storedFile);
+            warmPreviewIfPossible(media);
+            mediaRepository.save(media);
+
+            task.setState(UploadState.SUCCESS);
+            task.setCompletedAt(Instant.now());
+            task.setStoredPath(storedFile.storagePath());
+            task.setMediaId(media.getId());
+            uploadTaskRepository.save(task);
         }
         return toUploadTaskResponse(task);
     }
@@ -245,13 +329,25 @@ public class UploadService {
                 task.getFileName(),
                 task.getMediaType().name().toLowerCase(Locale.ROOT),
                 objectKey,
+                task.getMediaId(),
                 task.getState().name().toLowerCase(Locale.ROOT),
                 switch (task.getState()) {
                     case WAITING -> 0;
                     case SUCCESS, CANCELLED -> 100;
                 },
-                task.getState() == UploadState.CANCELLED ? "Upload task was cancelled." : null
+                task.getState() == UploadState.CANCELLED ? "Upload task was cancelled." : null,
+                taskMedia(task)
         );
+    }
+
+    private MediaDto taskMedia(UploadTaskEntity task) {
+        String mediaId = normalizeNullable(task.getMediaId());
+        if (mediaId == null || task.getState() != UploadState.SUCCESS) {
+            return null;
+        }
+        return mediaRepository.findByIdAndLibraryId(mediaId, task.getLibraryId())
+                .map(media -> contentMapper.toMediaDto(media, List.of()))
+                .orElse(null);
     }
 
     private MediaEntity buildMediaFromTask(String mediaId, UploadTaskEntity task, LocalMediaStorageService.StoredFile storedFile) {
@@ -284,6 +380,64 @@ public class UploadService {
         media.setSourceFingerprint(task.getSourceFingerprint());
         media.setUploadedByUserId(task.getUploadedByUserId());
         return media;
+    }
+
+    private LocalMediaStorageService.StoredFile storedFileFromMetadata(String objectKey, ObjectMetadata metadata) {
+        return new LocalMediaStorageService.StoredFile(
+                objectKey,
+                storedFileName(objectKey),
+                localMediaStorageService.provider(),
+                localMediaStorageService.bucket(),
+                metadata.objectKey(),
+                metadata.checksum(),
+                metadata.sizeBytes()
+        );
+    }
+
+    private String normalizeConfirmObjectKey(UploadTaskEntity task, UploadConfirmRequest request) {
+        String requestObjectKey = ObjectKeyPolicy.tryNormalizeRelativeObjectKey(request.objectKey());
+        String taskObjectKey = ObjectKeyPolicy.tryNormalizeRelativeObjectKey(task.getStoredPath());
+        String objectKey = requestObjectKey != null ? requestObjectKey : taskObjectKey;
+        if (objectKey == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_OBJECT_INVALID, "objectKey is required for direct upload confirmation.");
+        }
+        if (taskObjectKey != null && !taskObjectKey.equals(objectKey)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_OBJECT_MISMATCH, "Uploaded object does not belong to this upload task.");
+        }
+        return objectKey;
+    }
+
+    private void validateUploadedObject(UploadTaskEntity task, ObjectMetadata metadata) {
+        Long actualSizeBytes = metadata.sizeBytes();
+        if (actualSizeBytes != null && !actualSizeBytes.equals(task.getFileSizeBytes())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_SIZE_MISMATCH, "Uploaded object size does not match the upload task.");
+        }
+        String actualContentType = normalizeMimeType(metadata.contentType());
+        if (actualContentType != null
+                && !"application/octet-stream".equals(actualContentType)
+                && !sameContentType(actualContentType, task.getMimeType())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_CONTENT_TYPE_MISMATCH, "Uploaded object content type does not match the upload task.");
+        }
+    }
+
+    private boolean sameContentType(String first, String second) {
+        String left = contentTypeWithoutParameters(first);
+        String right = contentTypeWithoutParameters(second);
+        return left != null && left.equals(right);
+    }
+
+    private String contentTypeWithoutParameters(String value) {
+        String normalized = normalizeMimeType(value);
+        if (normalized == null) {
+            return null;
+        }
+        int semicolonIndex = normalized.indexOf(';');
+        return semicolonIndex >= 0 ? normalized.substring(0, semicolonIndex).trim() : normalized;
+    }
+
+    private String storedFileName(String objectKey) {
+        int slashIndex = objectKey.lastIndexOf('/');
+        return slashIndex >= 0 ? objectKey.substring(slashIndex + 1) : objectKey;
     }
 
     private void warmPreviewIfPossible(MediaEntity media) {

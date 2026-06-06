@@ -13,6 +13,7 @@ import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
@@ -21,29 +22,40 @@ import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 import java.io.InputStream;
 import java.io.IOException;
 import java.net.URI;
+import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
-@ConditionalOnExpression("'${app.storage.provider:local}' == 's3' || '${app.storage.provider:local}' == 'minio'")
+@ConditionalOnExpression("'${app.storage.provider:local}' == 's3' || '${app.storage.provider:local}' == 'minio' || '${app.storage.provider:local}' == 'cos'")
 public class S3ObjectStorageService implements ObjectStorageService {
 
     private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
 
     private final StorageProperties storageProperties;
     private final S3Client s3Client;
+    private final S3Presigner s3Presigner;
 
     public S3ObjectStorageService(StorageProperties storageProperties) {
         this.storageProperties = storageProperties;
         this.s3Client = buildClient(storageProperties);
+        this.s3Presigner = buildPresigner(storageProperties);
     }
 
     @Override
     public String provider() {
-        return "s3";
+        return storageProperties.provider();
     }
 
     @Override
@@ -182,6 +194,58 @@ public class S3ObjectStorageService implements ObjectStorageService {
         }
     }
 
+    @Override
+    public boolean supportsPresignedPut() {
+        return true;
+    }
+
+    @Override
+    public Optional<PresignedObjectUrl> presignPut(
+            String objectKey,
+            String contentType,
+            Long sizeBytes,
+            Duration ttl
+    ) {
+        String normalizedObjectKey = normalizeObjectKey(objectKey);
+        PutObjectRequest putObjectRequest = PutObjectRequest.builder()
+                .bucket(bucket())
+                .key(normalizedObjectKey)
+                .contentType(normalizeContentType(contentType))
+                .contentLength(requireSize(sizeBytes))
+                .build();
+        PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
+                .signatureDuration(ttl)
+                .putObjectRequest(putObjectRequest)
+                .build();
+        PresignedPutObjectRequest presignedRequest = s3Presigner.presignPutObject(presignRequest);
+        Map<String, String> headers = flattenHeaders(presignedRequest.signedHeaders());
+        headers.putIfAbsent("Content-Type", normalizeContentType(contentType));
+        return Optional.of(new PresignedObjectUrl(
+                presignedRequest.url().toString(),
+                presignedRequest.expiration().toEpochMilli(),
+                headers
+        ));
+    }
+
+    @Override
+    public Optional<PresignedObjectUrl> presignGet(String objectKey, Duration ttl) {
+        String normalizedObjectKey = normalizeObjectKey(objectKey);
+        GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+                .bucket(bucket())
+                .key(normalizedObjectKey)
+                .build();
+        GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
+                .signatureDuration(ttl)
+                .getObjectRequest(getObjectRequest)
+                .build();
+        PresignedGetObjectRequest presignedRequest = s3Presigner.presignGetObject(presignRequest);
+        return Optional.of(new PresignedObjectUrl(
+                presignedRequest.url().toString(),
+                presignedRequest.expiration().toEpochMilli(),
+                flattenHeaders(presignedRequest.signedHeaders())
+        ));
+    }
+
     private S3Client buildClient(StorageProperties properties) {
         if (properties.endpoint() == null || properties.accessKey() == null || properties.secretKey() == null) {
             throw new IllegalStateException("S3 storage requires endpoint, access key, and secret key.");
@@ -192,7 +256,25 @@ public class S3ObjectStorageService implements ObjectStorageService {
                 .credentialsProvider(StaticCredentialsProvider.create(
                         AwsBasicCredentials.create(properties.accessKey(), properties.secretKey())
                 ))
-                .forcePathStyle(true)
+                .serviceConfiguration(S3Configuration.builder()
+                        .pathStyleAccessEnabled(properties.forcePathStyle())
+                        .build())
+                .build();
+    }
+
+    private S3Presigner buildPresigner(StorageProperties properties) {
+        if (properties.endpoint() == null || properties.accessKey() == null || properties.secretKey() == null) {
+            throw new IllegalStateException("S3 storage requires endpoint, access key, and secret key.");
+        }
+        return S3Presigner.builder()
+                .region(Region.of(properties.region()))
+                .endpointOverride(URI.create(properties.endpoint()))
+                .credentialsProvider(StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(properties.accessKey(), properties.secretKey())
+                ))
+                .serviceConfiguration(S3Configuration.builder()
+                        .pathStyleAccessEnabled(properties.forcePathStyle())
+                        .build())
                 .build();
     }
 
@@ -222,6 +304,16 @@ public class S3ObjectStorageService implements ObjectStorageService {
             return value.substring(1, value.length() - 1);
         }
         return value;
+    }
+
+    private Map<String, String> flattenHeaders(Map<String, List<String>> signedHeaders) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        signedHeaders.forEach((name, values) -> {
+            if (values != null && !values.isEmpty()) {
+                headers.put(name, String.join(",", values));
+            }
+        });
+        return headers;
     }
 
     private static final class S3ObjectResource extends AbstractResource {

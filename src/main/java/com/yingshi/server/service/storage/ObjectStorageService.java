@@ -1,6 +1,7 @@
 package com.yingshi.server.service.storage;
 
 import java.io.InputStream;
+import java.time.Duration;
 import java.util.Optional;
 
 public interface ObjectStorageService {
@@ -20,4 +21,21 @@ public interface ObjectStorageService {
     boolean delete(String objectKey);
 
     Optional<ObjectMetadata> getMetadata(String objectKey);
+
+    default boolean supportsPresignedPut() {
+        return false;
+    }
+
+    default Optional<PresignedObjectUrl> presignPut(
+            String objectKey,
+            String contentType,
+            Long sizeBytes,
+            Duration ttl
+    ) {
+        return Optional.empty();
+    }
+
+    default Optional<PresignedObjectUrl> presignGet(String objectKey, Duration ttl) {
+        return Optional.empty();
+    }
 }

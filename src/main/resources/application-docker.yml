@@ -50,6 +50,13 @@ app:
     access-key: ${STORAGE_ACCESS_KEY:yingshi_minio_access}
     secret-key: ${STORAGE_SECRET_KEY:yingshi_minio_secret}
     local-root: ${STORAGE_LOCAL_ROOT:local-storage}
+    cdn-domain: ${STORAGE_CDN_DOMAIN:}
+    cdn-auth-key: ${STORAGE_CDN_AUTH_KEY:}
+    cdn-sign-param: ${STORAGE_CDN_SIGN_PARAM:sign}
+    cdn-timestamp-param: ${STORAGE_CDN_TIMESTAMP_PARAM:t}
+    signed-url-ttl: ${STORAGE_SIGNED_URL_TTL:PT15M}
+    direct-upload-enabled: ${STORAGE_DIRECT_UPLOAD_ENABLED:false}
+    force-path-style: ${STORAGE_FORCE_PATH_STYLE:true}
 
 yingshi:
   dev:

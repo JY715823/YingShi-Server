@@ -29,6 +29,13 @@ class MediaStorageFieldServiceTests {
                 null,
                 "us-east-1",
                 null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null
         );
         LocalMediaStorageService localMediaStorageService = new LocalMediaStorageService(
@@ -63,6 +70,13 @@ class MediaStorageFieldServiceTests {
                 tempDir.toString(),
                 null,
                 "us-east-1",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
                 null,
                 null
         );

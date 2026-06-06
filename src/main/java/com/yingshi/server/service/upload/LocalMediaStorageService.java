@@ -72,10 +72,7 @@ public class LocalMediaStorageService {
             String originalFileName,
             MultipartFile file
     ) {
-        String extension = resolveExtension(originalFileName, mediaType);
-        Path directory = rootPath.resolve("originals").resolve(monthBucket(displayTimeMillis)).normalize();
-        Path target = directory.resolve(mediaId + extension).normalize();
-        String objectKey = toRelativeStoragePath(target);
+        String objectKey = originalObjectKeyForUpload(mediaId, displayTimeMillis, mediaType, originalFileName);
         try {
             ObjectMetadata metadata;
             try (InputStream inputStream = file.getInputStream()) {
@@ -83,7 +80,7 @@ public class LocalMediaStorageService {
             }
             return new StoredFile(
                     objectKey,
-                    target.getFileName().toString(),
+                    storedFileName(objectKey),
                     objectStorageService.provider(),
                     objectStorageService.bucket(),
                     metadata.objectKey(),
@@ -93,6 +90,18 @@ public class LocalMediaStorageService {
         } catch (IOException exception) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to store uploaded file.");
         }
+    }
+
+    public String originalObjectKeyForUpload(
+            String mediaId,
+            long displayTimeMillis,
+            MediaType mediaType,
+            String originalFileName
+    ) {
+        String extension = resolveExtension(originalFileName, mediaType);
+        Path directory = rootPath.resolve("originals").resolve(monthBucket(displayTimeMillis)).normalize();
+        Path target = directory.resolve(mediaId + extension).normalize();
+        return toRelativeStoragePath(target);
     }
 
     public Resource load(String storagePath) {
@@ -461,6 +470,11 @@ public class LocalMediaStorageService {
 
     private String sanitizeFileName(String fileName) {
         return fileName.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private String storedFileName(String objectKey) {
+        int slashIndex = objectKey.lastIndexOf('/');
+        return slashIndex >= 0 ? objectKey.substring(slashIndex + 1) : objectKey;
     }
 
     private String resolveExtension(String fileName, MediaType mediaType) {

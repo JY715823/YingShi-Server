@@ -485,7 +485,8 @@ public class LifeConsoleService {
                 source.displayTimeSource(),
                 source.recordOwnerUserId(),
                 source.uploadedByUserId(),
-                source.smallAlbumIds()
+                source.smallAlbumIds(),
+                source.access()
         );
     }
 

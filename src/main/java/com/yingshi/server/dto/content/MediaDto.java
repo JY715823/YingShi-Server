@@ -26,7 +26,8 @@ public record MediaDto(
         String displayTimeSource,
         String recordOwnerUserId,
         String uploadedByUserId,
-        List<String> smallAlbumIds
+        List<String> smallAlbumIds,
+        List<MediaAccessDto> access
 ) {
     @JsonIgnore
     public List<String> postIds() {

@@ -5,7 +5,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
@@ -43,8 +42,7 @@ public class TrashItemEntity extends LibraryScopedEntity {
     @Column(length = 2000)
     private String relatedMediaIds;
 
-    @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "text")
     private String snapshotJson;
 
     @Column(nullable = false)

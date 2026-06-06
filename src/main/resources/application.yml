@@ -28,6 +28,8 @@ springdoc:
     tags-sorter: alpha
 
 app:
+  production-safety:
+    enabled: ${APP_PRODUCTION_SAFETY_ENABLED:false}
   auth:
     jwt:
       issuer: yingshi-server
@@ -41,6 +43,13 @@ app:
     region: ${STORAGE_REGION:us-east-1}
     access-key: ${STORAGE_ACCESS_KEY:}
     secret-key: ${STORAGE_SECRET_KEY:}
+    cdn-domain: ${STORAGE_CDN_DOMAIN:}
+    cdn-auth-key: ${STORAGE_CDN_AUTH_KEY:}
+    cdn-sign-param: ${STORAGE_CDN_SIGN_PARAM:sign}
+    cdn-timestamp-param: ${STORAGE_CDN_TIMESTAMP_PARAM:t}
+    signed-url-ttl: ${STORAGE_SIGNED_URL_TTL:PT15M}
+    direct-upload-enabled: ${STORAGE_DIRECT_UPLOAD_ENABLED:false}
+    force-path-style: ${STORAGE_FORCE_PATH_STYLE:true}
   push:
     fcm:
       enabled: ${FCM_ENABLED:false}
