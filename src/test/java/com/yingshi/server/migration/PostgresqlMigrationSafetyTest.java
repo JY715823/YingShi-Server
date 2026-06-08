@@ -43,4 +43,33 @@ class PostgresqlMigrationSafetyTest {
         assertThat(sql).contains("update small_albums");
         assertThat(sql).contains("drop table if exists post_albums");
     }
+
+    @Test
+    void runtimeHardeningMigrationDropsLegacyTrashConstraintBeforeRenamingItemTypes() throws IOException {
+        String sql = Files.readString(
+                MIGRATION_DIR.resolve("V10__database_runtime_hardening.sql"),
+                StandardCharsets.UTF_8
+        ).toLowerCase();
+
+        int dropConstraintIndex = sql.indexOf("drop constraint if exists trash_items_item_type_check");
+        int updateItemTypeIndex = sql.indexOf("update trash_items");
+        int addConstraintIndex = sql.indexOf("add constraint trash_items_item_type_check");
+
+        assertThat(dropConstraintIndex).isGreaterThanOrEqualTo(0);
+        assertThat(updateItemTypeIndex).isGreaterThan(dropConstraintIndex);
+        assertThat(addConstraintIndex).isGreaterThan(updateItemTypeIndex);
+        assertThat(sql).contains("'small_album_deleted'");
+    }
+
+    @Test
+    void trashSnapshotNormalizationMigrationRepairsLegacyPostSnapshots() throws IOException {
+        String sql = Files.readString(
+                MIGRATION_DIR.resolve("V11__normalize_trash_snapshots.sql"),
+                StandardCharsets.UTF_8
+        ).toLowerCase();
+
+        assertThat(sql).contains("json_build_object('smallalbumid', source_small_album_id)");
+        assertThat(sql).contains("replace(snapshot_json, '\"postid\":', '\"smallalbumid\":')");
+        assertThat(sql).contains("snapshot_json ~ '^[0-9]+$'");
+    }
 }

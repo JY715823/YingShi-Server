@@ -1,3 +1,6 @@
+alter table if exists trash_items
+    drop constraint if exists trash_items_item_type_check;
+
 do $$
 begin
     if exists (
@@ -30,9 +33,6 @@ end $$;
 update trash_items
 set item_type = 'SMALL_ALBUM_DELETED'
 where item_type = 'POST_DELETED';
-
-alter table if exists trash_items
-    drop constraint if exists trash_items_item_type_check;
 
 alter table if exists trash_items
     add constraint trash_items_item_type_check

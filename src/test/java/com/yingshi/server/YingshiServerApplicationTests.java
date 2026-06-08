@@ -1283,6 +1283,50 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.item.itemType").value("smallAlbumDeleted"))
                 .andExpect(jsonPath("$.data.item.relatedMediaIds.length()").value(0));
+
+        mockMvc.perform(get("/api/trash/items")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].trashItemId").value(trashItemId))
+                .andExpect(jsonPath("$.data.items[0].itemType").value("smallAlbumDeleted"))
+                .andExpect(jsonPath("$.data.items[0].sourceSmallAlbumId").value(postId));
+
+        var legacyJsonTrashItem = trashItemRepository.findById(trashItemId).orElseThrow();
+        legacyJsonTrashItem.setSnapshotJson("""
+                {"postId":"%s"}
+                """.formatted(postId).trim());
+        trashItemRepository.save(legacyJsonTrashItem);
+
+        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/restore")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("restored"));
+
+        mockMvc.perform(get("/api/small-albums/" + postId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.smallAlbumId").value(postId));
+
+        MvcResult secondDeleteResult = mockMvc.perform(delete("/api/small-albums/" + postId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("smallAlbumDeleted"))
+                .andReturn();
+
+        String secondTrashItemId = readField(secondDeleteResult, "/data/trashItemId");
+        var legacyNumericTrashItem = trashItemRepository.findById(secondTrashItemId).orElseThrow();
+        legacyNumericTrashItem.setSnapshotJson("33376");
+        trashItemRepository.save(legacyNumericTrashItem);
+
+        mockMvc.perform(post("/api/trash/items/" + secondTrashItemId + "/restore")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("restored"));
+
+        mockMvc.perform(get("/api/small-albums/" + postId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.smallAlbumId").value(postId));
     }
 
     @Test
