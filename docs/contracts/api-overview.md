@@ -48,7 +48,9 @@
 ### Public
 
 - `GET /api/health`
-- `POST /api/auth/login`
+- `POST /api/auth/login/challenge`
+- `POST /api/auth/login/challenge/resend`
+- `POST /api/auth/login/verify`
 - `POST /api/auth/refresh-token`
 
 ### Authenticated
@@ -106,6 +108,12 @@
 ## 常见错误码
 
 - `AUTH_INVALID_CREDENTIALS`
+- `AUTH_LOGIN_CHALLENGE_INVALID`
+- `AUTH_LOGIN_CODE_EXPIRED`
+- `AUTH_LOGIN_CODE_INVALID`
+- `AUTH_LOGIN_CODE_RATE_LIMITED`
+- `AUTH_LOGIN_CODE_RESEND_TOO_FAST`
+- `AUTH_LOGIN_CODE_SEND_FAILED`
 - `AUTH_TOKEN_EXPIRED`
 - `AUTH_UNAUTHORIZED`
 - `AUTH_SESSION_INVALID`

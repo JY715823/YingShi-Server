@@ -1,8 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$BaseUrl = "http://localhost:8080",
-    [string]$Account = "demo.a@yingshi.local",
-    [string]$Password = "demo123456"
+    [string]$Account = "1085060329@qq.com",
+    [string]$Password = "123456",
+    [string]$LoginCode = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +16,8 @@ $refreshResponse = $null
 $accessToken = $null
 $refreshToken = $null
 $currentUserId = $null
+$loginChallengeId = $null
+$loginMaskedEmail = $null
 
 Add-Type -AssemblyName System.Net.Http
 
@@ -160,6 +163,25 @@ function Require-Value {
     return $Value
 }
 
+function Resolve-LoginCode {
+    param(
+        [string]$MaskedEmail,
+        [string]$ChallengeId
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($script:LoginCode)) {
+        return $script:LoginCode.Trim()
+    }
+
+    Write-Host "验证码已发送到 $MaskedEmail" -ForegroundColor Yellow
+    Write-Host "challengeId: $ChallengeId" -ForegroundColor DarkGray
+    $enteredCode = Read-Host "请输入 6 位邮箱验证码"
+    if ([string]::IsNullOrWhiteSpace($enteredCode)) {
+        throw "login code was not provided"
+    }
+    return $enteredCode.Trim()
+}
+
 try {
     $jpegBase64 = "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD9U6KKKAP/2Q=="
     $fileBytes = [Convert]::FromBase64String($jpegBase64)
@@ -173,10 +195,21 @@ try {
         "status=$($response.data.status), app=$($response.data.application)"
     } | Out-Null
 
-    Invoke-Step "login token" {
-        $script:loginResponse = Invoke-ApiRequest -Method "POST" -Path "/api/auth/login" -JsonBody @{
+    Invoke-Step "login challenge" {
+        $challengeResponse = Invoke-ApiRequest -Method "POST" -Path "/api/auth/login/challenge" -JsonBody @{
             account = $Account
             password = $Password
+        }
+        $script:loginChallengeId = Require-Value $challengeResponse.data.challengeId "challenge succeeded but challengeId is empty"
+        $script:loginMaskedEmail = Require-Value $challengeResponse.data.maskedEmail "challenge succeeded but maskedEmail is empty"
+        "challengeId=$($script:loginChallengeId), email=$($script:loginMaskedEmail)"
+    } | Out-Null
+
+    Invoke-Step "login verify" {
+        $resolvedCode = Resolve-LoginCode -MaskedEmail $script:loginMaskedEmail -ChallengeId $script:loginChallengeId
+        $script:loginResponse = Invoke-ApiRequest -Method "POST" -Path "/api/auth/login/verify" -JsonBody @{
+            challengeId = $script:loginChallengeId
+            code = $resolvedCode
         }
         $script:accessToken = Require-Value $script:loginResponse.data.accessToken "login succeeded but accessToken is empty"
         $script:refreshToken = Require-Value $script:loginResponse.data.refreshToken "login succeeded but refreshToken is empty"

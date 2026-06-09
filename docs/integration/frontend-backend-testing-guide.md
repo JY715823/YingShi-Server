@@ -26,8 +26,9 @@ Recommended Android integration mode:
 
 ## Seed Accounts
 
-- `demo.a@yingshi.local / demo123456`
-- `demo.b@yingshi.local / demo123456`
+- `1085060329@qq.com / 123456`
+- `2926315047@qq.com / 123456`
+- 登录需要读取 QQ 邮箱验证码；若 smoke 脚本未传 `-LoginCode`，会在控制台提示手动输入
 
 ## Backend Preflight
 
@@ -98,18 +99,17 @@ Current entry:
 Current page responsibilities:
 
 - show and edit `Base URL`
-- apply emulator and loopback presets
-- save and relogin the seeded demo account
+- save the address and clear the old session
+- check whether the current session can still be restored
 - clear local auth cache
-- switch `FAKE / REAL`
 - run a minimal health check
 - show the latest result
 
 The page is intentionally lightweight. Full backend coverage should rely on backend smoke scripts or real target pages.
 
-## Features Already Aligned With Android `REAL`
+## Features Already Aligned With Android
 
-- auth login / refresh / logout / current-user / profile update
+- auth challenge-login / resend / verify / refresh / logout / current-user / profile update
 - shared-library and partner display
 - albums and posts list/detail flows
 - media feed and backend media-file delivery
@@ -145,6 +145,14 @@ In `docker-local`:
 - old refresh token was reused after rotation
 - the current session was logged out
 - the app is using a stale token from another backend base URL
+
+登录挑战或验证码失败
+
+- account/password is wrong
+- the code expired
+- the code was entered too many times
+- resend was requested before cooldown ended
+- QQ SMTP configuration is missing or invalid
 
 `Port 8080 already in use`
 

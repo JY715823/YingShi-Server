@@ -5,6 +5,7 @@ import com.yingshi.server.domain.PushDeviceTokenEntity;
 import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.TrashItemRepository;
+import com.yingshi.server.service.auth.AuthLoginCodeSender;
 import com.yingshi.server.service.push.PushDeliveryResult;
 import com.yingshi.server.service.push.PushMessageSender;
 import com.yingshi.server.service.trash.PendingCleanupScheduler;
@@ -60,6 +61,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class YingshiServerApplicationTests {
 
+    private static final String ACCOUNT_A = "1085060329@qq.com";
+    private static final String ACCOUNT_B = "2926315047@qq.com";
+    private static final String TEMP_PASSWORD = "123456";
+    private static final String TEST_DEVICE_ID = "android-test-device";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -74,6 +80,9 @@ class YingshiServerApplicationTests {
 
     @Autowired
     private CapturingPushMessageSender capturingPushMessageSender;
+
+    @Autowired
+    private CapturingAuthLoginCodeSender capturingAuthLoginCodeSender;
 
     @Test
     void contextLoads() {
@@ -91,21 +100,40 @@ class YingshiServerApplicationTests {
     }
     @Test
     void authFlowWorksForSeededUser() throws Exception {
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+        MvcResult challengeResult = mockMvc.perform(post("/api/auth/login/challenge")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "account": "demo.a@yingshi.local",
-                                  "password": "demo123456"
+                                  "account": "%s",
+                                  "password": "%s"
                                 }
-                                """))
+                                """.formatted(ACCOUNT_A, TEMP_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.challengeId").isNotEmpty())
+                .andExpect(jsonPath("$.data.maskedEmail").value(startsWith("108")))
+                .andReturn();
+
+        String challengeId = readField(challengeResult, "/data/challengeId");
+        String loginCode = capturingAuthLoginCodeSender.requireLatestCode(ACCOUNT_A);
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "challengeId": "%s",
+                                  "code": "%s",
+                                  "deviceId": "%s"
+                                }
+                                """.formatted(challengeId, loginCode, TEST_DEVICE_ID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.userId").value("user_demo_a"))
                 .andExpect(jsonPath("$.data.libraryId").value("library_shared"))
                 .andExpect(jsonPath("$.data.libraryDisplayName").value("我们的小空间"))
                 .andExpect(jsonPath("$.data.partner.userId").value("user_demo_b"))
-                .andExpect(jsonPath("$.data.partner.account").value("demo.b@yingshi.local"))
+                .andExpect(jsonPath("$.data.partner.account").value(ACCOUNT_B))
                 .andExpect(jsonPath("$.data.partner.displayName").value("另一半"))
+                .andExpect(jsonPath("$.data.rememberedLoginToken").isNotEmpty())
+                .andExpect(jsonPath("$.data.rememberedLoginExpireAtMillis").isNumber())
                 .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
                 .andExpect(jsonPath("$.data.refreshToken").isNotEmpty())
                 .andReturn();
@@ -116,23 +144,23 @@ class YingshiServerApplicationTests {
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.userId").value("user_demo_a"))
-                .andExpect(jsonPath("$.data.account").value("demo.a@yingshi.local"))
+                .andExpect(jsonPath("$.data.account").value(ACCOUNT_A))
                 .andExpect(jsonPath("$.data.libraryId").value("library_shared"))
                 .andExpect(jsonPath("$.data.libraryDisplayName").value("我们的小空间"))
                 .andExpect(jsonPath("$.data.partner.userId").value("user_demo_b"))
-                .andExpect(jsonPath("$.data.partner.account").value("demo.b@yingshi.local"))
+                .andExpect(jsonPath("$.data.partner.account").value(ACCOUNT_B))
                 .andExpect(jsonPath("$.data.partner.displayName").value("另一半"));
 
-        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+        String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
         mockMvc.perform(get("/api/auth/me")
                         .header("Authorization", "Bearer " + demoBAccessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.userId").value("user_demo_b"))
-                .andExpect(jsonPath("$.data.account").value("demo.b@yingshi.local"))
+                .andExpect(jsonPath("$.data.account").value(ACCOUNT_B))
                 .andExpect(jsonPath("$.data.libraryId").value("library_shared"))
                 .andExpect(jsonPath("$.data.libraryDisplayName").value("我们的小空间"))
                 .andExpect(jsonPath("$.data.partner.userId").value("user_demo_a"))
-                .andExpect(jsonPath("$.data.partner.account").value("demo.a@yingshi.local"))
+                .andExpect(jsonPath("$.data.partner.account").value(ACCOUNT_A))
                 .andExpect(jsonPath("$.data.partner.displayName").value("映世小屋"));
 
         mockMvc.perform(post("/api/auth/logout")
@@ -145,8 +173,8 @@ class YingshiServerApplicationTests {
 
     @Test
     void ledgerSnapshotCanRoundTripAcrossSharedLibrary() throws Exception {
-        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
-        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+        String demoAAccessToken = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
+        String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
 
         mockMvc.perform(get("/api/ledger/snapshot")
                         .header("Authorization", "Bearer " + demoAAccessToken))
@@ -200,8 +228,8 @@ class YingshiServerApplicationTests {
 
     @Test
     void chatSnapshotCanRoundTripAcrossSharedLibrary() throws Exception {
-        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
-        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+        String demoAAccessToken = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
+        String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
 
         mockMvc.perform(get("/api/chat/imported/snapshot")
                         .header("Authorization", "Bearer " + demoAAccessToken))
@@ -268,18 +296,8 @@ class YingshiServerApplicationTests {
 
     @Test
     void logoutRevokesCurrentAccessToken() throws Exception {
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "account": "demo.a@yingshi.local",
-                                  "password": "demo123456"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String accessToken = readField(loginResult, "/data/accessToken");
+        AuthSessionTokens loginSession = loginAndGetSession(ACCOUNT_A, TEMP_PASSWORD);
+        String accessToken = loginSession.accessToken();
 
         mockMvc.perform(post("/api/auth/logout")
                         .header("Authorization", "Bearer " + accessToken)
@@ -296,19 +314,9 @@ class YingshiServerApplicationTests {
 
     @Test
     void refreshRotationInvalidatesOldRefreshTokenAndSupportsLogoutBody() throws Exception {
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "account": "demo.a@yingshi.local",
-                                  "password": "demo123456"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andReturn();
-
-        String accessToken = readField(loginResult, "/data/accessToken");
-        String refreshToken = readField(loginResult, "/data/refreshToken");
+        AuthSessionTokens loginSession = loginAndGetSession(ACCOUNT_A, TEMP_PASSWORD);
+        String accessToken = loginSession.accessToken();
+        String refreshToken = loginSession.refreshToken();
 
         MvcResult refreshResult = mockMvc.perform(post("/api/auth/refresh-token")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -357,7 +365,7 @@ class YingshiServerApplicationTests {
 
     @Test
     void currentUserProfileCanBeReadAndUpdatedByOwner() throws Exception {
-        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
+        String demoAAccessToken = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
 
         mockMvc.perform(get("/api/auth/me")
                         .header("Authorization", "Bearer " + demoAAccessToken))
@@ -389,7 +397,7 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.bio").value("把两个人的日常安静收进这里。"))
                 .andExpect(jsonPath("$.data.partner.displayName").value("另一半"));
 
-        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+        String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
 
         mockMvc.perform(get("/api/auth/me")
                         .header("Authorization", "Bearer " + demoBAccessToken))
@@ -708,8 +716,8 @@ class YingshiServerApplicationTests {
 
     @Test
     void notificationsIncludeCommentCreateEditDeleteVariants() throws Exception {
-        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
-        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+        String demoAAccessToken = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
+        String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
 
         MvcResult createdCommentResult = mockMvc.perform(post("/api/small-albums/post_001/comments")
                         .header("Authorization", "Bearer " + demoBAccessToken)
@@ -892,8 +900,8 @@ class YingshiServerApplicationTests {
 
     @Test
     void lifeConsoleArchivesMediaAndEnforcesOwnershipRules() throws Exception {
-        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
-        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+        String demoAAccessToken = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
+        String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
         String personMediaId = uploadTestMedia(
                 demoAAccessToken,
                 "life-person.jpg",
@@ -1008,8 +1016,8 @@ class YingshiServerApplicationTests {
 
     @Test
     void lifeConsoleBowelEventsAreVisibleToBothUsersButOnlyMutateCurrentUser() throws Exception {
-        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
-        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+        String demoAAccessToken = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
+        String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
 
         mockMvc.perform(post("/api/life-console/bowel-events")
                         .header("Authorization", "Bearer " + demoAAccessToken))
@@ -1036,9 +1044,137 @@ class YingshiServerApplicationTests {
     }
 
     @Test
+    void loginChallengeRejectsWrongPasswordAndWrongOrExpiredCode() throws Exception {
+        mockMvc.perform(post("/api/auth/login/challenge")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "account": "%s",
+                                  "password": "wrong-password"
+                                }
+                                """.formatted(ACCOUNT_A)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("AUTH_INVALID_CREDENTIALS"));
+
+        MvcResult challengeResult = mockMvc.perform(post("/api/auth/login/challenge")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "account": "%s",
+                                  "password": "%s"
+                                }
+                                """.formatted(ACCOUNT_A, TEMP_PASSWORD)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String challengeId = readField(challengeResult, "/data/challengeId");
+
+        mockMvc.perform(post("/api/auth/login/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "challengeId": "%s",
+                                  "code": "000000",
+                                  "deviceId": "%s"
+                                }
+                                """.formatted(challengeId, TEST_DEVICE_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("AUTH_LOGIN_CODE_INVALID"));
+
+        mockMvc.perform(post("/api/auth/login/challenge/resend")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "challengeId": "%s"
+                                }
+                                """.formatted(challengeId)))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.error.code").value("AUTH_LOGIN_CODE_RESEND_TOO_FAST"));
+
+        String actualCode = capturingAuthLoginCodeSender.requireLatestCode(ACCOUNT_A);
+        mockMvc.perform(post("/api/auth/login/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "challengeId": "%s",
+                                  "code": "%s",
+                                  "deviceId": "%s"
+                                }
+                                """.formatted(challengeId, actualCode, TEST_DEVICE_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accessToken").isNotEmpty());
+
+        mockMvc.perform(post("/api/auth/login/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "challengeId": "%s",
+                                  "code": "%s",
+                                  "deviceId": "%s"
+                                }
+                                """.formatted(challengeId, actualCode, TEST_DEVICE_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("AUTH_LOGIN_CHALLENGE_INVALID"));
+    }
+
+    @Test
+    void rememberedLoginAllowsSameDeviceReloginWithoutChallenge() throws Exception {
+        MvcResult challengeResult = mockMvc.perform(post("/api/auth/login/challenge")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "account": "%s",
+                                  "password": "%s"
+                                }
+                                """.formatted(ACCOUNT_A, TEMP_PASSWORD)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String challengeId = readField(challengeResult, "/data/challengeId");
+        String loginCode = capturingAuthLoginCodeSender.requireLatestCode(ACCOUNT_A);
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "challengeId": "%s",
+                                  "code": "%s",
+                                  "deviceId": "%s"
+                                }
+                                """.formatted(challengeId, loginCode, TEST_DEVICE_ID)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String accessToken = readField(loginResult, "/data/accessToken");
+        String rememberedLoginToken = readField(loginResult, "/data/rememberedLoginToken");
+
+        mockMvc.perform(post("/api/auth/logout")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.success").value(true));
+
+        mockMvc.perform(post("/api/auth/login/remembered")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "account": "%s",
+                                  "password": "%s",
+                                  "deviceId": "%s",
+                                  "rememberedLoginToken": "%s"
+                                }
+                                """.formatted(ACCOUNT_A, TEMP_PASSWORD, TEST_DEVICE_ID, rememberedLoginToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.userId").value("user_demo_a"))
+                .andExpect(jsonPath("$.data.rememberedLoginToken").isNotEmpty())
+                .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.data.refreshToken").isNotEmpty());
+    }
+
+    @Test
     void pushDeviceTokenRegistrationAndLifeConsoleChangePushWork() throws Exception {
-        String demoAAccessToken = loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
-        String demoBAccessToken = loginAndGetAccessToken("demo.b@yingshi.local", "demo123456");
+        String demoAAccessToken = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
+        String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
         capturingPushMessageSender.clear();
 
         mockMvc.perform(post("/api/push/device-tokens")
@@ -1485,11 +1621,15 @@ class YingshiServerApplicationTests {
     }
 
     private String loginAndGetAccessToken() throws Exception {
-        return loginAndGetAccessToken("demo.a@yingshi.local", "demo123456");
+        return loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
     }
 
     private String loginAndGetAccessToken(String account, String password) throws Exception {
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+        return loginAndGetSession(account, password).accessToken();
+    }
+
+    private AuthSessionTokens loginAndGetSession(String account, String password) throws Exception {
+        MvcResult challengeResult = mockMvc.perform(post("/api/auth/login/challenge")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -1499,7 +1639,23 @@ class YingshiServerApplicationTests {
                                 """.formatted(account, password)))
                 .andExpect(status().isOk())
                 .andReturn();
-        return readField(loginResult, "/data/accessToken");
+        String challengeId = readField(challengeResult, "/data/challengeId");
+        String code = capturingAuthLoginCodeSender.requireLatestCode(account);
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "challengeId": "%s",
+                                  "code": "%s",
+                                  "deviceId": "%s"
+                                }
+                                """.formatted(challengeId, code, TEST_DEVICE_ID)))
+                .andExpect(status().isOk())
+                .andReturn();
+        return new AuthSessionTokens(
+                readField(loginResult, "/data/accessToken"),
+                readField(loginResult, "/data/refreshToken")
+        );
     }
 
     private String uploadTestMedia(String accessToken, String fileName, String sourceFingerprint) throws Exception {
@@ -1560,6 +1716,18 @@ class YingshiServerApplicationTests {
         CapturingPushMessageSender capturingPushMessageSender() {
             return new CapturingPushMessageSender();
         }
+
+        @Bean
+        @Primary
+        CapturingAuthLoginCodeSender capturingAuthLoginCodeSender() {
+            return new CapturingAuthLoginCodeSender();
+        }
+    }
+
+    record AuthSessionTokens(
+            String accessToken,
+            String refreshToken
+    ) {
     }
 
     static class CapturingPushMessageSender implements PushMessageSender {
@@ -1579,6 +1747,23 @@ class YingshiServerApplicationTests {
         }
     }
 
+    static class CapturingAuthLoginCodeSender implements AuthLoginCodeSender {
+        private final Map<String, String> latestCodesByEmail = new java.util.concurrent.ConcurrentHashMap<>();
+
+        @Override
+        public void sendLoginCode(String email, String displayName, String code, Instant expireAt) {
+            latestCodesByEmail.put(email, code);
+        }
+
+        String requireLatestCode(String email) {
+            String code = latestCodesByEmail.get(email);
+            if (code == null || code.isBlank()) {
+                throw new IllegalStateException("No login code was captured for " + email);
+            }
+            return code;
+        }
+    }
+
     record CapturedPushDelivery(
             List<String> tokens,
             Map<String, String> data
@@ -1586,4 +1771,3 @@ class YingshiServerApplicationTests {
     }
 
 }
-

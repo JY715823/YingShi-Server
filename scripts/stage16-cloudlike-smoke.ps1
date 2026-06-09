@@ -1,8 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$BaseUrl = "http://127.0.0.1:8080",
-    [string]$Account = "demo.a@yingshi.local",
-    [string]$Password = "demo123456",
+    [string]$Account = "1085060329@qq.com",
+    [string]$Password = "123456",
+    [string]$LoginCode = "",
     [string]$PostgresContainer = "yingshi-postgres",
     [string]$PostgresUser = "yingshi",
     [string]$PostgresDatabase = "yingshi",
@@ -20,6 +21,9 @@ $BaseUrl = $BaseUrl.TrimEnd("/")
 $tempUpload = Join-Path $env:TEMP ("stage16-cloudlike-smoke-" + [Guid]::NewGuid().ToString("N") + ".png")
 
 Add-Type -AssemblyName System.Net.Http
+
+$loginChallengeId = $null
+$loginMaskedEmail = $null
 
 function Resolve-ComposeNetwork {
     docker network inspect $ComposeNetwork *> $null
@@ -113,6 +117,25 @@ function Invoke-Step {
     }
 }
 
+function Resolve-LoginCode {
+    param(
+        [string]$MaskedEmail,
+        [string]$ChallengeId
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($script:LoginCode)) {
+        return $script:LoginCode.Trim()
+    }
+
+    Write-Host "验证码已发送到 $MaskedEmail" -ForegroundColor Yellow
+    Write-Host "challengeId: $ChallengeId" -ForegroundColor DarkGray
+    $enteredCode = Read-Host "请输入 6 位邮箱验证码"
+    if ([string]::IsNullOrWhiteSpace($enteredCode)) {
+        throw "login code was not provided"
+    }
+    return $enteredCode.Trim()
+}
+
 function ConvertFrom-PostgresCsv {
     param([string]$Sql)
     $command = "COPY ($Sql) TO STDOUT WITH CSV HEADER"
@@ -157,10 +180,24 @@ try {
     } | Out-Null
 
     $login = $null
-    Invoke-Step "login" {
-        $script:login = Invoke-ApiRequest -Method POST -Path "/api/auth/login" -JsonBody @{
+    Invoke-Step "login challenge" {
+        $challenge = Invoke-ApiRequest -Method POST -Path "/api/auth/login/challenge" -JsonBody @{
             account = $Account
             password = $Password
+        }
+        $script:loginChallengeId = $challenge.data.challengeId
+        $script:loginMaskedEmail = $challenge.data.maskedEmail
+        if ([string]::IsNullOrWhiteSpace($script:loginChallengeId)) {
+            throw "missing challenge id"
+        }
+        "challengeId=$($script:loginChallengeId), email=$($script:loginMaskedEmail)"
+    } | Out-Null
+
+    Invoke-Step "login verify" {
+        $resolvedCode = Resolve-LoginCode -MaskedEmail $script:loginMaskedEmail -ChallengeId $script:loginChallengeId
+        $script:login = Invoke-ApiRequest -Method POST -Path "/api/auth/login/verify" -JsonBody @{
+            challengeId = $script:loginChallengeId
+            code = $resolvedCode
         }
         if ([string]::IsNullOrWhiteSpace($script:login.data.accessToken)) {
             throw "missing access token"

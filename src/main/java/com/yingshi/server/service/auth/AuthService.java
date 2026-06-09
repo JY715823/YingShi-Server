@@ -7,14 +7,18 @@ import com.yingshi.server.domain.SharedLibraryEntity;
 import com.yingshi.server.domain.SharedLibraryMemberEntity;
 import com.yingshi.server.domain.UserEntity;
 import com.yingshi.server.dto.auth.AuthCurrentUserResponse;
+import com.yingshi.server.dto.auth.AuthLoginChallengeResponse;
 import com.yingshi.server.dto.auth.AuthLoginRequest;
 import com.yingshi.server.dto.auth.AuthLoginResponse;
 import com.yingshi.server.dto.auth.AuthLogoutRequest;
 import com.yingshi.server.dto.auth.AuthLogoutResponse;
 import com.yingshi.server.dto.auth.AuthPartnerProfileResponse;
+import com.yingshi.server.dto.auth.AuthRememberedLoginRequest;
 import com.yingshi.server.dto.auth.AuthRefreshTokenRequest;
 import com.yingshi.server.dto.auth.AuthRefreshTokenResponse;
+import com.yingshi.server.dto.auth.AuthResendLoginChallengeRequest;
 import com.yingshi.server.dto.auth.AuthUpdateProfileRequest;
+import com.yingshi.server.dto.auth.AuthVerifyLoginChallengeRequest;
 import com.yingshi.server.repository.SharedLibraryMemberRepository;
 import com.yingshi.server.repository.SharedLibraryRepository;
 import com.yingshi.server.repository.UserRepository;
@@ -43,6 +47,8 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
     private final AuthSessionService authSessionService;
+    private final AuthLoginChallengeService authLoginChallengeService;
+    private final AuthRememberedLoginService authRememberedLoginService;
     private final LocalMediaStorageService localMediaStorageService;
 
     public AuthService(
@@ -52,6 +58,8 @@ public class AuthService {
             PasswordEncoder passwordEncoder,
             JwtTokenService jwtTokenService,
             AuthSessionService authSessionService,
+            AuthLoginChallengeService authLoginChallengeService,
+            AuthRememberedLoginService authRememberedLoginService,
             LocalMediaStorageService localMediaStorageService
     ) {
         this.userRepository = userRepository;
@@ -60,17 +68,38 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenService = jwtTokenService;
         this.authSessionService = authSessionService;
+        this.authLoginChallengeService = authLoginChallengeService;
+        this.authRememberedLoginService = authRememberedLoginService;
         this.localMediaStorageService = localMediaStorageService;
     }
 
     @Transactional
-    public AuthLoginResponse login(AuthLoginRequest request) {
-        UserEntity user = userRepository.findByAccount(request.account())
+    public AuthLoginChallengeResponse requestLoginChallenge(AuthLoginRequest request) {
+        UserEntity user = userRepository.findByAccount(normalizeAccount(request.account()))
                 .orElseThrow(() -> invalidCredentials());
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw invalidCredentials();
         }
+
+        return authLoginChallengeService.issueChallenge(user);
+    }
+
+    @Transactional
+    public AuthLoginChallengeResponse resendLoginChallenge(AuthResendLoginChallengeRequest request) {
+        return authLoginChallengeService.resendChallenge(request.challengeId().trim());
+    }
+
+    @Transactional
+    public AuthLoginResponse verifyLoginChallenge(AuthVerifyLoginChallengeRequest request) {
+        UserEntity user = authLoginChallengeService.verifyChallenge(
+                request.challengeId().trim(),
+                request.code()
+        );
+        AuthRememberedLoginGrant rememberedLoginGrant = authRememberedLoginService.issueGrant(
+                user,
+                request.deviceId()
+        );
 
         SharedLibraryEntity library = getLibrary(user.getDefaultLibraryId());
         AuthenticatedUser authenticatedUser = new AuthenticatedUser(
@@ -90,7 +119,41 @@ public class AuthService {
                 Instant.now()
         );
 
-        return buildLoginResponse(user, library, tokenBundle);
+        return buildLoginResponse(user, library, tokenBundle, rememberedLoginGrant);
+    }
+
+    @Transactional
+    public AuthLoginResponse loginWithRememberedDevice(AuthRememberedLoginRequest request) {
+        UserEntity user = userRepository.findByAccount(normalizeAccount(request.account()))
+                .orElseThrow(this::invalidCredentials);
+        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+            throw invalidCredentials();
+        }
+        AuthRememberedLoginGrant rememberedLoginGrant = authRememberedLoginService.authenticate(
+                user,
+                request.deviceId(),
+                request.rememberedLoginToken()
+        );
+
+        SharedLibraryEntity library = getLibrary(user.getDefaultLibraryId());
+        AuthenticatedUser authenticatedUser = new AuthenticatedUser(
+                user.getId(),
+                user.getAccount(),
+                user.getDisplayName(),
+                library.getId(),
+                null
+        );
+        JwtTokenBundle tokenBundle = jwtTokenService.issueTokensForNewSession(authenticatedUser);
+        authSessionService.createSession(
+                tokenBundle.sessionId(),
+                user.getId(),
+                library.getId(),
+                tokenBundle.refreshTokenId(),
+                tokenBundle.refreshExpireAt(),
+                Instant.now()
+        );
+
+        return buildLoginResponse(user, library, tokenBundle, rememberedLoginGrant);
     }
 
     public AuthCurrentUserResponse getCurrentUser(AuthenticatedUser currentUser) {
@@ -212,7 +275,8 @@ public class AuthService {
     private AuthLoginResponse buildLoginResponse(
             UserEntity user,
             SharedLibraryEntity library,
-            JwtTokenBundle tokenBundle
+            JwtTokenBundle tokenBundle,
+            AuthRememberedLoginGrant rememberedLoginGrant
     ) {
         AuthPartnerProfileResponse partner = findPartnerProfile(user, library.getId());
         return new AuthLoginResponse(
@@ -226,6 +290,8 @@ public class AuthService {
                 partner,
                 user.getCreatedAt().toEpochMilli(),
                 user.getUpdatedAt().toEpochMilli(),
+                rememberedLoginGrant.token(),
+                rememberedLoginGrant.expireAtMillis(),
                 tokenBundle.accessToken(),
                 tokenBundle.refreshToken(),
                 tokenBundle.accessTokenExpireAtMillis(),
@@ -301,6 +367,10 @@ public class AuthService {
 
     private String resolveAvatarUrl(UserEntity user) {
         return normalizeNullableText(user.getAvatarUrl()) == null ? null : "/api/auth/avatar/" + user.getId();
+    }
+
+    private String normalizeAccount(String account) {
+        return account == null ? "" : account.trim().toLowerCase();
     }
 
     private ApiException invalidCredentials() {

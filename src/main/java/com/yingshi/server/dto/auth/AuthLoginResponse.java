@@ -11,6 +11,8 @@ public record AuthLoginResponse(
         AuthPartnerProfileResponse partner,
         long createdAtMillis,
         long updatedAtMillis,
+        String rememberedLoginToken,
+        Long rememberedLoginExpireAtMillis,
         String accessToken,
         String refreshToken,
         long accessTokenExpireAtMillis,

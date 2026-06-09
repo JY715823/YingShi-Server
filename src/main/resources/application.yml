@@ -35,6 +35,25 @@ app:
       issuer: yingshi-server
       access-token-ttl: PT30M
       refresh-token-ttl: P7D
+    login-code:
+      length: ${AUTH_LOGIN_CODE_LENGTH:6}
+      ttl: ${AUTH_LOGIN_CODE_TTL:PT5M}
+      resend-cooldown: ${AUTH_LOGIN_CODE_RESEND_COOLDOWN:PT60S}
+      rate-limit-window: ${AUTH_LOGIN_CODE_RATE_LIMIT_WINDOW:PT30M}
+      max-sends-per-window: ${AUTH_LOGIN_CODE_MAX_SENDS_PER_WINDOW:5}
+      max-attempts-per-challenge: ${AUTH_LOGIN_CODE_MAX_ATTEMPTS_PER_CHALLENGE:5}
+    remembered-login:
+      ttl: ${AUTH_REMEMBERED_LOGIN_TTL:P7D}
+    mail:
+      enabled: ${AUTH_MAIL_ENABLED:true}
+      host: ${AUTH_MAIL_HOST:smtp.qq.com}
+      port: ${AUTH_MAIL_PORT:587}
+      username: ${AUTH_MAIL_USERNAME:1085060329@qq.com}
+      password: ${AUTH_MAIL_PASSWORD:}
+      from-address: ${AUTH_MAIL_FROM_ADDRESS:1085060329@qq.com}
+      from-name: ${AUTH_MAIL_FROM_NAME:映世}
+      auth: ${AUTH_MAIL_AUTH:true}
+      starttls: ${AUTH_MAIL_STARTTLS:true}
   storage:
     provider: ${STORAGE_PROVIDER:local}
     bucket: ${STORAGE_BUCKET:yingshi-media}

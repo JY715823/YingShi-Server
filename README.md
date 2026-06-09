@@ -2,7 +2,7 @@
 
 Updated: 2026-05-31
 
-This repository hosts the YingShi backend API used by the Android app in `REAL` mode. The current outward content model is:
+This repository hosts the YingShi backend API used by the Android app. The current local deployment flow includes QQ email verification login, persisted auth sessions, and the shared two-person library model.
 
 - `album = 大相册`
 - `small album = 小相册`
@@ -17,7 +17,8 @@ This repository hosts the YingShi backend API used by the Android app in `REAL` 
 
 ## Latest Backend Progress
 
-- Auth is session-aware end to end: login, refresh, current user, logout, profile update, avatar upload/read.
+- Auth is session-aware end to end: login challenge, resend, verify, refresh, current user, logout, profile update, avatar upload/read.
+- Login codes are stored as hashes in `auth_login_challenges` and sent through configurable QQ SMTP.
 - Refresh tokens are persisted in `auth_sessions`, rotated on every refresh, and invalidated when an old refresh token is reused.
 - Small-album APIs are hard-cut to `/api/small-albums` and album-child listing is `/api/albums/{albumId}/small-albums`.
 - Comment audit fields are stored in PostgreSQL, enabling notification variants for comment create, edit, and delete.
@@ -29,7 +30,9 @@ This repository hosts the YingShi backend API used by the Android app in `REAL` 
 Public:
 
 - `GET /api/health`
-- `POST /api/auth/login`
+- `POST /api/auth/login/challenge`
+- `POST /api/auth/login/challenge/resend`
+- `POST /api/auth/login/verify`
 - `POST /api/auth/refresh-token`
 
 Authenticated:
@@ -78,9 +81,9 @@ Authenticated:
 
 ## Android Alignment
 
-Already consumed by Android `REAL` repositories:
+Already consumed by Android repositories:
 
-- login / refresh-token / session restore / logout
+- login challenge / resend / verify / refresh-token / session restore / logout
 - current user / profile update / shared-library display
 - large-album list, child small-album list, small-album list/detail/create/update/cover/media-order/add-media/delete
 - media feed and backend media-file delivery
@@ -110,6 +113,11 @@ Useful URLs:
 - Swagger UI in `dev`: `http://localhost:8080/swagger-ui.html`
 - OpenAPI in `dev`: `http://localhost:8080/v3/api-docs`
 - H2 Console in `dev`: `http://localhost:8080/h2-console`
+
+## Local Auth Notes
+
+- seeded accounts: `1085060329@qq.com / 123456` and `2926315047@qq.com / 123456`
+- local/dev verification requires a valid QQ SMTP authorization code in `app.auth.mail.*` override or environment-backed config
 
 ## Docs
 

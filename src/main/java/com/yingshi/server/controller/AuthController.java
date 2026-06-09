@@ -6,13 +6,17 @@ import com.yingshi.server.common.auth.CurrentUser;
 import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.auth.AuthCurrentUserResponse;
+import com.yingshi.server.dto.auth.AuthLoginChallengeResponse;
 import com.yingshi.server.dto.auth.AuthLoginRequest;
 import com.yingshi.server.dto.auth.AuthLoginResponse;
 import com.yingshi.server.dto.auth.AuthLogoutRequest;
 import com.yingshi.server.dto.auth.AuthLogoutResponse;
+import com.yingshi.server.dto.auth.AuthRememberedLoginRequest;
 import com.yingshi.server.dto.auth.AuthRefreshTokenRequest;
 import com.yingshi.server.dto.auth.AuthRefreshTokenResponse;
+import com.yingshi.server.dto.auth.AuthResendLoginChallengeRequest;
 import com.yingshi.server.dto.auth.AuthUpdateProfileRequest;
+import com.yingshi.server.dto.auth.AuthVerifyLoginChallengeRequest;
 import com.yingshi.server.service.auth.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -43,14 +47,44 @@ public class AuthController {
         this.authService = authService;
     }
 
-    @Operation(summary = "Account password login")
-    @PostMapping("/login")
-    public ApiResponse<AuthLoginResponse> login(
+    @Operation(summary = "Request login challenge")
+    @PostMapping("/login/challenge")
+    public ApiResponse<AuthLoginChallengeResponse> requestLoginChallenge(
             @Valid @RequestBody AuthLoginRequest request,
             HttpServletRequest httpServletRequest
     ) {
         String requestId = (String) httpServletRequest.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
-        return ApiResponse.success(requestId, authService.login(request));
+        return ApiResponse.success(requestId, authService.requestLoginChallenge(request));
+    }
+
+    @Operation(summary = "Resend login challenge")
+    @PostMapping("/login/challenge/resend")
+    public ApiResponse<AuthLoginChallengeResponse> resendLoginChallenge(
+            @Valid @RequestBody AuthResendLoginChallengeRequest request,
+            HttpServletRequest httpServletRequest
+    ) {
+        String requestId = (String) httpServletRequest.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
+        return ApiResponse.success(requestId, authService.resendLoginChallenge(request));
+    }
+
+    @Operation(summary = "Verify login challenge")
+    @PostMapping("/login/verify")
+    public ApiResponse<AuthLoginResponse> verifyLoginChallenge(
+            @Valid @RequestBody AuthVerifyLoginChallengeRequest request,
+            HttpServletRequest httpServletRequest
+    ) {
+        String requestId = (String) httpServletRequest.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
+        return ApiResponse.success(requestId, authService.verifyLoginChallenge(request));
+    }
+
+    @Operation(summary = "Login with remembered device")
+    @PostMapping("/login/remembered")
+    public ApiResponse<AuthLoginResponse> loginWithRememberedDevice(
+            @Valid @RequestBody AuthRememberedLoginRequest request,
+            HttpServletRequest httpServletRequest
+    ) {
+        String requestId = (String) httpServletRequest.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
+        return ApiResponse.success(requestId, authService.loginWithRememberedDevice(request));
     }
 
     @Operation(summary = "Exchange refresh token")
