@@ -16,6 +16,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,7 +29,7 @@ import org.springframework.web.multipart.MultipartFile;
 @AuthRequired
 @Tag(name = "Uploads")
 @RestController
-@RequestMapping("/api/uploads")
+@RequestMapping(value = "/api/uploads", produces = MediaType.APPLICATION_JSON_VALUE)
 public class UploadController {
 
     private final UploadService uploadService;
@@ -48,7 +49,11 @@ public class UploadController {
     }
 
     @Operation(summary = "Upload local file", security = @SecurityRequirement(name = "bearerAuth"))
-    @PostMapping("/{uploadId}/file")
+    @PostMapping(
+            value = "/{uploadId}/file",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE
+    )
     public ApiResponse<UploadCompleteResponse> uploadFile(
             @PathVariable String uploadId,
             @RequestPart("file") MultipartFile file,

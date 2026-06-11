@@ -358,7 +358,9 @@ public class UploadService {
         media.setLibraryId(task.getLibraryId());
         media.setMediaType(task.getMediaType());
         media.setUrl(mediaUrl);
-        media.setPreviewUrl(task.getMediaType() == MediaType.IMAGE ? mediaUrl + "?variant=preview" : null);
+        media.setPreviewUrl(task.getMediaType() == MediaType.IMAGE
+                ? mediaUrl + "?variant=preview"
+                : mediaUrl + "?variant=cover");
         media.setOriginalUrl(task.getMediaType() == MediaType.IMAGE ? mediaUrl : null);
         media.setVideoUrl(task.getMediaType() == MediaType.VIDEO ? mediaUrl : null);
         media.setCoverUrl(null);
@@ -456,11 +458,13 @@ public class UploadService {
         }
         if (media.getMediaType() == MediaType.VIDEO) {
             media.setCoverUrl(media.getUrl() + "?variant=cover");
-            media.setCoverObjectKey(localMediaStorageService.videoCoverObjectKey(
+            String coverObjectKey = localMediaStorageService.videoCoverObjectKey(
                     media.getStoragePath(),
                     media.getId(),
                     PREVIEW_MAX_DIMENSION
-            ));
+            );
+            media.setCoverObjectKey(coverObjectKey);
+            media.setPreviewObjectKey(coverObjectKey);
         }
     }
 

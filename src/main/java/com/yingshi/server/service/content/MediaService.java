@@ -26,6 +26,7 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -108,13 +109,26 @@ public class MediaService {
             }
         }
 
-        List<MediaDto> results = new ArrayList<>();
+        Map<String, DeduplicatedFeedEntry> deduplicatedEntries = new LinkedHashMap<>();
         for (MediaEntity media : mediaItems) {
             List<String> postIds = postIdsByMediaId.getOrDefault(media.getId(), List.of());
-            if (!isRenderableMedia(media, postIds, activeRelatedMediaIds.contains(media.getId()))) {
+            boolean hasAnyActivePostRelation = activeRelatedMediaIds.contains(media.getId());
+            if (!isRenderableMedia(media, postIds, hasAnyActivePostRelation)) {
                 continue;
             }
-            results.add(contentMapper.toMediaDto(media, postIds));
+            String deduplicationKey = feedDeduplicationKey(media);
+            deduplicatedEntries
+                    .computeIfAbsent(deduplicationKey, ignored -> new DeduplicatedFeedEntry(media, postIds, hasAnyActivePostRelation))
+                    .merge(media, postIds, hasAnyActivePostRelation);
+        }
+        List<DeduplicatedFeedEntry> orderedEntries = deduplicatedEntries.values().stream()
+                .sorted(Comparator
+                        .comparing((DeduplicatedFeedEntry entry) -> entry.representativeMedia().getDisplayTimeMillis()).reversed()
+                        .thenComparing(entry -> entry.representativeMedia().getId()))
+                .toList();
+        List<MediaDto> results = new ArrayList<>();
+        for (DeduplicatedFeedEntry entry : orderedEntries) {
+            results.add(contentMapper.toMediaDto(entry.representativeMedia(), entry.visiblePostIds()));
         }
         return results;
     }
@@ -207,6 +221,118 @@ public class MediaService {
 
     private boolean isRenderableMedia(MediaEntity media, List<String> visiblePostIds, boolean hasAnyActivePostRelation) {
         return !hasAnyActivePostRelation || !visiblePostIds.isEmpty();
+    }
+
+    private String feedDeduplicationKey(MediaEntity media) {
+        String checksum = normalizeNullable(media.getChecksum());
+        if (checksum != null) {
+            return "checksum:" + media.getMediaType().name() + ":" + checksum;
+        }
+        String sourceFingerprint = normalizeNullable(media.getSourceFingerprint());
+        if (sourceFingerprint != null) {
+            return "fingerprint:" + sourceFingerprint;
+        }
+        return "shape:" + media.getMediaType().name()
+                + "|" + normalizeNullable(media.getMimeType())
+                + "|" + media.getSizeBytes()
+                + "|" + media.getDisplayTimeMillis()
+                + "|" + media.getWidth()
+                + "|" + media.getHeight()
+                + "|" + (media.getDurationMillis() == null ? "none" : media.getDurationMillis());
+    }
+
+    private String normalizeNullable(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private int compareNullableLong(Long left, Long right) {
+        if (left == null && right == null) {
+            return 0;
+        }
+        if (left == null) {
+            return -1;
+        }
+        if (right == null) {
+            return 1;
+        }
+        return Long.compare(left, right);
+    }
+
+    private boolean shouldPreferRepresentative(
+            MediaEntity candidateMedia,
+            List<String> candidatePostIds,
+            boolean candidateHasActiveRelation,
+            MediaEntity currentMedia,
+            int currentVisiblePostCount,
+            boolean currentHasActiveRelation
+    ) {
+        if (candidatePostIds.size() != currentVisiblePostCount) {
+            return candidatePostIds.size() > currentVisiblePostCount;
+        }
+        if (candidateHasActiveRelation != currentHasActiveRelation) {
+            return candidateHasActiveRelation;
+        }
+        int importedAtComparison = compareNullableLong(candidateMedia.getImportedAtMillis(), currentMedia.getImportedAtMillis());
+        if (importedAtComparison != 0) {
+            return importedAtComparison > 0;
+        }
+        int capturedAtComparison = compareNullableLong(candidateMedia.getCapturedAtMillis(), currentMedia.getCapturedAtMillis());
+        if (capturedAtComparison != 0) {
+            return capturedAtComparison > 0;
+        }
+        int displayTimeComparison = Long.compare(candidateMedia.getDisplayTimeMillis(), currentMedia.getDisplayTimeMillis());
+        if (displayTimeComparison != 0) {
+            return displayTimeComparison > 0;
+        }
+        return candidateMedia.getId().compareTo(currentMedia.getId()) > 0;
+    }
+
+    private final class DeduplicatedFeedEntry {
+        private MediaEntity representativeMedia;
+        private final LinkedHashSet<String> visiblePostIds = new LinkedHashSet<>();
+        private boolean hasActiveRelation;
+
+        private DeduplicatedFeedEntry(
+                MediaEntity representativeMedia,
+                List<String> initialPostIds,
+                boolean hasActiveRelation
+        ) {
+            this.representativeMedia = representativeMedia;
+            this.visiblePostIds.addAll(initialPostIds);
+            this.hasActiveRelation = hasActiveRelation;
+        }
+
+        private void merge(
+                MediaEntity candidateMedia,
+                List<String> candidatePostIds,
+                boolean candidateHasActiveRelation
+        ) {
+            int currentVisiblePostCount = visiblePostIds.size();
+            if (shouldPreferRepresentative(
+                    candidateMedia,
+                    candidatePostIds,
+                    candidateHasActiveRelation,
+                    representativeMedia,
+                    currentVisiblePostCount,
+                    hasActiveRelation
+            )) {
+                representativeMedia = candidateMedia;
+                hasActiveRelation = candidateHasActiveRelation;
+            }
+            visiblePostIds.addAll(candidatePostIds);
+        }
+
+        private MediaEntity representativeMedia() {
+            return representativeMedia;
+        }
+
+        private List<String> visiblePostIds() {
+            return List.copyOf(visiblePostIds);
+        }
     }
 
     private int normalizePageSize(Integer pageSize) {

@@ -5,6 +5,7 @@ import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
+import org.springframework.http.MediaType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -139,6 +140,8 @@ public class GlobalExceptionHandler {
     ) {
         String requestId = (String) request.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
         ApiError error = new ApiError(errorCode.name(), message, details);
-        return ResponseEntity.status(status).body(ApiResponse.error(requestId, error));
+        return ResponseEntity.status(status)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(ApiResponse.error(requestId, error));
     }
 }

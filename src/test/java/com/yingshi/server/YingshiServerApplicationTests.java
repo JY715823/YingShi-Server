@@ -39,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -896,6 +897,93 @@ class YingshiServerApplicationTests {
         List<Map<String, Object>> duplicateMatchedItems = JsonPath.parse(duplicateFeedResult.getResponse().getContentAsString(StandardCharsets.UTF_8))
                 .read("$.data[?(@.mediaId=='%s')]".formatted(mediaId));
         assertEquals(1, duplicateMatchedItems.size());
+    }
+
+    @Test
+    void localVideoUploadReturnsJsonEnvelope() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+        byte[] fileBytes = "fake-video-data".getBytes(StandardCharsets.UTF_8);
+
+        MvcResult tokenResult = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fileName": "upload-demo.mp4",
+                                  "mimeType": "video/mp4",
+                                  "fileSizeBytes": %d,
+                                  "mediaType": "video",
+                                  "width": 1080,
+                                  "height": 1920,
+                                  "durationMillis": 6500,
+                                  "displayTimeMillis": 1777416600000,
+                                  "sourceFingerprint": "test-upload-video-source-001"
+                                }
+                                """.formatted(fileBytes.length)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String uploadId = readField(tokenResult, "/data/uploadId");
+        MockMultipartFile multipartFile = new MockMultipartFile("file", "upload-demo.mp4", "video/mp4", fileBytes);
+
+        MvcResult uploadResult = mockMvc.perform(multipart("/api/uploads/" + uploadId + "/file")
+                        .file(multipartFile)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", containsString(MediaType.APPLICATION_JSON_VALUE)))
+                .andExpect(jsonPath("$.data.state").value("success"))
+                .andExpect(jsonPath("$.data.media.mimeType").value("video/mp4"))
+                .andExpect(jsonPath("$.data.media.videoUrl").isNotEmpty())
+                .andReturn();
+
+        String mediaId = readField(uploadResult, "/data/media/mediaId");
+        MediaEntity uploadedMedia = mediaRepository.findById(mediaId).orElseThrow();
+        assertEquals("video/mp4", uploadedMedia.getMimeType());
+        assertEquals(6500L, uploadedMedia.getDurationMillis());
+        assertEquals("/api/media/files/" + mediaId, uploadedMedia.getVideoUrl());
+        assertEquals("originals/2026/04/" + mediaId + ".mp4", uploadedMedia.getOriginalObjectKey());
+
+        mockMvc.perform(get("/api/media/files/" + mediaId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "video/mp4"));
+    }
+
+    @Test
+    void restoredDeletedMediaDoesNotDuplicatePhotoFeedAfterReupload() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        String firstMediaId = uploadTestMedia(accessToken, "restore-dedup-a.jpg", "restore-dedup-source-a");
+
+        MvcResult deleteResult = mockMvc.perform(delete("/api/media/" + firstMediaId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("mediaSystemDeleted"))
+                .andReturn();
+        String trashItemId = readField(deleteResult, "/data/trashItemId");
+
+        String secondMediaId = uploadTestMedia(accessToken, "restore-dedup-b.jpg", "restore-dedup-source-b");
+
+        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/restore")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("restored"));
+
+        MvcResult feedResult = mockMvc.perform(get("/api/media/feed")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        List<Map<String, Object>> matchedItems = JsonPath.parse(
+                        feedResult.getResponse().getContentAsString(StandardCharsets.UTF_8))
+                .read("$.data[?(@.mediaId=='%s' || @.mediaId=='%s')]".formatted(firstMediaId, secondMediaId));
+
+        assertEquals(1, matchedItems.size());
+        assertEquals(secondMediaId, matchedItems.get(0).get("mediaId"));
+        assertEquals(List.of(), matchedItems.get(0).get("smallAlbumIds"));
+        assertEquals(2, mediaRepository.findByLibraryIdAndDeletedAtIsNull("library_shared").stream()
+                .filter(media -> media.getId().equals(firstMediaId) || media.getId().equals(secondMediaId))
+                .count());
     }
 
     @Test
