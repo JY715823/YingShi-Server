@@ -274,7 +274,7 @@ public class LifeConsoleService {
         if (ownerUserId == null) {
             return new LifeConsoleMediaSlotDto(category.name(), null, false, List.of());
         }
-        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKey(libraryId, category.albumSystemKey()).orElse(null);
+        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKeyAndDeletedAtIsNull(libraryId, category.albumSystemKey()).orElse(null);
         if (album == null) {
             return new LifeConsoleMediaSlotDto(category.name(), ownerUserId, editable, List.of());
         }
@@ -359,7 +359,7 @@ public class LifeConsoleService {
             ZoneId zone,
             int limitDays
     ) {
-        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKey(libraryId, category.albumSystemKey()).orElse(null);
+        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKeyAndDeletedAtIsNull(libraryId, category.albumSystemKey()).orElse(null);
         if (album == null) {
             return List.of();
         }
@@ -566,7 +566,7 @@ public class LifeConsoleService {
     }
 
     private AlbumEntity ensureSystemAlbum(String libraryId, LifeConsoleCategory category) {
-        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKey(libraryId, category.albumSystemKey()).orElse(null);
+        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKeyAndDeletedAtIsNull(libraryId, category.albumSystemKey()).orElse(null);
         if (album == null) {
             album = new AlbumEntity();
             album.setId(IdGenerator.newId("album"));

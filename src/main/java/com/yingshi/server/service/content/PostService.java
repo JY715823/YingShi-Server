@@ -230,7 +230,7 @@ public class PostService {
         if (albumId == null || albumId.isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.ALBUM_ASSIGNMENT_INVALID, "albumId is required.");
         }
-        return albumRepository.findByIdAndLibraryId(albumId, libraryId)
+        return albumRepository.findByIdAndLibraryIdAndDeletedAtIsNull(albumId, libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.ALBUM_ASSIGNMENT_INVALID, "albumId does not exist in the shared library."));
     }
 

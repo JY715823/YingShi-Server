@@ -506,6 +506,271 @@ class YingshiServerApplicationTests {
     }
 
     @Test
+    void largeAlbumCanBeRenamedAndListReflectsUpdatedTitle() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        mockMvc.perform(patch("/api/albums/album_001")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "2026 夏天",
+                                  "subtitle": "把风和云都留在这一册"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.albumId").value("album_001"))
+                .andExpect(jsonPath("$.data.title").value("2026 夏天"))
+                .andExpect(jsonPath("$.data.subtitle").value("把风和云都留在这一册"))
+                .andExpect(jsonPath("$.data.smallAlbumCount").value(1));
+
+        MvcResult albumsResult = mockMvc.perform(get("/api/albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        List<Map<String, Object>> targetAlbums = readFilteredList(albumsResult, "$.data[?(@.albumId=='album_001')]");
+        assertEquals(1, targetAlbums.size());
+        assertEquals("2026 夏天", targetAlbums.get(0).get("title"));
+        assertEquals("把风和云都留在这一册", targetAlbums.get(0).get("subtitle"));
+    }
+
+    @Test
+    void largeAlbumDeleteMovesChildSmallAlbumsIntoTrashAndCanBeRestored() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        MvcResult deleteResult = mockMvc.perform(delete("/api/albums/album_003")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("largeAlbumDeleted"))
+                .andExpect(jsonPath("$.data.title").value("长图检查"))
+                .andExpect(jsonPath("$.data.relatedSmallAlbumIds.length()").value(1))
+                .andExpect(jsonPath("$.data.relatedSmallAlbumIds[0]").value("post_002"))
+                .andExpect(jsonPath("$.data.relatedMediaIds.length()").value(2))
+                .andExpect(jsonPath("$.data.previewInfo").value("Large album deleted with 1 small albums"))
+                .andReturn();
+
+        String trashItemId = readField(deleteResult, "/data/trashItemId");
+
+        mockMvc.perform(get("/api/albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2));
+
+        mockMvc.perform(get("/api/albums/album_003/small-albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("ALBUM_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/small-albums/post_002")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("SMALL_ALBUM_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/trash/items/" + trashItemId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.item.itemType").value("largeAlbumDeleted"))
+                .andExpect(jsonPath("$.data.item.relatedSmallAlbumIds[0]").value("post_002"));
+
+        mockMvc.perform(get("/api/trash/items")
+                        .queryParam("itemType", "largeAlbumDeleted")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].trashItemId").value(trashItemId))
+                .andExpect(jsonPath("$.data.items[0].itemType").value("largeAlbumDeleted"));
+
+        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/restore")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("restored"));
+
+        mockMvc.perform(get("/api/albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(3));
+
+        mockMvc.perform(get("/api/albums/album_003/small-albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].smallAlbumId").value("post_002"));
+
+        mockMvc.perform(get("/api/small-albums/post_002")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.smallAlbumId").value("post_002"));
+    }
+
+    @Test
+    void purgingDeletedLargeAlbumRemovesAlbumAndChildSmallAlbums() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        MvcResult deleteResult = mockMvc.perform(delete("/api/albums/album_002")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("largeAlbumDeleted"))
+                .andReturn();
+
+        String trashItemId = readField(deleteResult, "/data/trashItemId");
+
+        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/purge")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trashItemId").value(trashItemId));
+
+        mockMvc.perform(get("/api/trash/items/" + trashItemId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("TRASH_ITEM_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.albumId=='album_002')]").value(List.of()));
+
+        mockMvc.perform(get("/api/albums/album_002/small-albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("ALBUM_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/small-albums/post_003")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("SMALL_ALBUM_NOT_FOUND"));
+    }
+
+    @Test
+    void lifeConsoleAlbumCanBeRenamedAndDeletedFromAlbumDirectory() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+        String personMediaId = uploadTestMedia(accessToken, "life-person-guard.jpg", "life-person-guard-" + System.nanoTime());
+
+        mockMvc.perform(post("/api/life-console/media")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "category": "PERSON",
+                                  "mediaIds": ["%s"]
+                                }
+                                """.formatted(personMediaId)))
+                .andExpect(status().isOk());
+
+        MvcResult albumsResult = mockMvc.perform(get("/api/albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        List<Map<String, Object>> systemAlbums = readFilteredList(albumsResult, "$.data[?(@.systemKey=='life.person')]");
+        assertEquals(1, systemAlbums.size());
+        String systemAlbumId = String.valueOf(systemAlbums.get(0).get("albumId"));
+
+        mockMvc.perform(patch("/api/albums/" + systemAlbumId)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "不该改名"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.albumId").value(systemAlbumId))
+                .andExpect(jsonPath("$.data.title").value("不该改名"));
+
+        MvcResult deleteResult = mockMvc.perform(delete("/api/albums/" + systemAlbumId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("largeAlbumDeleted"))
+                .andReturn();
+
+        String trashItemId = readField(deleteResult, "/data/trashItemId");
+
+        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/restore")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("restored"));
+
+        mockMvc.perform(get("/api/albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.albumId=='%s')].title".formatted(systemAlbumId)).value(List.of("不该改名")))
+                .andExpect(jsonPath("$.data[?(@.albumId=='%s')].systemKey".formatted(systemAlbumId)).value(List.of("life.person")));
+    }
+
+    @Test
+    void restoringDeletedLifeConsoleAlbumKeepsOnlyOneActiveSystemKeyAfterRecreation() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+        String firstPersonMediaId = uploadTestMedia(accessToken, "life-person-restore-a.jpg", "life-person-restore-a-" + System.nanoTime());
+
+        mockMvc.perform(post("/api/life-console/media")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "category": "PERSON",
+                                  "mediaIds": ["%s"]
+                                }
+                                """.formatted(firstPersonMediaId)))
+                .andExpect(status().isOk());
+
+        MvcResult firstAlbumsResult = mockMvc.perform(get("/api/albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        List<Map<String, Object>> firstSystemAlbums = readFilteredList(firstAlbumsResult, "$.data[?(@.systemKey=='life.person')]");
+        assertEquals(1, firstSystemAlbums.size());
+        String deletedAlbumId = String.valueOf(firstSystemAlbums.get(0).get("albumId"));
+
+        MvcResult deleteResult = mockMvc.perform(delete("/api/albums/" + deletedAlbumId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("largeAlbumDeleted"))
+                .andReturn();
+        String trashItemId = readField(deleteResult, "/data/trashItemId");
+
+        String secondPersonMediaId = uploadTestMedia(accessToken, "life-person-restore-b.jpg", "life-person-restore-b-" + System.nanoTime());
+        mockMvc.perform(post("/api/life-console/media")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "category": "PERSON",
+                                  "mediaIds": ["%s"]
+                                }
+                                """.formatted(secondPersonMediaId)))
+                .andExpect(status().isOk());
+
+        MvcResult recreatedAlbumsResult = mockMvc.perform(get("/api/albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        List<Map<String, Object>> recreatedSystemAlbums = readFilteredList(recreatedAlbumsResult, "$.data[?(@.systemKey=='life.person')]");
+        assertEquals(1, recreatedSystemAlbums.size());
+        String recreatedAlbumId = String.valueOf(recreatedSystemAlbums.get(0).get("albumId"));
+
+        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/restore")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("restored"));
+
+        MvcResult restoredAlbumsResult = mockMvc.perform(get("/api/albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn();
+        List<Map<String, Object>> restoredSystemAlbums = readFilteredList(restoredAlbumsResult, "$.data[?(@.systemKey=='life.person')]");
+        assertEquals(1, restoredSystemAlbums.size());
+        assertEquals(recreatedAlbumId, String.valueOf(restoredSystemAlbums.get(0).get("albumId")));
+        List<Map<String, Object>> restoredOriginalAlbum = readFilteredList(restoredAlbumsResult, "$.data[?(@.albumId=='%s')]".formatted(deletedAlbumId));
+        assertEquals(1, restoredOriginalAlbum.size());
+        assertEquals(null, restoredOriginalAlbum.get(0).get("systemKey"));
+
+        mockMvc.perform(get("/api/albums/" + deletedAlbumId + "/small-albums")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1));
+    }
+
+    @Test
     void contentMutationApisWorkForCurrentSpace() throws Exception {
         String accessToken = loginAndGetAccessToken();
 

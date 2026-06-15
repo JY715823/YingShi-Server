@@ -5,6 +5,8 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
+import java.time.Instant;
+
 @Entity
 @Table(name = "albums")
 public class AlbumEntity extends LibraryScopedEntity {
@@ -26,6 +28,9 @@ public class AlbumEntity extends LibraryScopedEntity {
 
     @Column(nullable = false)
     private Boolean includeInPhotoFeed = true;
+
+    @Column
+    private Instant deletedAt;
 
     public String getId() {
         return id;
@@ -73,5 +78,13 @@ public class AlbumEntity extends LibraryScopedEntity {
 
     public void setIncludeInPhotoFeed(Boolean includeInPhotoFeed) {
         this.includeInPhotoFeed = includeInPhotoFeed;
+    }
+
+    public Instant getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(Instant deletedAt) {
+        this.deletedAt = deletedAt;
     }
 }

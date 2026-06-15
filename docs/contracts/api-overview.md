@@ -1,6 +1,6 @@
 # API 契约总览
 
-更新时间：2026-05-31
+更新时间：2026-06-11
 
 ## 当前内容语义
 
@@ -61,6 +61,8 @@
 - `POST /api/auth/me/avatar`
 - `GET /api/auth/avatar/{userId}`
 - `GET /api/albums`
+- `PATCH /api/albums/{albumId}`
+- `DELETE /api/albums/{albumId}`
 - `GET /api/albums/{albumId}/small-albums`
 - `GET /api/small-albums`
 - `GET /api/small-albums/{smallAlbumId}`
@@ -100,6 +102,7 @@
 ## Android REAL 已对齐能力
 
 - 大相册页与小相册详情
+- 大相册重命名、整册删除、回收站整组恢复
 - 照片流与媒体查看器
 - 小相册评论与媒体评论
 - 上传、加入小相册、小相册创建/编辑

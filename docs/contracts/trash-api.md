@@ -1,6 +1,6 @@
 ﻿# Trash API Contract
 
-更新时间：2026-05-31
+更新时间：2026-06-11
 
 ## 状态
 
@@ -40,6 +40,7 @@
 
 ### `itemType`
 
+- `largeAlbumDeleted`
 - `smallAlbumDeleted`
 - `mediaRemoved`
 - `mediaSystemDeleted`
@@ -89,6 +90,7 @@ Response `data`:
 
 当前语义：
 
+- `largeAlbumDeleted`：恢复大相册本体，以及本次整组进入回收站的小相册
 - `smallAlbumDeleted`：恢复小相册、小相册评论和小相册媒体关系
 - `mediaRemoved`：恢复小相册内媒体关系
 - `mediaSystemDeleted`：恢复媒体本体及相关关系
@@ -101,6 +103,11 @@ Response `data`:
 
 当前后端行为：
 
+- `largeAlbumDeleted`
+  - 删除 trash item
+  - 最终清理对应大相册记录
+  - 最终清理本次一起删除的小相册记录与其评论、关系
+  - 不删除全局媒体本体和物理文件
 - `smallAlbumDeleted`
   - 删除 trash item
   - 删除小相册记录、小相册评论和小相册关系

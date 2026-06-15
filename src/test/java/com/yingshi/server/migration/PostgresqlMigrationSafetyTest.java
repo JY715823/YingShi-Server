@@ -72,4 +72,17 @@ class PostgresqlMigrationSafetyTest {
         assertThat(sql).contains("replace(snapshot_json, '\"postid\":', '\"smallalbumid\":')");
         assertThat(sql).contains("snapshot_json ~ '^[0-9]+$'");
     }
+
+    @Test
+    void largeAlbumDirectorySupportMigrationAddsAlbumSoftDeleteAndLargeAlbumTrashType() throws IOException {
+        String sql = Files.readString(
+                MIGRATION_DIR.resolve("V12__large_album_directory_support.sql"),
+                StandardCharsets.UTF_8
+        ).toLowerCase();
+
+        assertThat(sql).contains("alter table albums");
+        assertThat(sql).contains("add column if not exists deleted_at");
+        assertThat(sql).contains("idx_albums_library_deleted_title");
+        assertThat(sql).contains("'large_album_deleted'");
+    }
 }

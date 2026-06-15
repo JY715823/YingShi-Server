@@ -10,10 +10,13 @@ import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.dto.content.AlbumDto;
 import com.yingshi.server.dto.content.CreateAlbumRequest;
 import com.yingshi.server.dto.content.PostSummaryDto;
+import com.yingshi.server.dto.content.UpdateAlbumRequest;
+import com.yingshi.server.dto.trash.TrashItemDto;
 import com.yingshi.server.mapper.ContentMapper;
 import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
+import com.yingshi.server.service.trash.TrashService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,17 +33,20 @@ public class AlbumService {
     private final PostRepository postRepository;
     private final PostMediaRepository postMediaRepository;
     private final ContentMapper contentMapper;
+    private final TrashService trashService;
 
     public AlbumService(
             AlbumRepository albumRepository,
             PostRepository postRepository,
             PostMediaRepository postMediaRepository,
-            ContentMapper contentMapper
+            ContentMapper contentMapper,
+            TrashService trashService
     ) {
         this.albumRepository = albumRepository;
         this.postRepository = postRepository;
         this.postMediaRepository = postMediaRepository;
         this.contentMapper = contentMapper;
+        this.trashService = trashService;
     }
 
     @Transactional
@@ -58,7 +64,7 @@ public class AlbumService {
     @Transactional(readOnly = true)
     public List<AlbumDto> listAlbums(AuthenticatedUser currentUser) {
         String libraryId = currentUser.libraryId();
-        List<AlbumEntity> albums = albumRepository.findByLibraryIdOrderByTitleAsc(libraryId);
+        List<AlbumEntity> albums = albumRepository.findByLibraryIdAndDeletedAtIsNullOrderByTitleAsc(libraryId);
         Map<String, Long> postCountByAlbumId = postRepository
                 .findByLibraryIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(libraryId)
                 .stream()
@@ -101,8 +107,26 @@ public class AlbumService {
         return results;
     }
 
-    private void requireAlbum(String albumId, String libraryId) {
-        albumRepository.findByIdAndLibraryId(albumId, libraryId)
+    @Transactional
+    public AlbumDto updateAlbum(String albumId, UpdateAlbumRequest request, AuthenticatedUser currentUser) {
+        AlbumEntity album = requireAlbum(albumId, currentUser.libraryId());
+        album.setTitle(request.title().trim());
+        album.setSubtitle(request.subtitle() == null ? "" : request.subtitle().trim());
+        albumRepository.save(album);
+        long smallAlbumCount = postRepository.findByLibraryIdAndAlbumIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(
+                currentUser.libraryId(),
+                album.getId()
+        ).size();
+        return contentMapper.toAlbumDto(album, smallAlbumCount);
+    }
+
+    @Transactional
+    public TrashItemDto deleteAlbum(String albumId, AuthenticatedUser currentUser) {
+        return trashService.deleteLargeAlbum(albumId, currentUser);
+    }
+
+    private AlbumEntity requireAlbum(String albumId, String libraryId) {
+        return albumRepository.findByIdAndLibraryIdAndDeletedAtIsNull(albumId, libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.ALBUM_NOT_FOUND, "Album was not found."));
     }
 }

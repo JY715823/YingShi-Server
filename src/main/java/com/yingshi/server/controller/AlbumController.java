@@ -8,13 +8,17 @@ import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.content.AlbumDto;
 import com.yingshi.server.dto.content.CreateAlbumRequest;
 import com.yingshi.server.dto.content.PostSummaryDto;
+import com.yingshi.server.dto.content.UpdateAlbumRequest;
+import com.yingshi.server.dto.trash.TrashItemDto;
 import com.yingshi.server.service.content.AlbumService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -62,6 +66,27 @@ public class AlbumController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), albumService.listAlbumPosts(albumId, currentUser));
+    }
+
+    @Operation(summary = "Rename large album", security = @SecurityRequirement(name = "bearerAuth"))
+    @PatchMapping("/{albumId}")
+    public ApiResponse<AlbumDto> updateAlbum(
+            @PathVariable String albumId,
+            @Valid @RequestBody UpdateAlbumRequest updateAlbumRequest,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), albumService.updateAlbum(albumId, updateAlbumRequest, currentUser));
+    }
+
+    @Operation(summary = "Delete large album", security = @SecurityRequirement(name = "bearerAuth"))
+    @DeleteMapping("/{albumId}")
+    public ApiResponse<TrashItemDto> deleteAlbum(
+            @PathVariable String albumId,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), albumService.deleteAlbum(albumId, currentUser));
     }
 
     private String requestId(HttpServletRequest request) {

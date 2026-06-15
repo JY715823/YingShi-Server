@@ -7,6 +7,7 @@ import com.yingshi.server.common.IdGenerator;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
+import com.yingshi.server.domain.AlbumEntity;
 import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaDeleteMode;
@@ -19,6 +20,7 @@ import com.yingshi.server.dto.trash.TrashDetailDto;
 import com.yingshi.server.dto.trash.TrashItemDto;
 import com.yingshi.server.dto.trash.TrashPageResponse;
 import com.yingshi.server.mapper.TrashMapper;
+import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.CommentRepository;
 import com.yingshi.server.repository.PostMediaRepository;
@@ -52,6 +54,7 @@ public class TrashService {
     private static final int DEFAULT_SIZE = 10;
 
     private final TrashItemRepository trashItemRepository;
+    private final AlbumRepository albumRepository;
     private final PostRepository postRepository;
     private final MediaRepository mediaRepository;
     private final PostMediaRepository postMediaRepository;
@@ -62,6 +65,7 @@ public class TrashService {
 
     public TrashService(
             TrashItemRepository trashItemRepository,
+            AlbumRepository albumRepository,
             PostRepository postRepository,
             MediaRepository mediaRepository,
             PostMediaRepository postMediaRepository,
@@ -70,12 +74,55 @@ public class TrashService {
             LocalMediaStorageService localMediaStorageService
     ) {
         this.trashItemRepository = trashItemRepository;
+        this.albumRepository = albumRepository;
         this.postRepository = postRepository;
         this.mediaRepository = mediaRepository;
         this.postMediaRepository = postMediaRepository;
         this.commentRepository = commentRepository;
         this.trashMapper = trashMapper;
         this.localMediaStorageService = localMediaStorageService;
+    }
+
+    @Transactional
+    public TrashItemDto deleteLargeAlbum(String albumId, AuthenticatedUser currentUser) {
+        String libraryId = currentUser.libraryId();
+        AlbumEntity album = requireActiveAlbum(albumId, libraryId);
+        List<PostEntity> smallAlbums = postRepository.findByLibraryIdAndAlbumIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(
+                libraryId,
+                albumId
+        );
+        List<String> smallAlbumIds = smallAlbums.stream().map(PostEntity::getId).toList();
+        List<String> mediaIds = smallAlbumIds.isEmpty()
+                ? List.of()
+                : postMediaRepository.findByLibraryIdAndPostIdIn(libraryId, smallAlbumIds)
+                .stream()
+                .map(PostMediaEntity::getMediaId)
+                .distinct()
+                .toList();
+
+        Instant deletedAt = Instant.now();
+        album.setDeletedAt(deletedAt);
+        albumRepository.save(album);
+        if (!smallAlbums.isEmpty()) {
+            smallAlbums.forEach(smallAlbum -> smallAlbum.setDeletedAt(deletedAt));
+            postRepository.saveAll(smallAlbums);
+        }
+
+        TrashItemEntity item = createTrashItem(
+                libraryId,
+                currentUser.userId(),
+                TrashItemType.LARGE_ALBUM_DELETED,
+                null,
+                null,
+                album.getTitle(),
+                smallAlbumIds.isEmpty()
+                        ? "Large album deleted"
+                        : "Large album deleted with %d small albums".formatted(smallAlbumIds.size()),
+                smallAlbumIds,
+                mediaIds,
+                new LargeAlbumDeletedSnapshot(albumId, smallAlbumIds)
+        );
+        return toTrashItemDto(item);
     }
 
     @Transactional
@@ -204,6 +251,7 @@ public class TrashService {
         }
 
         switch (item.getItemType()) {
+            case LARGE_ALBUM_DELETED -> restoreLargeAlbumDeleted(item, currentUser.libraryId());
             case SMALL_ALBUM_DELETED -> restoreSmallAlbumDeleted(item, currentUser.libraryId());
             case MEDIA_REMOVED -> restoreMediaRemoved(item, currentUser.libraryId());
             case MEDIA_SYSTEM_DELETED -> restoreMediaSystemDeleted(item, currentUser.libraryId());
@@ -355,6 +403,35 @@ public class TrashService {
         postRepository.save(smallAlbum);
     }
 
+    private void restoreLargeAlbumDeleted(TrashItemEntity item, String libraryId) {
+        LargeAlbumDeletedSnapshot snapshot = readLargeAlbumDeletedSnapshot(item);
+        AlbumEntity album = albumRepository.findByIdAndLibraryId(snapshot.albumId(), libraryId)
+                .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "Large album can no longer be restored."));
+        if (album.getSystemKey() != null && !album.getSystemKey().isBlank()) {
+            boolean hasOtherActiveSystemAlbum = albumRepository
+                    .findAllByLibraryIdAndSystemKeyAndDeletedAtIsNull(libraryId, album.getSystemKey())
+                    .stream()
+                    .anyMatch(activeAlbum -> !activeAlbum.getId().equals(album.getId()));
+            if (hasOtherActiveSystemAlbum) {
+                // Keep Life Console lookups unambiguous if a replacement system album was recreated.
+                album.setSystemKey(null);
+            }
+        }
+        album.setDeletedAt(null);
+        albumRepository.save(album);
+
+        if (snapshot.smallAlbumIds().isEmpty()) {
+            return;
+        }
+
+        List<PostEntity> smallAlbums = postRepository.findByLibraryIdAndIdIn(libraryId, snapshot.smallAlbumIds());
+        if (smallAlbums.size() != snapshot.smallAlbumIds().size()) {
+            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "One or more child small albums can no longer be restored.");
+        }
+        smallAlbums.forEach(smallAlbum -> smallAlbum.setDeletedAt(null));
+        postRepository.saveAll(smallAlbums);
+    }
+
     private void restoreMediaRemoved(TrashItemEntity item, String libraryId) {
         MediaRemovedSnapshot snapshot = readMediaRemovedSnapshot(item);
         PostEntity smallAlbum = postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(snapshot.smallAlbumId(), libraryId)
@@ -405,6 +482,17 @@ public class TrashService {
         postRepository.findByIdAndLibraryId(snapshot.smallAlbumId(), libraryId).ifPresent(postRepository::delete);
     }
 
+    private void purgeLargeAlbumDeleted(TrashItemEntity item, String libraryId) {
+        LargeAlbumDeletedSnapshot snapshot = readLargeAlbumDeletedSnapshot(item);
+        for (String smallAlbumId : snapshot.smallAlbumIds()) {
+            purgeMediaRemovedItemsForSmallAlbum(libraryId, smallAlbumId);
+            postMediaRepository.deleteByLibraryIdAndPostId(libraryId, smallAlbumId);
+            commentRepository.deleteByLibraryIdAndPostId(libraryId, smallAlbumId);
+            postRepository.findByIdAndLibraryId(smallAlbumId, libraryId).ifPresent(postRepository::delete);
+        }
+        albumRepository.findByIdAndLibraryId(snapshot.albumId(), libraryId).ifPresent(albumRepository::delete);
+    }
+
     private void purgeMediaRemoved(TrashItemEntity item) {
         // Removing a media-from-post trash record only makes that relation deletion final.
         // The media file itself remains App content and may still appear in the photo feed or other posts.
@@ -434,6 +522,7 @@ public class TrashService {
 
     private void purgeItemData(TrashItemEntity item, String libraryId) {
         switch (item.getItemType()) {
+            case LARGE_ALBUM_DELETED -> purgeLargeAlbumDeleted(item, libraryId);
             case SMALL_ALBUM_DELETED -> purgeSmallAlbumDeleted(item, libraryId);
             case MEDIA_REMOVED -> purgeMediaRemoved(item);
             case MEDIA_SYSTEM_DELETED -> purgeMediaSystemDeleted(item, libraryId);
@@ -506,6 +595,11 @@ public class TrashService {
     private PostEntity requireActiveSmallAlbum(String smallAlbumId, String libraryId) {
         return postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(smallAlbumId, libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.SMALL_ALBUM_NOT_FOUND, "Small album was not found."));
+    }
+
+    private AlbumEntity requireActiveAlbum(String albumId, String libraryId) {
+        return albumRepository.findByIdAndLibraryIdAndDeletedAtIsNull(albumId, libraryId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.ALBUM_NOT_FOUND, "Album was not found."));
     }
 
     private MediaEntity requireActiveMedia(String mediaId, String libraryId) {
@@ -643,6 +737,10 @@ public class TrashService {
         return readSnapshot(normalizeLegacySnapshotJson(item), MediaSystemDeletedSnapshot.class);
     }
 
+    private LargeAlbumDeletedSnapshot readLargeAlbumDeletedSnapshot(TrashItemEntity item) {
+        return readSnapshot(item.getSnapshotJson(), LargeAlbumDeletedSnapshot.class);
+    }
+
     private String normalizeLegacySnapshotJson(TrashItemEntity item) {
         String snapshotJson = item.getSnapshotJson();
         if (snapshotJson == null || snapshotJson.isBlank()) {
@@ -717,6 +815,9 @@ public class TrashService {
     }
 
     private record SmallAlbumDeletedSnapshot(String smallAlbumId) {
+    }
+
+    private record LargeAlbumDeletedSnapshot(String albumId, List<String> smallAlbumIds) {
     }
 
     private record MediaRemovedSnapshot(String smallAlbumId, String mediaId, int sortOrder, boolean wasCover) {
