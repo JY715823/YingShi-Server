@@ -10,6 +10,7 @@
 - base path: `/api/small-albums`
 - bearer auth required
 - create, update, cover update, media order update, and add-media all return `PostDetailDto`
+- `participantUserIds` is the explicit ownership set for a small album; create requires at least one id, update rejects an empty provided list, and the server does not infer ownership from the current operator
 
 ## Small Album Summary DTO
 
@@ -19,11 +20,14 @@
   "title": "Night Walk",
   "summary": "A quiet walk home",
   "contributorLabel": "Demo A and Demo B",
+  "creatorUserId": "user_a",
+  "participantUserIds": ["user_a", "user_b"],
   "displayTimeMillis": 1777412800000,
   "eventStartedAtMillis": 1777412800000,
   "eventEndedAtMillis": null,
   "displayTimeSource": "MANUAL",
   "albumId": "album_001",
+  "systemKey": null,
   "coverMediaId": "media_001",
   "mediaCount": 3
 }
@@ -37,11 +41,14 @@
   "title": "Night Walk",
   "summary": "A quiet walk home",
   "contributorLabel": "Demo A and Demo B",
+  "creatorUserId": "user_a",
+  "participantUserIds": ["user_a", "user_b"],
   "displayTimeMillis": 1777412800000,
   "eventStartedAtMillis": 1777412800000,
   "eventEndedAtMillis": null,
   "displayTimeSource": "MANUAL",
   "albumId": "album_001",
+  "systemKey": null,
   "coverMediaId": "media_001",
   "mediaCount": 3,
   "mediaItems": [
@@ -92,6 +99,7 @@ Request:
   "title": "Night Walk",
   "summary": "A quiet walk home",
   "contributorLabel": "Demo A and Demo B",
+  "participantUserIds": ["user_a", "user_b"],
   "displayTimeMillis": 1777412800000,
   "eventStartedAtMillis": 1777412800000,
   "eventEndedAtMillis": null,
@@ -111,6 +119,7 @@ Request:
   "title": "Night Walk Updated",
   "summary": "A quiet walk home with one more note",
   "contributorLabel": "Demo A and Demo B",
+  "participantUserIds": ["user_a", "user_b"],
   "displayTimeMillis": 1777412800000,
   "eventStartedAtMillis": 1777412800000,
   "eventEndedAtMillis": null,

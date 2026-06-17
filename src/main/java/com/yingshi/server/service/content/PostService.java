@@ -96,7 +96,7 @@ public class PostService {
         post.setDisplayTimeSource(normalizeDisplayTimeSource(request.displayTimeSource(), "MANUAL"));
         post.setCoverMediaId(coverMediaId);
         post.setCreatorUserId(currentUser.userId());
-        post.setParticipantUserIds(joinParticipantUserIds(List.of(currentUser.userId())));
+        post.setParticipantUserIds(joinParticipantUserIds(normalizeParticipantUserIds(request.participantUserIds())));
         postRepository.save(post);
 
         savePostMediaRelations(post.getId(), libraryId, request.initialMediaIds());
@@ -116,6 +116,9 @@ public class PostService {
         }
         if (request.contributorLabel() != null) {
             post.setContributorLabel(normalizeContributorLabel(request.contributorLabel()));
+        }
+        if (request.participantUserIds() != null) {
+            post.setParticipantUserIds(joinParticipantUserIds(normalizeParticipantUserIds(request.participantUserIds())));
         }
         if (request.displayTimeMillis() != null) {
             post.setDisplayTimeMillis(request.displayTimeMillis());
@@ -176,8 +179,6 @@ public class PostService {
             post.setCoverMediaId(orderedMediaIds.get(0));
             postRepository.save(post);
         }
-        mergeParticipant(post, currentUser.userId());
-
         return buildPostDetail(post);
     }
 
@@ -265,18 +266,18 @@ public class PostService {
         return contributorLabel.trim();
     }
 
-    private void mergeParticipant(PostEntity post, String userId) {
-        if (userId == null || userId.isBlank()) {
-            return;
+    private List<String> normalizeParticipantUserIds(List<String> participantUserIds) {
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        if (participantUserIds != null) {
+            participantUserIds.stream()
+                    .filter(id -> id != null && !id.isBlank())
+                    .map(String::trim)
+                    .forEach(normalized::add);
         }
-        LinkedHashSet<String> participantIds = new LinkedHashSet<>();
-        if (post.getCreatorUserId() != null && !post.getCreatorUserId().isBlank()) {
-            participantIds.add(post.getCreatorUserId().trim());
+        if (normalized.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "participantUserIds must contain at least one user.");
         }
-        splitParticipantUserIds(post.getParticipantUserIds()).forEach(participantIds::add);
-        participantIds.add(userId.trim());
-        post.setParticipantUserIds(joinParticipantUserIds(participantIds.stream().toList()));
-        postRepository.save(post);
+        return normalized.stream().toList();
     }
 
     private List<String> splitParticipantUserIds(String rawUserIds) {

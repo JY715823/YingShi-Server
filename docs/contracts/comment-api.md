@@ -8,6 +8,7 @@
 ## Base Rules
 
 - small-album comments and media comments are separate streams
+- normal list endpoints return active comments only (`deletedAt IS NULL`)
 - bearer auth required for all endpoints
 - base paths:
   - `/api/small-albums/{smallAlbumId}/comments`
@@ -39,11 +40,14 @@ Notes:
 - `smallAlbumId` is only set for small-album comments
 - `mediaId` is only set for media comments
 - after soft delete, `isDeleted=true` and `content` may be `null`
+- soft-deleted DTOs are returned by delete actions for audit/notification flows, but are hidden from ordinary list responses
 
 ## Endpoints
 
 ### `GET /api/small-albums/{smallAlbumId}/comments`
 ### `GET /api/media/{mediaId}/comments`
+
+- returns active comments only; deleted comments are not represented as tombstones
 
 Response data:
 
@@ -94,6 +98,7 @@ Request:
 ### `DELETE /api/comments/{commentId}`
 
 - returns one soft-deleted `CommentDto`
+- subsequent list requests must not include this comment
 
 ## Error Codes
 

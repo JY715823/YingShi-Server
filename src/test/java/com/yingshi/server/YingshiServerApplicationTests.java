@@ -782,6 +782,7 @@ class YingshiServerApplicationTests {
                                   "title": "Fresh Layout",
                                   "summary": "Built from seeded media",
                                   "contributorLabel": "Demo A",
+                                  "participantUserIds": ["user_demo_a", "user_demo_b"],
                                   "displayTimeMillis": 1777413000000,
                                   "albumId": "album_003",
                                   "initialMediaIds": ["media_003", "media_005"],
@@ -804,6 +805,7 @@ class YingshiServerApplicationTests {
                                   "title": "Empty Draft",
                                   "summary": "Created before media is attached",
                                   "contributorLabel": "Demo A",
+                                  "participantUserIds": ["user_demo_a"],
                                   "displayTimeMillis": 1777413100000,
                                   "albumId": "album_001",
                                   "initialMediaIds": []
@@ -815,6 +817,23 @@ class YingshiServerApplicationTests {
                 .andExpect(jsonPath("$.data.mediaCount").value(0))
                 .andExpect(jsonPath("$.data.mediaItems.length()").value(0));
 
+        mockMvc.perform(post("/api/small-albums")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "No Owner Draft",
+                                  "summary": "Should be rejected",
+                                  "contributorLabel": "Demo A",
+                                  "participantUserIds": [],
+                                  "displayTimeMillis": 1777413200000,
+                                  "albumId": "album_001",
+                                  "initialMediaIds": []
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+
         mockMvc.perform(patch("/api/small-albums/" + postId)
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -822,12 +841,26 @@ class YingshiServerApplicationTests {
                                 {
                                   "title": "Fresh Layout Updated",
                                   "summary": "Updated summary",
+                                  "participantUserIds": ["user_demo_b"],
                                   "albumId": "album_002"
                                 }
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.title").value("Fresh Layout Updated"))
-                .andExpect(jsonPath("$.data.albumId").value("album_002"));
+                .andExpect(jsonPath("$.data.albumId").value("album_002"))
+                .andExpect(jsonPath("$.data.participantUserIds[0]").value("user_demo_b"))
+                .andExpect(jsonPath("$.data.participantUserIds.length()").value(1));
+
+        mockMvc.perform(patch("/api/small-albums/" + postId)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "participantUserIds": []
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
 
         mockMvc.perform(patch("/api/small-albums/" + postId)
                         .header("Authorization", "Bearer " + accessToken)
@@ -948,8 +981,18 @@ class YingshiServerApplicationTests {
         mockMvc.perform(get("/api/media/media_001/comments")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.comments[0].commentId").value(mediaCommentId))
-                .andExpect(jsonPath("$.data.comments[0].isDeleted").value(true));
+                .andExpect(jsonPath("$.data.comments[?(@.commentId == '" + mediaCommentId + "')]").isEmpty());
+
+        mockMvc.perform(patch("/api/comments/" + mediaCommentId)
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "Deleted comment should stay locked"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -1696,6 +1739,7 @@ class YingshiServerApplicationTests {
                                   "title": "Single Memory",
                                   "summary": "Only one media inside",
                                   "contributorLabel": "Demo A",
+                                  "participantUserIds": ["user_demo_a"],
                                   "displayTimeMillis": 1777418800000,
                                   "albumId": "album_001",
                                   "initialMediaIds": ["media_005"],
@@ -1735,6 +1779,7 @@ class YingshiServerApplicationTests {
                                   "title": "Disposable Memory",
                                   "summary": "Create, empty, then delete",
                                   "contributorLabel": "Demo A",
+                                  "participantUserIds": ["user_demo_a"],
                                   "displayTimeMillis": 1777419800000,
                                   "albumId": "album_001",
                                   "initialMediaIds": ["media_004"],

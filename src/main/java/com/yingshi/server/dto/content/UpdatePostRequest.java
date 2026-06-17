@@ -1,6 +1,7 @@
 package com.yingshi.server.dto.content;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 import java.util.List;
@@ -14,6 +15,9 @@ public record UpdatePostRequest(
 
         @Size(min = 1, max = 120, message = "contributorLabel must be between 1 and 120 characters when provided.")
         String contributorLabel,
+
+        @Size(min = 1, message = "participantUserIds must contain at least one user when provided.")
+        List<@NotBlank(message = "participantUserId must not be blank.") String> participantUserIds,
 
         Long displayTimeMillis,
 

@@ -58,7 +58,7 @@ public class CommentService {
     @Transactional(readOnly = true)
     public CommentPageResponse getPostComments(String postId, Integer page, Integer size, AuthenticatedUser currentUser) {
         requireReadablePost(postId, currentUser.libraryId());
-        Page<CommentEntity> comments = commentRepository.findByLibraryIdAndTargetTypeAndPostId(
+        Page<CommentEntity> comments = commentRepository.findByLibraryIdAndTargetTypeAndPostIdAndDeletedAtIsNull(
                 currentUser.libraryId(),
                 CommentTargetType.SMALL_ALBUM,
                 postId,
@@ -70,7 +70,7 @@ public class CommentService {
     @Transactional(readOnly = true)
     public CommentPageResponse getMediaComments(String mediaId, Integer page, Integer size, AuthenticatedUser currentUser) {
         requireReadableMedia(mediaId, currentUser.libraryId());
-        Page<CommentEntity> comments = commentRepository.findByLibraryIdAndTargetTypeAndMediaId(
+        Page<CommentEntity> comments = commentRepository.findByLibraryIdAndTargetTypeAndMediaIdAndDeletedAtIsNull(
                 currentUser.libraryId(),
                 CommentTargetType.MEDIA,
                 mediaId,

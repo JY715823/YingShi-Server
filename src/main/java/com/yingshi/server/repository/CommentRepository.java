@@ -10,14 +10,14 @@ import java.util.Optional;
 
 public interface CommentRepository extends JpaRepository<CommentEntity, String> {
 
-    Page<CommentEntity> findByLibraryIdAndTargetTypeAndPostId(
+    Page<CommentEntity> findByLibraryIdAndTargetTypeAndPostIdAndDeletedAtIsNull(
             String libraryId,
             CommentTargetType targetType,
             String postId,
             Pageable pageable
     );
 
-    Page<CommentEntity> findByLibraryIdAndTargetTypeAndMediaId(
+    Page<CommentEntity> findByLibraryIdAndTargetTypeAndMediaIdAndDeletedAtIsNull(
             String libraryId,
             CommentTargetType targetType,
             String mediaId,

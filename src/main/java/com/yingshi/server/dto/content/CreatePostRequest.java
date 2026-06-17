@@ -18,6 +18,10 @@ public record CreatePostRequest(
         @Size(max = 120, message = "contributorLabel must be at most 120 characters.")
         String contributorLabel,
 
+        @NotNull(message = "participantUserIds is required.")
+        @Size(min = 1, message = "participantUserIds must contain at least one user.")
+        List<@NotBlank(message = "participantUserId must not be blank.") String> participantUserIds,
+
         @NotNull(message = "displayTimeMillis is required.")
         Long displayTimeMillis,
 
