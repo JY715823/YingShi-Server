@@ -44,6 +44,34 @@
 - returns `List<MediaDto>`
 - import-only media is valid, so `smallAlbumIds` may be empty
 
+### `POST /api/media/import-status`
+
+Request:
+
+```json
+{
+  "sourceFingerprints": ["sha256_hex_1", "sha256_hex_2"]
+}
+```
+
+Response data:
+
+```json
+[
+  {
+    "sourceFingerprint": "sha256_hex_1",
+    "mediaId": "media_001",
+    "smallAlbumIds": ["post_001", "post_002"]
+  }
+]
+```
+
+- used by Android system-media tooling to decide whether a local MediaStore item has already been imported into the app library
+- unmatched fingerprints are omitted from the response
+- only active media in the current shared library are returned
+- `smallAlbumIds` contains active small-album relationships for the matched media
+- request accepts at most 500 fingerprints
+
 ### `GET /api/media/files/{mediaId}`
 
 - returns binary file stream

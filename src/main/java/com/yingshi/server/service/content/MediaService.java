@@ -9,6 +9,7 @@ import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.dto.content.MediaDto;
 import com.yingshi.server.dto.content.MediaFeedPage;
+import com.yingshi.server.dto.content.MediaImportStatusDto;
 import com.yingshi.server.mapper.ContentMapper;
 import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.MediaRepository;
@@ -154,6 +155,54 @@ public class MediaService {
                 : null;
 
         return new MediaFeedPage(pageItems, nextCursor, hasMore, normalizedPageSize);
+    }
+
+    public List<MediaImportStatusDto> getImportStatus(AuthenticatedUser currentUser, List<String> sourceFingerprints) {
+        String libraryId = currentUser.libraryId();
+        List<String> normalizedFingerprints = sourceFingerprints.stream()
+                .filter(fingerprint -> fingerprint != null && !fingerprint.isBlank())
+                .map(String::trim)
+                .distinct()
+                .toList();
+        if (normalizedFingerprints.isEmpty()) {
+            return List.of();
+        }
+
+        List<MediaEntity> mediaItems = mediaRepository.findByLibraryIdAndSourceFingerprintInAndDeletedAtIsNull(
+                libraryId,
+                normalizedFingerprints
+        );
+        if (mediaItems.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, MediaEntity> mediaById = mediaItems.stream()
+                .collect(Collectors.toMap(MediaEntity::getId, media -> media));
+        Set<String> activePostIds = postRepository
+                .findByLibraryIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(libraryId)
+                .stream()
+                .map(PostEntity::getId)
+                .collect(Collectors.toSet());
+        Map<String, List<String>> smallAlbumIdsByMediaId = new LinkedHashMap<>();
+        for (PostMediaEntity relation : postMediaRepository.findByLibraryIdAndMediaIdIn(libraryId, mediaById.keySet())) {
+            if (!activePostIds.contains(relation.getPostId())) {
+                continue;
+            }
+            smallAlbumIdsByMediaId.computeIfAbsent(relation.getMediaId(), ignored -> new ArrayList<>());
+            List<String> smallAlbumIds = smallAlbumIdsByMediaId.get(relation.getMediaId());
+            if (!smallAlbumIds.contains(relation.getPostId())) {
+                smallAlbumIds.add(relation.getPostId());
+            }
+        }
+
+        return mediaItems.stream()
+                .filter(media -> media.getSourceFingerprint() != null && !media.getSourceFingerprint().isBlank())
+                .map(media -> new MediaImportStatusDto(
+                        media.getSourceFingerprint(),
+                        media.getId(),
+                        smallAlbumIdsByMediaId.getOrDefault(media.getId(), List.of())
+                ))
+                .toList();
     }
 
     @Transactional

@@ -23,6 +23,8 @@ public interface MediaRepository extends JpaRepository<MediaEntity, String> {
 
     Optional<MediaEntity> findFirstByLibraryIdAndSourceFingerprintAndDeletedAtIsNull(String libraryId, String sourceFingerprint);
 
+    List<MediaEntity> findByLibraryIdAndSourceFingerprintInAndDeletedAtIsNull(String libraryId, Collection<String> sourceFingerprints);
+
     Optional<MediaEntity> findFirstByLibraryIdAndMediaTypeAndMimeTypeAndSizeBytesAndDisplayTimeMillisAndWidthAndHeightAndDurationMillisAndDeletedAtIsNull(
             String libraryId,
             com.yingshi.server.domain.MediaType mediaType,
