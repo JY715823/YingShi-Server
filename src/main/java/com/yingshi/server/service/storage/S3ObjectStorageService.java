@@ -46,11 +46,13 @@ public class S3ObjectStorageService implements ObjectStorageService {
     private final StorageProperties storageProperties;
     private final S3Client s3Client;
     private final S3Presigner s3Presigner;
+    private final S3Presigner publicPresigner;
 
     public S3ObjectStorageService(StorageProperties storageProperties) {
         this.storageProperties = storageProperties;
         this.s3Client = buildClient(storageProperties);
         this.s3Presigner = buildPresigner(storageProperties);
+        this.publicPresigner = buildPublicPresigner(storageProperties);
     }
 
     @Override
@@ -217,7 +219,8 @@ public class S3ObjectStorageService implements ObjectStorageService {
                 .signatureDuration(ttl)
                 .putObjectRequest(putObjectRequest)
                 .build();
-        PresignedPutObjectRequest presignedRequest = s3Presigner.presignPutObject(presignRequest);
+        S3Presigner presigner = publicPresigner != null ? publicPresigner : s3Presigner;
+        PresignedPutObjectRequest presignedRequest = presigner.presignPutObject(presignRequest);
         Map<String, String> headers = flattenHeaders(presignedRequest.signedHeaders());
         headers.putIfAbsent("Content-Type", normalizeContentType(contentType));
         return Optional.of(new PresignedObjectUrl(
@@ -238,7 +241,8 @@ public class S3ObjectStorageService implements ObjectStorageService {
                 .signatureDuration(ttl)
                 .getObjectRequest(getObjectRequest)
                 .build();
-        PresignedGetObjectRequest presignedRequest = s3Presigner.presignGetObject(presignRequest);
+        S3Presigner presigner = publicPresigner != null ? publicPresigner : s3Presigner;
+        PresignedGetObjectRequest presignedRequest = presigner.presignGetObject(presignRequest);
         return Optional.of(new PresignedObjectUrl(
                 presignedRequest.url().toString(),
                 presignedRequest.expiration().toEpochMilli(),
@@ -276,6 +280,30 @@ public class S3ObjectStorageService implements ObjectStorageService {
                         .pathStyleAccessEnabled(properties.forcePathStyle())
                         .build())
                 .build();
+    }
+
+    private S3Presigner buildPublicPresigner(StorageProperties properties) {
+        String publicEndpoint = properties.directUploadPublicEndpoint();
+        if (publicEndpoint == null) {
+            return null;
+        }
+        if (properties.accessKey() == null || properties.secretKey() == null) {
+            return null;
+        }
+        return S3Presigner.builder()
+                .region(Region.of(properties.region()))
+                .endpointOverride(URI.create(publicEndpoint))
+                .credentialsProvider(StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(properties.accessKey(), properties.secretKey())
+                ))
+                .serviceConfiguration(S3Configuration.builder()
+                        .pathStyleAccessEnabled(properties.forcePathStyle())
+                        .build())
+                .build();
+    }
+
+    public boolean isDirectUploadAvailable() {
+        return publicPresigner != null;
     }
 
     private long requireSize(Long sizeBytes) {

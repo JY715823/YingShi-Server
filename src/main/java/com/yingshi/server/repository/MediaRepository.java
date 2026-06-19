@@ -1,6 +1,7 @@
 package com.yingshi.server.repository;
 
 import com.yingshi.server.domain.MediaEntity;
+import com.yingshi.server.domain.MediaType;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Collection;
@@ -24,6 +25,8 @@ public interface MediaRepository extends JpaRepository<MediaEntity, String> {
     Optional<MediaEntity> findFirstByLibraryIdAndSourceFingerprintAndDeletedAtIsNull(String libraryId, String sourceFingerprint);
 
     List<MediaEntity> findByLibraryIdAndSourceFingerprintInAndDeletedAtIsNull(String libraryId, Collection<String> sourceFingerprints);
+
+    List<MediaEntity> findTop200ByMediaTypeAndDeletedAtIsNullOrderByUpdatedAtDesc(MediaType mediaType);
 
     Optional<MediaEntity> findFirstByLibraryIdAndMediaTypeAndMimeTypeAndSizeBytesAndDisplayTimeMillisAndWidthAndHeightAndDurationMillisAndDeletedAtIsNull(
             String libraryId,

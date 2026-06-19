@@ -11,6 +11,14 @@ public record UploadTaskResponse(
         String state,
         int progressPercent,
         String errorMessage,
+        String operationId,
+        String operationType,
+        String operationTitle,
+        Integer operationMediaCount,
+        String sourceItemId,
+        Long createdAtMillis,
+        Long updatedAtMillis,
+        Long completedAtMillis,
         MediaDto media
 ) {
 }

@@ -5,8 +5,10 @@ import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.auth.CurrentUser;
 import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
+import com.yingshi.server.common.response.PageInfo;
 import com.yingshi.server.dto.upload.UploadCompleteResponse;
 import com.yingshi.server.dto.upload.UploadConfirmRequest;
+import com.yingshi.server.dto.upload.UploadDismissBatchRequest;
 import com.yingshi.server.dto.upload.UploadTaskResponse;
 import com.yingshi.server.dto.upload.UploadTokenRequest;
 import com.yingshi.server.dto.upload.UploadTokenResponse;
@@ -20,6 +22,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
@@ -46,6 +49,28 @@ public class UploadController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), uploadService.createUploadToken(requestBody, currentUser));
+    }
+
+    @Operation(summary = "List upload history", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping
+    public ApiResponse<java.util.List<UploadTaskResponse>> listUploads(
+            @RequestParam(required = false) String state,
+            @RequestParam(required = false) String operationType,
+            @RequestParam(required = false) Integer pageSize,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        java.util.List<UploadTaskResponse> items = uploadService.listUploadHistory(
+                currentUser,
+                state,
+                operationType,
+                pageSize
+        );
+        return ApiResponse.success(
+                requestId(request),
+                items,
+                new PageInfo(1, items.size(), null, false)
+        );
     }
 
     @Operation(summary = "Upload local file", security = @SecurityRequirement(name = "bearerAuth"))
@@ -98,6 +123,32 @@ public class UploadController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), uploadService.cancelUpload(uploadId, currentUser));
+    }
+
+    @Operation(summary = "Dismiss upload task from transfer center", security = @SecurityRequirement(name = "bearerAuth"))
+    @PostMapping("/{uploadId}/dismiss")
+    public ApiResponse<UploadTaskResponse> dismissUpload(
+            @PathVariable String uploadId,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), uploadService.dismissUpload(uploadId, currentUser));
+    }
+
+    @Operation(summary = "Dismiss visible upload tasks by category", security = @SecurityRequirement(name = "bearerAuth"))
+    @PostMapping("/dismiss-batch")
+    public ApiResponse<java.util.List<UploadTaskResponse>> dismissUploadBatch(
+            @RequestBody(required = false) UploadDismissBatchRequest requestBody,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        UploadDismissBatchRequest normalizedRequest = requestBody == null
+                ? new UploadDismissBatchRequest(null, null)
+                : requestBody;
+        return ApiResponse.success(
+                requestId(request),
+                uploadService.dismissUploadBatch(currentUser, normalizedRequest)
+        );
     }
 
     private String requestId(HttpServletRequest request) {

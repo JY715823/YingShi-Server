@@ -7,6 +7,8 @@ import com.yingshi.server.domain.MediaType;
 import com.yingshi.server.service.storage.ObjectMetadata;
 import com.yingshi.server.service.storage.ObjectKeyPolicy;
 import com.yingshi.server.service.storage.ObjectStorageService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
@@ -40,6 +42,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -53,12 +56,16 @@ public class LocalMediaStorageService {
 
     private static final DateTimeFormatter STORAGE_MONTH_FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM");
     private static final int JPEG_PREVIEW_QUALITY_PERCENT = 90;
+    private static final String VIDEO_COVER_VERSION = "cover-v2";
     private static final long VIDEO_COVER_TIMEOUT_SECONDS = 20L;
     private static final Pattern LEGACY_PREVIEW_FILE_NAME = Pattern.compile("media_[A-Za-z0-9_-]+-\\d+\\.jpg");
     private static final String LOCAL_PROVIDER = "local";
+    private static final Logger logger = LoggerFactory.getLogger(LocalMediaStorageService.class);
 
     private final Path rootPath;
     private final ObjectStorageService objectStorageService;
+    private volatile Boolean ffmpegAvailableCache;
+    private volatile String ffmpegExecutableCache;
 
     public LocalMediaStorageService(StorageProperties storageProperties, ObjectStorageService objectStorageService) {
         this.rootPath = Paths.get(storageProperties.localRoot()).toAbsolutePath().normalize();
@@ -153,6 +160,7 @@ public class LocalMediaStorageService {
         }
         Path sourcePath = resolveStoragePath(storagePath);
         if (!Files.exists(sourcePath)) {
+            logger.warn("Cannot generate image preview: source file not found at {}", sourcePath);
             return false;
         }
         Path previewPath = imagePreviewPath(sourcePath, cacheKey, maxDimension);
@@ -163,12 +171,15 @@ public class LocalMediaStorageService {
             Files.createDirectories(previewPath.getParent());
             BufferedImage sourceImage = ImageIO.read(sourcePath.toFile());
             if (sourceImage == null || sourceImage.getWidth() <= 0 || sourceImage.getHeight() <= 0) {
+                logger.warn("Cannot generate image preview: ImageIO failed to decode source file {} (size={})",
+                        sourcePath, Files.size(sourcePath));
                 return false;
             }
             BufferedImage previewImage = resizeImage(applyExifOrientation(sourcePath, sourceImage), maxDimension);
             writeJpeg(previewImage, previewPath, JPEG_PREVIEW_QUALITY_PERCENT / 100f);
             return Files.exists(previewPath) && Files.size(previewPath) > 0L;
         } catch (IOException exception) {
+            logger.warn("Cannot generate image preview: IO error for source {}", sourcePath, exception);
             return false;
         }
     }
@@ -182,6 +193,126 @@ public class LocalMediaStorageService {
             return new FileSystemResource(videoCoverPath(sourcePath, cacheKey, maxDimension));
         }
         return objectStorageService.get(videoCoverObjectKey(storagePath, cacheKey, maxDimension)).resource();
+    }
+
+    public boolean canGenerateVideoCovers() {
+        return isFfmpegAvailable();
+    }
+
+    private boolean isFfmpegAvailable() {
+        return ffmpegExecutable() != null;
+    }
+
+    private String ffmpegExecutable() {
+        String cachedExecutable = ffmpegExecutableCache;
+        if (cachedExecutable != null) {
+            return cachedExecutable.isBlank() ? null : cachedExecutable;
+        }
+        for (String candidate : ffmpegExecutableCandidates()) {
+            if (canRunFfmpeg(candidate)) {
+                ffmpegExecutableCache = candidate;
+                ffmpegAvailableCache = true;
+                return candidate;
+            }
+        }
+        ffmpegExecutableCache = "";
+        ffmpegAvailableCache = false;
+        return null;
+    }
+
+    private List<String> ffmpegExecutableCandidates() {
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
+        addIfNotBlank(candidates, System.getProperty("yingshi.ffmpeg.path"));
+        addIfNotBlank(candidates, System.getenv("YINGSHI_FFMPEG_PATH"));
+        addIfNotBlank(candidates, System.getenv("FFMPEG_PATH"));
+        candidates.add("ffmpeg");
+        findImageioFfmpegExecutable().ifPresent(candidates::add);
+        return candidates.stream().filter(candidate -> !candidate.isBlank()).toList();
+    }
+
+    private void addIfNotBlank(Set<String> candidates, String value) {
+        if (value != null && !value.isBlank()) {
+            candidates.add(value.trim());
+        }
+    }
+
+    private Optional<String> findImageioFfmpegExecutable() {
+        LinkedHashSet<Path> roots = new LinkedHashSet<>();
+        addImageioFfmpegSearchRoot(roots, System.getenv("APPDATA"));
+        addImageioFfmpegSearchRoot(roots, System.getProperty("user.home") + "\\AppData\\Roaming");
+        for (Path root : roots) {
+            Optional<String> found = findImageioFfmpegExecutable(root);
+            if (found.isPresent()) {
+                return found;
+            }
+        }
+        return Optional.empty();
+    }
+
+    private void addImageioFfmpegSearchRoot(Set<Path> roots, String root) {
+        if (root != null && !root.isBlank()) {
+            roots.add(Paths.get(root).resolve("Python").normalize());
+        }
+    }
+
+    private Optional<String> findImageioFfmpegExecutable(Path root) {
+        if (!Files.exists(root)) {
+            return Optional.empty();
+        }
+        try (Stream<Path> stream = Files.find(
+                root,
+                8,
+                (path, attributes) -> attributes.isRegularFile() && isImageioFfmpegExecutable(path)
+        )) {
+            return stream
+                    .sorted(Comparator.comparing(path -> path.toString().toLowerCase(Locale.ROOT)))
+                    .map(path -> path.toAbsolutePath().normalize().toString())
+                    .findFirst();
+        } catch (IOException exception) {
+            return Optional.empty();
+        }
+    }
+
+    private boolean isImageioFfmpegExecutable(Path path) {
+        String normalizedPath = path.toString().replace('\\', '/').toLowerCase(Locale.ROOT);
+        String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        return normalizedPath.contains("/imageio_ffmpeg/binaries/") &&
+                fileName.startsWith("ffmpeg") &&
+                fileName.endsWith(".exe");
+    }
+
+    private boolean canRunFfmpeg(String executable) {
+        Boolean cached = ffmpegAvailableCache;
+        String cachedExecutable = ffmpegExecutableCache;
+        if (cached != null && cached && executable.equals(cachedExecutable)) {
+            return true;
+        }
+        Process process = null;
+        try {
+            process = new ProcessBuilder(executable, "-version")
+                    .redirectErrorStream(true)
+                    .start();
+            boolean completed = process.waitFor(3L, TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                ffmpegAvailableCache = false;
+                return false;
+            }
+            boolean available = process.exitValue() == 0;
+            ffmpegAvailableCache = available;
+            return available;
+        } catch (IOException exception) {
+            ffmpegAvailableCache = false;
+            return false;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            ffmpegAvailableCache = false;
+            return false;
+        } finally {
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
+        }
     }
 
     public String provider() {
@@ -254,7 +385,9 @@ public class LocalMediaStorageService {
         return previewDirectoryObjectKey(storagePath)
                 + "/"
                 + cacheKey
-                + "-cover-v1-"
+                + "-"
+                + VIDEO_COVER_VERSION
+                + "-"
                 + maxDimension
                 + ".jpg";
     }
@@ -299,6 +432,7 @@ public class LocalMediaStorageService {
         }
         Path sourcePath = resolveStoragePath(storagePath);
         if (!Files.exists(sourcePath)) {
+            logger.warn("Cannot generate video cover: source file not found at {}", sourcePath);
             return false;
         }
         Path coverPath = videoCoverPath(sourcePath, cacheKey, maxDimension);
@@ -309,11 +443,9 @@ public class LocalMediaStorageService {
             Files.createDirectories(coverPath.getParent());
             Path tempFrame = Files.createTempFile(coverPath.getParent(), cacheKey + "-cover-frame-", ".jpg");
             try {
-                if (!extractVideoFrame(sourcePath, tempFrame, "1") && !extractVideoFrame(sourcePath, tempFrame, "0")) {
-                    return false;
-                }
-                BufferedImage frameImage = ImageIO.read(tempFrame.toFile());
+                BufferedImage frameImage = extractVideoFrameImage(sourcePath, tempFrame);
                 if (frameImage == null || frameImage.getWidth() <= 0 || frameImage.getHeight() <= 0) {
+                    logger.warn("Cannot generate video cover: failed to extract frame from {}", sourcePath);
                     return false;
                 }
                 BufferedImage coverImage = resizeImage(frameImage, maxDimension);
@@ -323,6 +455,7 @@ public class LocalMediaStorageService {
                 Files.deleteIfExists(tempFrame);
             }
         } catch (IOException exception) {
+            logger.warn("Cannot generate video cover: IO error for source {}", sourcePath, exception);
             return false;
         }
     }
@@ -511,7 +644,7 @@ public class LocalMediaStorageService {
 
     private Path videoCoverPath(Path sourcePath, String cacheKey, int maxDimension) {
         return previewDirectoryFor(sourcePath)
-                .resolve(cacheKey + "-cover-v1-" + maxDimension + ".jpg")
+                .resolve(cacheKey + "-" + VIDEO_COVER_VERSION + "-" + maxDimension + ".jpg")
                 .normalize();
     }
 
@@ -523,7 +656,7 @@ public class LocalMediaStorageService {
         }
         String fileName = normalized.getFileName().toString();
         String lowerName = fileName.toLowerCase(Locale.ROOT);
-        if (lowerName.contains("-preview-v2-") || lowerName.contains("-cover-v1-")) {
+        if (lowerName.contains("-preview-v2-") || lowerName.contains("-cover-v1-") || lowerName.contains("-cover-v2-")) {
             return false;
         }
         return LEGACY_PREVIEW_FILE_NAME.matcher(fileName).matches();
@@ -536,7 +669,9 @@ public class LocalMediaStorageService {
             return false;
         }
         String fileName = normalized.getFileName().toString();
-        return fileName.startsWith(cacheKey + "-preview-v2-") || fileName.startsWith(cacheKey + "-cover-v1-");
+        return fileName.startsWith(cacheKey + "-preview-v2-") ||
+                fileName.startsWith(cacheKey + "-cover-v1-") ||
+                fileName.startsWith(cacheKey + "-cover-v2-");
     }
 
     private Path resolveStoragePath(String storagePath) {
@@ -589,6 +724,7 @@ public class LocalMediaStorageService {
         String sourceObjectKey = originalObjectKey(storagePath);
         String previewObjectKey = imagePreviewObjectKey(storagePath, cacheKey, maxDimension);
         if (sourceObjectKey == null || !objectStorageService.exists(sourceObjectKey)) {
+            logger.warn("Cannot generate remote image preview: source object not found key={}", sourceObjectKey);
             return false;
         }
         ObjectMetadata sourceMetadata = objectStorageService.getMetadata(sourceObjectKey).orElse(null);
@@ -603,6 +739,7 @@ public class LocalMediaStorageService {
             previewPath = Files.createTempFile(cacheKey + "-preview-", ".jpg");
             BufferedImage sourceImage = ImageIO.read(sourcePath.toFile());
             if (sourceImage == null || sourceImage.getWidth() <= 0 || sourceImage.getHeight() <= 0) {
+                logger.warn("Cannot generate remote image preview: ImageIO failed to decode object {}", sourceObjectKey);
                 return false;
             }
             BufferedImage previewImage = resizeImage(applyExifOrientation(sourcePath, sourceImage), maxDimension);
@@ -610,6 +747,7 @@ public class LocalMediaStorageService {
             putGeneratedObject(previewObjectKey, previewPath, "image/jpeg");
             return objectStorageService.exists(previewObjectKey);
         } catch (IOException exception) {
+            logger.warn("Cannot generate remote image preview: IO error for object {}", sourceObjectKey, exception);
             return false;
         } finally {
             deleteTempFile(sourcePath);
@@ -621,6 +759,7 @@ public class LocalMediaStorageService {
         String sourceObjectKey = originalObjectKey(storagePath);
         String coverObjectKey = videoCoverObjectKey(storagePath, cacheKey, maxDimension);
         if (sourceObjectKey == null || !objectStorageService.exists(sourceObjectKey)) {
+            logger.warn("Cannot generate remote video cover: source object not found key={}", sourceObjectKey);
             return false;
         }
         ObjectMetadata sourceMetadata = objectStorageService.getMetadata(sourceObjectKey).orElse(null);
@@ -635,11 +774,9 @@ public class LocalMediaStorageService {
             sourcePath = copyObjectToTempFile(sourceObjectKey, cacheKey + "-video-source-", extensionForObjectKey(sourceObjectKey));
             coverPath = Files.createTempFile(cacheKey + "-cover-", ".jpg");
             tempFrame = Files.createTempFile(cacheKey + "-cover-frame-", ".jpg");
-            if (!extractVideoFrame(sourcePath, tempFrame, "1") && !extractVideoFrame(sourcePath, tempFrame, "0")) {
-                return false;
-            }
-            BufferedImage frameImage = ImageIO.read(tempFrame.toFile());
+            BufferedImage frameImage = extractVideoFrameImage(sourcePath, tempFrame);
             if (frameImage == null || frameImage.getWidth() <= 0 || frameImage.getHeight() <= 0) {
+                logger.warn("Cannot generate remote video cover: failed to extract frame from object {}", sourceObjectKey);
                 return false;
             }
             BufferedImage coverImage = resizeImage(frameImage, maxDimension);
@@ -647,6 +784,7 @@ public class LocalMediaStorageService {
             putGeneratedObject(coverObjectKey, coverPath, "image/jpeg");
             return objectStorageService.exists(coverObjectKey);
         } catch (IOException exception) {
+            logger.warn("Cannot generate remote video cover: IO error for object {}", sourceObjectKey, exception);
             return false;
         } finally {
             deleteTempFile(sourcePath);
@@ -894,10 +1032,14 @@ public class LocalMediaStorageService {
     }
 
     private boolean extractVideoFrame(Path sourcePath, Path targetPath, String seekSeconds) {
+        String executable = ffmpegExecutable();
+        if (executable == null) {
+            return false;
+        }
         Process process = null;
         try {
             process = new ProcessBuilder(
-                    "ffmpeg",
+                    executable,
                     "-y",
                     "-hide_banner",
                     "-loglevel",
@@ -926,6 +1068,15 @@ public class LocalMediaStorageService {
                 process.destroyForcibly();
             }
         }
+    }
+
+    private BufferedImage extractVideoFrameImage(Path sourcePath, Path tempFrame) throws IOException {
+        if ((extractVideoFrame(sourcePath, tempFrame, "1") || extractVideoFrame(sourcePath, tempFrame, "0")) &&
+                Files.exists(tempFrame) &&
+                Files.size(tempFrame) > 0L) {
+            return ImageIO.read(tempFrame.toFile());
+        }
+        return null;
     }
 
     private List<Path> findSeedSourceImages() throws IOException {

@@ -10,6 +10,7 @@ import com.yingshi.server.service.push.PushDeliveryResult;
 import com.yingshi.server.service.push.PushMessageSender;
 import com.yingshi.server.service.trash.PendingCleanupScheduler;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assumptions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -34,6 +35,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -1241,6 +1243,8 @@ class YingshiServerApplicationTests {
                 .andExpect(header().string("Content-Type", containsString(MediaType.APPLICATION_JSON_VALUE)))
                 .andExpect(jsonPath("$.data.state").value("success"))
                 .andExpect(jsonPath("$.data.media.mimeType").value("video/mp4"))
+                .andExpect(jsonPath("$.data.media.previewUrl").isNotEmpty())
+                .andExpect(jsonPath("$.data.media.coverUrl").isNotEmpty())
                 .andExpect(jsonPath("$.data.media.videoUrl").isNotEmpty())
                 .andReturn();
 
@@ -1248,6 +1252,8 @@ class YingshiServerApplicationTests {
         MediaEntity uploadedMedia = mediaRepository.findById(mediaId).orElseThrow();
         assertEquals("video/mp4", uploadedMedia.getMimeType());
         assertEquals(6500L, uploadedMedia.getDurationMillis());
+        assertEquals("/api/media/files/" + mediaId + "?variant=cover", readField(uploadResult, "/data/media/previewUrl"));
+        assertEquals("/api/media/files/" + mediaId + "?variant=cover", readField(uploadResult, "/data/media/coverUrl"));
         assertEquals("/api/media/files/" + mediaId, uploadedMedia.getVideoUrl());
         assertEquals("originals/2026/04/" + mediaId + ".mp4", uploadedMedia.getOriginalObjectKey());
 
@@ -1255,6 +1261,117 @@ class YingshiServerApplicationTests {
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Type", "video/mp4"));
+    }
+
+    @Test
+    void localVideoUploadWarmsCoverWhenVideoFrameExtractorIsAvailable() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+        byte[] fileBytes = tinyMp4Bytes();
+
+        MvcResult tokenResult = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fileName": "cover-demo.mp4",
+                                  "mimeType": "video/mp4",
+                                  "fileSizeBytes": %d,
+                                  "mediaType": "video",
+                                  "width": 64,
+                                  "height": 64,
+                                  "durationMillis": 2000,
+                                  "displayTimeMillis": 1777416600000,
+                                  "sourceFingerprint": "test-upload-video-cover-%d"
+                                }
+                                """.formatted(fileBytes.length, System.nanoTime())))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String uploadId = readField(tokenResult, "/data/uploadId");
+        MockMultipartFile multipartFile = new MockMultipartFile("file", "cover-demo.mp4", "video/mp4", fileBytes);
+
+        MvcResult uploadResult = mockMvc.perform(multipart("/api/uploads/" + uploadId + "/file")
+                        .file(multipartFile)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("success"))
+                .andExpect(jsonPath("$.data.media.coverUrl").isNotEmpty())
+                .andReturn();
+
+        String mediaId = readField(uploadResult, "/data/media/mediaId");
+        MediaEntity uploadedMedia = mediaRepository.findById(mediaId).orElseThrow();
+        assertEquals("originals/2026/04/" + mediaId + ".mp4", uploadedMedia.getOriginalObjectKey());
+        assertEquals("previews/2026/04/" + mediaId + "-cover-v2-1280.jpg", uploadedMedia.getCoverObjectKey());
+        assertEquals(uploadedMedia.getCoverObjectKey(), uploadedMedia.getPreviewObjectKey());
+
+        mockMvc.perform(get("/api/media/files/" + mediaId)
+                        .param("variant", "cover")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "image/jpeg"));
+    }
+
+    @Test
+    void uploadHistoryKeepsOperationMetadataAndDismissesRecords() throws Exception {
+        String demoAAccessToken = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
+        String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
+        String operationId = "transfer-history-" + System.nanoTime();
+
+        MvcResult tokenResult = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + demoAAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fileName": "history-demo.mp4",
+                                  "mimeType": "video/mp4",
+                                  "fileSizeBytes": 128,
+                                  "mediaType": "video",
+                                  "width": 1080,
+                                  "height": 1920,
+                                  "durationMillis": 123000,
+                                  "displayTimeMillis": 1777416600000,
+                                  "operationId": "%s",
+                                  "operationType": "IMPORT_TO_APP",
+                                  "operationTitle": "批量导入视频",
+                                  "operationMediaCount": 2,
+                                  "sourceItemId": "system-video-001"
+                                }
+                                """.formatted(operationId)))
+                .andExpect(status().isOk())
+                .andReturn();
+        String uploadId = readField(tokenResult, "/data/uploadId");
+
+        mockMvc.perform(get("/api/uploads")
+                        .param("operationType", "IMPORT_TO_APP")
+                        .param("pageSize", "10")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].uploadId").value(uploadId))
+                .andExpect(jsonPath("$.data[0].state").value("waiting"))
+                .andExpect(jsonPath("$.data[0].operationId").value(operationId))
+                .andExpect(jsonPath("$.data[0].operationType").value("IMPORT_TO_APP"))
+                .andExpect(jsonPath("$.data[0].operationTitle").value("批量导入视频"))
+                .andExpect(jsonPath("$.data[0].operationMediaCount").value(2))
+                .andExpect(jsonPath("$.data[0].sourceItemId").value("system-video-001"))
+                .andExpect(jsonPath("$.data[0].createdAtMillis").isNumber())
+                .andExpect(jsonPath("$.data[0].updatedAtMillis").isNumber());
+
+        mockMvc.perform(get("/api/uploads")
+                        .param("operationType", "IMPORT_TO_APP")
+                        .header("Authorization", "Bearer " + demoBAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.uploadId=='%s')]".formatted(uploadId)).isEmpty());
+
+        mockMvc.perform(post("/api/uploads/" + uploadId + "/dismiss")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.uploadId").value(uploadId));
+
+        mockMvc.perform(get("/api/uploads")
+                        .param("operationType", "IMPORT_TO_APP")
+                        .header("Authorization", "Bearer " + demoAAccessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.uploadId=='%s')]".formatted(uploadId)).isEmpty());
     }
 
     @Test
@@ -2101,6 +2218,56 @@ class YingshiServerApplicationTests {
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         ImageIO.write(image, "jpg", outputStream);
         return outputStream.toByteArray();
+    }
+
+    private byte[] tinyMp4Bytes() throws Exception {
+        Path workspaceFixture = Path.of("..", ".tmp-yingshi-upload-smoke.mp4");
+        if (Files.isRegularFile(workspaceFixture) && Files.size(workspaceFixture) > 0L) {
+            return Files.readAllBytes(workspaceFixture);
+        }
+        Assumptions.assumeTrue(ffmpegAvailable(), "ffmpeg or workspace smoke mp4 fixture is required for video cover extraction");
+        Path target = Files.createTempFile("yingshi-video-cover-", ".mp4");
+        try {
+            Process process = new ProcessBuilder(
+                    "ffmpeg",
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=red:s=64x64:d=2",
+                    "-frames:v",
+                    "2",
+                    "-c:v",
+                    "mpeg4",
+                    "-pix_fmt",
+                    "yuv420p",
+                    target.toString()
+            ).redirectErrorStream(true).start();
+            boolean completed = process.waitFor(10, TimeUnit.SECONDS);
+            Assumptions.assumeTrue(completed && process.exitValue() == 0, "ffmpeg could not create a tiny mp4 fixture");
+            return Files.readAllBytes(target);
+        } finally {
+            Files.deleteIfExists(target);
+        }
+    }
+
+    private boolean ffmpegAvailable() {
+        Process process = null;
+        try {
+            process = new ProcessBuilder("ffmpeg", "-version")
+                    .redirectErrorStream(true)
+                    .start();
+            return process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() == 0;
+        } catch (Exception exception) {
+            return false;
+        } finally {
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
+        }
     }
 
     private String readField(MvcResult mvcResult, String pointer) throws Exception {

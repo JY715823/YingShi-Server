@@ -161,6 +161,7 @@ public class ContentMapper {
             access.add(accessItem(media, "preview", previewMediaUrl, previewObjectKey(media), revision));
             access.add(accessItem(media, "original", originalUrl, originalObjectKey(media), revision));
         } else if (media.getMediaType() == MediaType.VIDEO) {
+            access.add(accessItem(media, "preview", coverUrl, coverObjectKey(media), revision));
             access.add(accessItem(media, "cover", coverUrl, coverObjectKey(media), revision));
             access.add(accessItem(media, "video", videoUrl != null ? videoUrl : localMediaUrl, originalObjectKey(media), revision));
         } else if (localMediaUrl != null) {

@@ -72,6 +72,27 @@ public class UploadTaskEntity extends LibraryScopedEntity {
     @Column(length = 255)
     private String uploadedByUserId;
 
+    @Column(length = 255)
+    private String operationId;
+
+    @Column(length = 40)
+    private String operationType;
+
+    @Column(length = 255)
+    private String operationTitle;
+
+    @Column
+    private Integer operationMediaCount;
+
+    @Column(length = 255)
+    private String sourceItemId;
+
+    @Column(length = 512)
+    private String errorMessage;
+
+    @Column
+    private Instant dismissedAt;
+
     public String getId() {
         return id;
     }
@@ -222,5 +243,61 @@ public class UploadTaskEntity extends LibraryScopedEntity {
 
     public void setUploadedByUserId(String uploadedByUserId) {
         this.uploadedByUserId = uploadedByUserId;
+    }
+
+    public String getOperationId() {
+        return operationId;
+    }
+
+    public void setOperationId(String operationId) {
+        this.operationId = operationId;
+    }
+
+    public String getOperationType() {
+        return operationType;
+    }
+
+    public void setOperationType(String operationType) {
+        this.operationType = operationType;
+    }
+
+    public String getOperationTitle() {
+        return operationTitle;
+    }
+
+    public void setOperationTitle(String operationTitle) {
+        this.operationTitle = operationTitle;
+    }
+
+    public Integer getOperationMediaCount() {
+        return operationMediaCount;
+    }
+
+    public void setOperationMediaCount(Integer operationMediaCount) {
+        this.operationMediaCount = operationMediaCount;
+    }
+
+    public String getSourceItemId() {
+        return sourceItemId;
+    }
+
+    public void setSourceItemId(String sourceItemId) {
+        this.sourceItemId = sourceItemId;
+    }
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    public void setErrorMessage(String errorMessage) {
+        this.errorMessage = errorMessage;
+    }
+
+    public Instant getDismissedAt() {
+        return dismissedAt;
+    }
+
+    public void setDismissedAt(Instant dismissedAt) {
+        this.dismissedAt = dismissedAt;
     }
 }

@@ -26,6 +26,10 @@ public interface ObjectStorageService {
         return false;
     }
 
+    default boolean isDirectUploadAvailable() {
+        return false;
+    }
+
     default Optional<PresignedObjectUrl> presignPut(
             String objectKey,
             String contentType,

@@ -19,7 +19,8 @@ public record StorageProperties(
         String cdnTimestampParam,
         Duration signedUrlTtl,
         Boolean directUploadEnabled,
-        Boolean forcePathStyle
+        Boolean forcePathStyle,
+        String directUploadPublicEndpoint
 ) {
 
     public StorageProperties {
@@ -37,6 +38,7 @@ public record StorageProperties(
         signedUrlTtl = signedUrlTtl == null ? Duration.ofMinutes(15) : signedUrlTtl;
         directUploadEnabled = directUploadEnabled != null && directUploadEnabled;
         forcePathStyle = forcePathStyle == null || forcePathStyle;
+        directUploadPublicEndpoint = trimToNull(directUploadPublicEndpoint);
     }
 
     private static String defaultIfBlank(String value, String fallback) {

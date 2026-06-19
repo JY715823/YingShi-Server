@@ -42,6 +42,21 @@ public record UploadTokenRequest(
         String displayTimeSource,
 
         @Size(max = 128, message = "sourceFingerprint must be at most 128 characters.")
-        String sourceFingerprint
+        String sourceFingerprint,
+
+        @Size(max = 255, message = "operationId must be at most 255 characters.")
+        String operationId,
+
+        @Size(max = 40, message = "operationType must be at most 40 characters.")
+        String operationType,
+
+        @Size(max = 255, message = "operationTitle must be at most 255 characters.")
+        String operationTitle,
+
+        @Positive(message = "operationMediaCount must be positive.")
+        Integer operationMediaCount,
+
+        @Size(max = 255, message = "sourceItemId must be at most 255 characters.")
+        String sourceItemId
 ) {
 }

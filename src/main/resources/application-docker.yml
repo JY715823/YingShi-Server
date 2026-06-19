@@ -56,6 +56,7 @@ app:
     cdn-timestamp-param: ${STORAGE_CDN_TIMESTAMP_PARAM:t}
     signed-url-ttl: ${STORAGE_SIGNED_URL_TTL:PT15M}
     direct-upload-enabled: ${STORAGE_DIRECT_UPLOAD_ENABLED:false}
+    direct-upload-public-endpoint: ${STORAGE_DIRECT_UPLOAD_PUBLIC_ENDPOINT:}
     force-path-style: ${STORAGE_FORCE_PATH_STYLE:true}
 
 yingshi:
