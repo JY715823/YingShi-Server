@@ -29,6 +29,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.nio.charset.StandardCharsets;
@@ -161,7 +162,7 @@ public class MediaService {
         String libraryId = currentUser.libraryId();
         List<String> normalizedFingerprints = sourceFingerprints.stream()
                 .filter(fingerprint -> fingerprint != null && !fingerprint.isBlank())
-                .map(String::trim)
+                .map(fingerprint -> fingerprint.trim().toLowerCase(Locale.ROOT))
                 .distinct()
                 .toList();
         if (normalizedFingerprints.isEmpty()) {

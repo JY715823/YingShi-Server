@@ -13,4 +13,8 @@ public interface PushDeviceTokenRepository extends JpaRepository<PushDeviceToken
     List<PushDeviceTokenEntity> findByTokenIn(List<String> tokens);
 
     List<PushDeviceTokenEntity> findByLibraryIdAndEnabledTrue(String libraryId);
+
+    long countByLibraryIdAndEnabledTrue(String libraryId);
+
+    long countByLibraryIdAndUserIdAndEnabledTrue(String libraryId, String userId);
 }

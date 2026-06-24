@@ -7,12 +7,16 @@ import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.life.RegisterPushTokenRequest;
 import com.yingshi.server.dto.life.RegisterPushTokenResponse;
+import com.yingshi.server.dto.push.PushDiagnosticsResponse;
+import com.yingshi.server.dto.push.PushPreferencesResponse;
+import com.yingshi.server.dto.push.UpdatePushPreferenceRequest;
 import com.yingshi.server.service.push.PushNotificationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -38,6 +42,34 @@ public class PushDeviceController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), pushNotificationService.registerDeviceToken(requestBody, currentUser));
+    }
+
+    @Operation(summary = "Get push preferences", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping("/preferences")
+    public ApiResponse<PushPreferencesResponse> getPreferences(
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), pushNotificationService.getPreferences(currentUser));
+    }
+
+    @Operation(summary = "Get push delivery diagnostics", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping("/diagnostics")
+    public ApiResponse<PushDiagnosticsResponse> getDiagnostics(
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), pushNotificationService.getDiagnostics(currentUser));
+    }
+
+    @Operation(summary = "Update push preference", security = @SecurityRequirement(name = "bearerAuth"))
+    @PostMapping("/preferences")
+    public ApiResponse<PushPreferencesResponse> updatePreference(
+            @Valid @RequestBody UpdatePushPreferenceRequest requestBody,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), pushNotificationService.updatePreference(requestBody, currentUser));
     }
 
     private String requestId(HttpServletRequest request) {

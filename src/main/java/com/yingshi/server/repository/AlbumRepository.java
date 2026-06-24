@@ -26,4 +26,8 @@ public interface AlbumRepository extends JpaRepository<AlbumEntity, String> {
     List<AlbumEntity> findByLibraryIdAndIdInAndDeletedAtIsNull(String libraryId, Collection<String> ids);
 
     List<AlbumEntity> findAllByLibraryIdAndSystemKeyAndDeletedAtIsNull(String libraryId, String systemKey);
+
+    Optional<AlbumEntity> findTopByLibraryIdAndDeletedAtIsNullAndSystemKeyIsNullOrderByUpdatedAtDesc(String libraryId);
+
+    Optional<AlbumEntity> findTopByLibraryIdAndSystemKeyIsNullOrderByUpdatedAtDesc(String libraryId);
 }

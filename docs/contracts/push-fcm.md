@@ -1,6 +1,6 @@
 # Push FCM Contract
 
-YingShi uses Firebase Cloud Messaging only as a lightweight invalidation channel for the life console widgets.
+YingShi uses Firebase Cloud Messaging for visible partner notifications and lightweight life-console invalidation.
 
 ## Device Token Registration
 
@@ -47,14 +47,15 @@ The Android client treats this as an invalidation signal and fetches the latest 
 
 ## Server Configuration
 
-```yaml
-app:
-  push:
-    fcm:
-      enabled: true
-      dry-run: false
-      project-id: your-firebase-project-id
-      service-account-path: E:\Secrets\yingshi-firebase-adminsdk.json
+Local Docker Compose keeps the Firebase Admin SDK JSON outside git and mounts it into the Linux container:
+
+```dotenv
+FCM_ENABLED=true
+FCM_DRY_RUN=false
+FCM_PROJECT_ID=your-firebase-project-id
+FCM_SERVICE_ACCOUNT_HOST_PATH=E:/Secrets/yingshi-firebase-adminsdk.json
+FCM_SERVICE_ACCOUNT_PATH=/run/secrets/firebase-service-account.json
+FCM_SERVICE_ACCOUNT_JSON_BASE64=
 ```
 
-`service-account-json-base64` may be used instead of a file path for deployment secret managers.
+`FCM_SERVICE_ACCOUNT_JSON_BASE64` may be used instead of the mounted file path for deployment secret managers. Leave it empty for the local mounted-secret flow; if it contains invalid base64, Firebase initialization fails before the path fallback can be used.

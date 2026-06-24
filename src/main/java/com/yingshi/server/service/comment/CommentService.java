@@ -16,6 +16,8 @@ import com.yingshi.server.repository.CommentRepository;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.UserRepository;
+import com.yingshi.server.service.push.PushDispatchSupport;
+import com.yingshi.server.service.push.PushNotificationService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -40,19 +42,22 @@ public class CommentService {
     private final MediaRepository mediaRepository;
     private final UserRepository userRepository;
     private final CommentMapper commentMapper;
+    private final PushNotificationService pushNotificationService;
 
     public CommentService(
             CommentRepository commentRepository,
             PostRepository postRepository,
             MediaRepository mediaRepository,
             UserRepository userRepository,
-            CommentMapper commentMapper
+            CommentMapper commentMapper,
+            PushNotificationService pushNotificationService
     ) {
         this.commentRepository = commentRepository;
         this.postRepository = postRepository;
         this.mediaRepository = mediaRepository;
         this.userRepository = userRepository;
         this.commentMapper = commentMapper;
+        this.pushNotificationService = pushNotificationService;
     }
 
     @Transactional(readOnly = true)
@@ -89,7 +94,16 @@ public class CommentService {
         comment.setTargetType(CommentTargetType.SMALL_ALBUM);
         comment.setPostId(postId);
         comment.setContent(request.content().trim());
-        return toCommentDto(commentRepository.save(comment));
+        CommentDto dto = toCommentDto(commentRepository.save(comment));
+        PushDispatchSupport.afterCommitAsync(() -> pushNotificationService.notifyPhotoChanged(
+                currentUser.libraryId(),
+                currentUser.userId(),
+                PushNotificationService.CATEGORY_PHOTOS_COMMENT,
+                "照片有新评论",
+                "对方评论了一个小相册。",
+                "photos:small-album:" + postId
+        ));
+        return dto;
     }
 
     @Transactional
@@ -102,7 +116,16 @@ public class CommentService {
         comment.setTargetType(CommentTargetType.MEDIA);
         comment.setMediaId(mediaId);
         comment.setContent(request.content().trim());
-        return toCommentDto(commentRepository.save(comment));
+        CommentDto dto = toCommentDto(commentRepository.save(comment));
+        PushDispatchSupport.afterCommitAsync(() -> pushNotificationService.notifyPhotoChanged(
+                currentUser.libraryId(),
+                currentUser.userId(),
+                PushNotificationService.CATEGORY_PHOTOS_COMMENT,
+                "照片有新评论",
+                "对方评论了一项媒体。",
+                "photos:media:" + mediaId
+        ));
+        return dto;
     }
 
     @Transactional

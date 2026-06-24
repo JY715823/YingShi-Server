@@ -46,6 +46,7 @@ public class LedgerService {
                     return created;
                 });
         snapshot.setPayloadJson(writePayload(request.payload()));
+        snapshot.setLastModifiedByUserId(currentUser.userId());
         LedgerSnapshotEntity saved = ledgerSnapshotRepository.save(snapshot);
         return toDto(saved);
     }

@@ -22,6 +22,8 @@ import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
+import com.yingshi.server.service.push.PushDispatchSupport;
+import com.yingshi.server.service.push.PushNotificationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,19 +48,22 @@ public class PostService {
     private final AlbumRepository albumRepository;
     private final PostMediaRepository postMediaRepository;
     private final ContentMapper contentMapper;
+    private final PushNotificationService pushNotificationService;
 
     public PostService(
             PostRepository postRepository,
             MediaRepository mediaRepository,
             AlbumRepository albumRepository,
             PostMediaRepository postMediaRepository,
-            ContentMapper contentMapper
+            ContentMapper contentMapper,
+            PushNotificationService pushNotificationService
     ) {
         this.postRepository = postRepository;
         this.mediaRepository = mediaRepository;
         this.albumRepository = albumRepository;
         this.postMediaRepository = postMediaRepository;
         this.contentMapper = contentMapper;
+        this.pushNotificationService = pushNotificationService;
     }
 
     @Transactional(readOnly = true)
@@ -100,7 +105,9 @@ public class PostService {
         postRepository.save(post);
 
         savePostMediaRelations(post.getId(), libraryId, request.initialMediaIds());
-        return buildPostDetail(post);
+        PostDetailDto dto = buildPostDetail(post);
+        notifyContentUpdated(currentUser, post, "对方新建了一个小相册。");
+        return dto;
     }
 
     @Transactional
@@ -142,7 +149,9 @@ public class PostService {
         }
 
         postRepository.save(post);
-        return buildPostDetail(post);
+        PostDetailDto dto = buildPostDetail(post);
+        notifyContentUpdated(currentUser, post, "对方更新了小相册内容。");
+        return dto;
     }
 
     @Transactional
@@ -179,7 +188,9 @@ public class PostService {
             post.setCoverMediaId(orderedMediaIds.get(0));
             postRepository.save(post);
         }
-        return buildPostDetail(post);
+        PostDetailDto dto = buildPostDetail(post);
+        notifyContentUpdated(currentUser, post, "对方往小相册里加入了媒体。");
+        return dto;
     }
 
     @Transactional
@@ -192,7 +203,9 @@ public class PostService {
 
         post.setCoverMediaId(request.coverMediaId());
         postRepository.save(post);
-        return buildPostDetail(post);
+        PostDetailDto dto = buildPostDetail(post);
+        notifyContentUpdated(currentUser, post, "对方调整了小相册封面。");
+        return dto;
     }
 
     @Transactional
@@ -219,7 +232,24 @@ public class PostService {
             post.setCoverMediaId(orderedMediaIds.get(0));
             postRepository.save(post);
         }
-        return buildPostDetail(post);
+        PostDetailDto dto = buildPostDetail(post);
+        notifyContentUpdated(currentUser, post, "对方调整了小相册媒体顺序。");
+        return dto;
+    }
+
+    private void notifyContentUpdated(
+            AuthenticatedUser currentUser,
+            PostEntity post,
+            String body
+    ) {
+        PushDispatchSupport.afterCommitAsync(() -> pushNotificationService.notifyPhotoChanged(
+                currentUser.libraryId(),
+                currentUser.userId(),
+                PushNotificationService.CATEGORY_PHOTOS_CONTENT_UPDATE,
+                "照片内容有更新",
+                body,
+                "photos:small-album:" + post.getId()
+        ));
     }
 
     private PostEntity requirePost(String postId, String libraryId) {

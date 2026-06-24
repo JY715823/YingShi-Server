@@ -3,6 +3,7 @@ package com.yingshi.server.repository;
 import com.yingshi.server.domain.UploadTaskEntity;
 import com.yingshi.server.domain.UploadState;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -15,6 +16,32 @@ public interface UploadTaskRepository extends JpaRepository<UploadTaskEntity, St
     Optional<UploadTaskEntity> findByIdAndLibraryId(String id, String libraryId);
 
     java.util.List<UploadTaskEntity> findByLibraryIdOrderByUpdatedAtDesc(String libraryId);
+
+    Optional<UploadTaskEntity> findFirstByLibraryIdOrderByUpdatedAtDesc(String libraryId);
+
+    java.util.List<UploadTaskEntity> findByLibraryIdAndOperationId(String libraryId, String operationId);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update UploadTaskEntity task
+            set task.state = :successState,
+                task.completedAt = :completedAt,
+                task.storedPath = :storedPath,
+                task.mediaId = :mediaId,
+                task.errorMessage = null
+            where task.id = :id
+              and task.libraryId = :libraryId
+              and task.state = :waitingState
+            """)
+    int markSuccessIfWaiting(
+            @Param("id") String id,
+            @Param("libraryId") String libraryId,
+            @Param("successState") UploadState successState,
+            @Param("waitingState") UploadState waitingState,
+            @Param("completedAt") Instant completedAt,
+            @Param("storedPath") String storedPath,
+            @Param("mediaId") String mediaId
+    );
 
     @Query("""
             select task from UploadTaskEntity task

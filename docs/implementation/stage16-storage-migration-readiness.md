@@ -97,7 +97,7 @@ where original_object_key is null
 
 ## Migration Guardrails
 
-- never store MinIO, OSS, localhost, LAN, or Cloudflare URLs in object-key columns
+- never store MinIO, OSS, localhost, LAN, or public gateway URLs in object-key columns
 - do not expose MinIO or OSS URLs to Android DTOs
 - do not hand-edit PostgreSQL schema as the project source of truth
 - do not auto-migrate legacy H2/local-storage rows on normal startup

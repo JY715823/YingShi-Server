@@ -29,6 +29,7 @@ class LocalObjectStorageServiceTests {
                 null,
                 null,
                 null,
+                null,
                 null
         ));
         byte[] body = "0123456789abcdef".getBytes(StandardCharsets.UTF_8);

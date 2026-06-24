@@ -26,6 +26,8 @@ import com.yingshi.server.repository.CommentRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.TrashItemRepository;
+import com.yingshi.server.service.push.PushDispatchSupport;
+import com.yingshi.server.service.push.PushNotificationService;
 import com.yingshi.server.service.upload.LocalMediaStorageService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -61,6 +63,7 @@ public class TrashService {
     private final CommentRepository commentRepository;
     private final TrashMapper trashMapper;
     private final LocalMediaStorageService localMediaStorageService;
+    private final PushNotificationService pushNotificationService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public TrashService(
@@ -71,7 +74,8 @@ public class TrashService {
             PostMediaRepository postMediaRepository,
             CommentRepository commentRepository,
             TrashMapper trashMapper,
-            LocalMediaStorageService localMediaStorageService
+            LocalMediaStorageService localMediaStorageService,
+            PushNotificationService pushNotificationService
     ) {
         this.trashItemRepository = trashItemRepository;
         this.albumRepository = albumRepository;
@@ -81,6 +85,7 @@ public class TrashService {
         this.commentRepository = commentRepository;
         this.trashMapper = trashMapper;
         this.localMediaStorageService = localMediaStorageService;
+        this.pushNotificationService = pushNotificationService;
     }
 
     @Transactional
@@ -122,7 +127,9 @@ public class TrashService {
                 mediaIds,
                 new LargeAlbumDeletedSnapshot(albumId, smallAlbumIds)
         );
-        return toTrashItemDto(item);
+        TrashItemDto dto = toTrashItemDto(item);
+        notifyDeleted(currentUser, "对方删除了一个大相册。", "photos:trash:" + item.getId());
+        return dto;
     }
 
     @Transactional
@@ -149,7 +156,9 @@ public class TrashService {
                 mediaIds,
                 new SmallAlbumDeletedSnapshot(smallAlbumId)
         );
-        return toTrashItemDto(item);
+        TrashItemDto dto = toTrashItemDto(item);
+        notifyDeleted(currentUser, "对方删除了一个小相册。", "photos:trash:" + item.getId());
+        return dto;
     }
 
     @Transactional
@@ -187,7 +196,9 @@ public class TrashService {
                 List.of(mediaId),
                 new MediaRemovedSnapshot(smallAlbumId, mediaId, sortOrder, wasCover)
         );
-        return toTrashItemDto(item);
+        TrashItemDto dto = toTrashItemDto(item);
+        notifyDeleted(currentUser, "对方从小相册移出了一项媒体。", "photos:trash:" + item.getId());
+        return dto;
     }
 
     @Transactional
@@ -392,7 +403,24 @@ public class TrashService {
                 List.of(mediaId),
                 new MediaSystemDeletedSnapshot(mediaId, relationSnapshots, new ArrayList<>(coverSmallAlbumIds))
         );
-        return toTrashItemDto(item);
+        TrashItemDto dto = toTrashItemDto(item);
+        notifyDeleted(currentUser, "对方删除了一项媒体。", "photos:trash:" + item.getId());
+        return dto;
+    }
+
+    private void notifyDeleted(
+            AuthenticatedUser currentUser,
+            String body,
+            String targetRoute
+    ) {
+        PushDispatchSupport.afterCommitAsync(() -> pushNotificationService.notifyPhotoChanged(
+                currentUser.libraryId(),
+                currentUser.userId(),
+                PushNotificationService.CATEGORY_PHOTOS_DELETE,
+                "照片内容有删除",
+                body,
+                targetRoute
+        ));
     }
 
     private void restoreSmallAlbumDeleted(TrashItemEntity item, String libraryId) {
@@ -451,6 +479,19 @@ public class TrashService {
         MediaSystemDeletedSnapshot snapshot = readSnapshot(item.getSnapshotJson(), MediaSystemDeletedSnapshot.class);
         MediaEntity media = mediaRepository.findByIdAndLibraryId(snapshot.mediaId(), libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "Media can no longer be restored."));
+
+        if (media.getSourceFingerprint() != null && !media.getSourceFingerprint().isBlank()) {
+            Optional<MediaEntity> existing = mediaRepository
+                    .findFirstByLibraryIdAndSourceFingerprintAndDeletedAtIsNull(libraryId, media.getSourceFingerprint());
+            if (existing.isPresent() && !existing.get().getId().equals(media.getId())) {
+                localMediaStorageService.deleteStoredMediaFiles(media.getStoragePath(), media.getId());
+                postMediaRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
+                commentRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
+                mediaRepository.delete(media);
+                return;
+            }
+        }
+
         media.setDeletedAt(null);
         mediaRepository.save(media);
 

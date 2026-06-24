@@ -22,11 +22,15 @@ import com.yingshi.server.service.storage.ObjectKeyPolicy;
 import com.yingshi.server.service.storage.ObjectMetadata;
 import com.yingshi.server.service.storage.ObjectStorageService;
 import com.yingshi.server.service.storage.PresignedObjectUrl;
+import com.yingshi.server.service.push.PushNotificationService;
+import jakarta.persistence.EntityManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Duration;
@@ -34,6 +38,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class UploadService {
@@ -43,7 +51,9 @@ public class UploadService {
     private static final int PREVIEW_MAX_DIMENSION = 1280;
     private static final int DEFAULT_HISTORY_PAGE_SIZE = 50;
     private static final int MAX_HISTORY_PAGE_SIZE = 200;
+    private static final long UPLOAD_OPERATION_NOTIFY_DELAY_MILLIS = 1800L;
     private static final Logger logger = LoggerFactory.getLogger(UploadService.class);
+    private final Set<String> notifiedUploadOperationKeys = ConcurrentHashMap.newKeySet();
 
     private final UploadTaskRepository uploadTaskRepository;
     private final MediaRepository mediaRepository;
@@ -51,6 +61,8 @@ public class UploadService {
     private final LocalMediaStorageService localMediaStorageService;
     private final ObjectStorageService objectStorageService;
     private final StorageProperties storageProperties;
+    private final PushNotificationService pushNotificationService;
+    private final EntityManager entityManager;
 
     public UploadService(
             UploadTaskRepository uploadTaskRepository,
@@ -58,7 +70,9 @@ public class UploadService {
             ContentMapper contentMapper,
             LocalMediaStorageService localMediaStorageService,
             ObjectStorageService objectStorageService,
-            StorageProperties storageProperties
+            StorageProperties storageProperties,
+            PushNotificationService pushNotificationService,
+            EntityManager entityManager
     ) {
         this.uploadTaskRepository = uploadTaskRepository;
         this.mediaRepository = mediaRepository;
@@ -66,6 +80,8 @@ public class UploadService {
         this.localMediaStorageService = localMediaStorageService;
         this.objectStorageService = objectStorageService;
         this.storageProperties = storageProperties;
+        this.pushNotificationService = pushNotificationService;
+        this.entityManager = entityManager;
     }
 
     @Transactional
@@ -209,11 +225,9 @@ public class UploadService {
 
         MediaEntity duplicateMedia = findDuplicateMedia(task);
         if (duplicateMedia != null) {
-            task.setState(UploadState.SUCCESS);
-            task.setCompletedAt(Instant.now());
-            task.setMediaId(duplicateMedia.getId());
-            task.setStoredPath(duplicateMedia.getStoragePath());
-            uploadTaskRepository.save(task);
+            ensureUploadCanComplete(task, null, null);
+            markTaskSuccessIfWaiting(task, duplicateMedia.getStoragePath(), duplicateMedia.getId(), null, null);
+            notifyUploadOperationIfCompleted(currentUser, task);
             MediaDto mediaDto = contentMapper.toMediaDto(duplicateMedia, List.of());
             return new UploadCompleteResponse(task.getId(), "success", mediaDto);
         }
@@ -229,12 +243,15 @@ public class UploadService {
                 task.getFileName(),
                 file
         );
+        ensureUploadCanComplete(task, storedFile.storagePath(), null);
 
         MediaEntity media = null;
         try {
             media = buildMediaFromTask(mediaId, task, storedFile);
             warmPreviewIfPossible(media);
+            ensureUploadCanComplete(task, storedFile.storagePath(), null);
             mediaRepository.save(media);
+            ensureUploadCanComplete(task, storedFile.storagePath(), media);
         } catch (Exception exception) {
             deleteTaskStorageObject(storedFile.storagePath());
             if (media != null) {
@@ -244,11 +261,8 @@ public class UploadService {
             throw exception;
         }
 
-        task.setState(UploadState.SUCCESS);
-        task.setCompletedAt(Instant.now());
-        task.setStoredPath(storedFile.storagePath());
-        task.setMediaId(media.getId());
-        uploadTaskRepository.save(task);
+        markTaskSuccessIfWaiting(task, storedFile.storagePath(), media.getId(), storedFile.storagePath(), media);
+        notifyUploadOperationIfCompleted(currentUser, task);
 
         MediaDto mediaDto = contentMapper.toMediaDto(media, List.of());
         return new UploadCompleteResponse(task.getId(), "success", mediaDto);
@@ -289,12 +303,10 @@ public class UploadService {
 
             MediaEntity duplicateMedia = findDuplicateMedia(task);
             if (duplicateMedia != null) {
+                ensureUploadCanComplete(task, objectKey, null);
                 deleteTaskStorageObject(objectKey);
-                task.setState(UploadState.SUCCESS);
-                task.setCompletedAt(Instant.now());
-                task.setMediaId(duplicateMedia.getId());
-                task.setStoredPath(duplicateMedia.getStoragePath());
-                uploadTaskRepository.save(task);
+                markTaskSuccessIfWaiting(task, duplicateMedia.getStoragePath(), duplicateMedia.getId(), null, null);
+                notifyUploadOperationIfCompleted(currentUser, task);
                 return toUploadTaskResponse(task);
             }
 
@@ -303,11 +315,14 @@ public class UploadService {
                 mediaId = IdGenerator.newId("media");
             }
             LocalMediaStorageService.StoredFile storedFile = storedFileFromMetadata(objectKey, metadata);
+            ensureUploadCanComplete(task, objectKey, null);
             MediaEntity media = null;
             try {
                 media = buildMediaFromTask(mediaId, task, storedFile);
                 warmPreviewIfPossible(media);
+                ensureUploadCanComplete(task, objectKey, null);
                 mediaRepository.save(media);
+                ensureUploadCanComplete(task, objectKey, media);
             } catch (Exception exception) {
                 deleteTaskStorageObject(objectKey);
                 if (media != null) {
@@ -317,11 +332,8 @@ public class UploadService {
                 throw exception;
             }
 
-            task.setState(UploadState.SUCCESS);
-            task.setCompletedAt(Instant.now());
-            task.setStoredPath(storedFile.storagePath());
-            task.setMediaId(media.getId());
-            uploadTaskRepository.save(task);
+            markTaskSuccessIfWaiting(task, storedFile.storagePath(), media.getId(), objectKey, media);
+            notifyUploadOperationIfCompleted(currentUser, task);
         }
         return toUploadTaskResponse(task);
     }
@@ -444,6 +456,58 @@ public class UploadService {
         }
     }
 
+    private void ensureUploadCanComplete(
+            UploadTaskEntity task,
+            String uploadedObjectKey,
+            MediaEntity persistedMedia
+    ) {
+        entityManager.flush();
+        entityManager.refresh(task);
+        if (task.getState() == UploadState.WAITING) {
+            return;
+        }
+        deleteTaskStorageObject(uploadedObjectKey);
+        if (persistedMedia != null) {
+            deleteTaskStorageObject(persistedMedia.getStoragePath());
+            deleteTaskStorageObject(persistedMedia.getPreviewObjectKey());
+            deleteTaskStorageObject(persistedMedia.getCoverObjectKey());
+        }
+        if (task.getState() == UploadState.CANCELLED) {
+            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.UPLOAD_ALREADY_COMPLETED, "Upload task has already been cancelled.");
+        }
+        if (task.getState() == UploadState.FAILED) {
+            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.UPLOAD_ALREADY_COMPLETED, "Upload task has already failed.");
+        }
+        throw new ApiException(HttpStatus.CONFLICT, ErrorCode.UPLOAD_ALREADY_COMPLETED, "Upload task has already been completed.");
+    }
+
+    private void markTaskSuccessIfWaiting(
+            UploadTaskEntity task,
+            String storedPath,
+            String mediaId,
+            String uploadedObjectKey,
+            MediaEntity persistedMedia
+    ) {
+        Instant completedAt = Instant.now();
+        int updatedCount = uploadTaskRepository.markSuccessIfWaiting(
+                task.getId(),
+                task.getLibraryId(),
+                UploadState.SUCCESS,
+                UploadState.WAITING,
+                completedAt,
+                storedPath,
+                mediaId
+        );
+        if (updatedCount != 1) {
+            ensureUploadCanComplete(task, uploadedObjectKey, persistedMedia);
+            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.UPLOAD_ALREADY_COMPLETED, "Upload task has already been completed.");
+        }
+        task.setState(UploadState.SUCCESS);
+        task.setCompletedAt(completedAt);
+        task.setStoredPath(storedPath);
+        task.setMediaId(mediaId);
+    }
+
     private UploadTaskResponse toUploadTaskResponse(UploadTaskEntity task) {
         String objectKey = task.getStoredPath();
         if (objectKey == null && task.getMediaId() != null) {
@@ -529,6 +593,130 @@ public class UploadService {
         );
     }
 
+    private void notifyUploadOperationIfCompleted(AuthenticatedUser currentUser, UploadTaskEntity completedTask) {
+        if (completedTask == null || completedTask.getState() != UploadState.SUCCESS) {
+            return;
+        }
+        String libraryId = currentUser.libraryId();
+        String actorUserId = currentUser.userId();
+        String operationId = normalizeNullable(completedTask.getOperationId());
+        String completedTaskId = completedTask.getId();
+        afterCommitAsync(() -> notifyUploadOperationIfCompletedAfterDelay(
+                libraryId,
+                actorUserId,
+                operationId,
+                completedTaskId
+        ));
+    }
+
+    private void notifyUploadOperationIfCompletedAfterDelay(
+            String libraryId,
+            String actorUserId,
+            String operationId,
+            String completedTaskId
+    ) {
+        List<UploadTaskEntity> operationTasks = operationId == null
+                ? uploadTaskRepository.findByIdAndLibraryId(completedTaskId, libraryId).map(List::of).orElse(List.of())
+                : uploadTaskRepository.findByLibraryIdAndOperationId(libraryId, operationId);
+        if (operationTasks.isEmpty()) {
+            return;
+        }
+        UploadTaskEntity completedTask = operationTasks.stream()
+                .filter(task -> completedTaskId.equals(task.getId()))
+                .findFirst()
+                .orElse(operationTasks.get(0));
+        if (completedTask.getState() != UploadState.SUCCESS) {
+            return;
+        }
+        int expectedCount = operationTasks.stream()
+                .map(UploadTaskEntity::getOperationMediaCount)
+                .filter(count -> count != null && count > 0)
+                .max(Integer::compareTo)
+                .orElse(operationTasks.size());
+        if (operationId != null && operationTasks.size() < expectedCount) {
+            return;
+        }
+        long finishedCount = operationTasks.stream()
+                .filter(task -> task.getState() == UploadState.SUCCESS || task.getState() == UploadState.CANCELLED || task.getState() == UploadState.FAILED)
+                .count();
+        if (expectedCount > 1 && finishedCount < expectedCount) {
+            return;
+        }
+        List<UploadTaskEntity> successfulTasks = operationTasks.stream()
+                .filter(task -> task.getState() == UploadState.SUCCESS)
+                .toList();
+        if (successfulTasks.isEmpty()) {
+            return;
+        }
+        String operationKey = libraryId + ":" + (operationId == null ? completedTask.getId() : operationId);
+        if (!notifiedUploadOperationKeys.add(operationKey)) {
+            logger.debug("Skip duplicate upload operation push: {}", operationKey);
+            return;
+        }
+        int imageCount = (int) successfulTasks.stream().filter(task -> task.getMediaType() == MediaType.IMAGE).count();
+        int videoCount = (int) successfulTasks.stream().filter(task -> task.getMediaType() == MediaType.VIDEO).count();
+        String mediaSummary = uploadMediaSummary(imageCount, videoCount);
+        String targetMediaId = successfulTasks.stream()
+                .map(UploadTaskEntity::getMediaId)
+                .filter(mediaId -> mediaId != null && !mediaId.isBlank())
+                .findFirst()
+                .orElse(completedTask.getMediaId());
+        String targetRoute = targetMediaId == null || targetMediaId.isBlank() ? "photos" : "photos:media:" + targetMediaId;
+        pushNotificationService.notifyPhotoChanged(
+                libraryId,
+                actorUserId,
+                PushNotificationService.CATEGORY_PHOTOS_CONTENT_UPDATE,
+                "照片内容有更新",
+                "对方刚导入了" + mediaSummary + "。",
+                targetRoute
+        );
+    }
+
+    private void afterCommitAsync(Runnable action) {
+        Runnable asyncAction = () -> CompletableFuture.runAsync(() -> {
+            try {
+                if (UPLOAD_OPERATION_NOTIFY_DELAY_MILLIS > 0L) {
+                    TimeUnit.MILLISECONDS.sleep(UPLOAD_OPERATION_NOTIFY_DELAY_MILLIS);
+                }
+                action.run();
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                logger.warn("Async upload completion side effect interrupted", exception);
+            } catch (Exception exception) {
+                logger.warn("Async upload completion side effect failed", exception);
+            }
+        }, CompletableFuture.delayedExecutor(0L, TimeUnit.MILLISECONDS));
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    asyncAction.run();
+                }
+            });
+            return;
+        }
+        asyncAction.run();
+    }
+
+    private List<UploadTaskEntity> uploadOperationTasks(UploadTaskEntity task) {
+        String operationId = normalizeNullable(task.getOperationId());
+        if (operationId == null) {
+            return List.of(task);
+        }
+        List<UploadTaskEntity> tasks = uploadTaskRepository.findByLibraryIdAndOperationId(task.getLibraryId(), operationId);
+        return tasks.isEmpty() ? List.of(task) : tasks;
+    }
+
+    private String uploadMediaSummary(int imageCount, int videoCount) {
+        if (imageCount > 0 && videoCount > 0) {
+            return imageCount + "张照片和" + videoCount + "个视频";
+        }
+        if (videoCount > 0) {
+            return videoCount + "个视频";
+        }
+        return imageCount + "张照片";
+    }
+
     private String normalizeConfirmObjectKey(UploadTaskEntity task, UploadConfirmRequest request) {
         String requestObjectKey = ObjectKeyPolicy.tryNormalizeRelativeObjectKey(request.objectKey());
         String taskObjectKey = ObjectKeyPolicy.tryNormalizeRelativeObjectKey(task.getStoredPath());
@@ -598,20 +786,23 @@ public class UploadService {
                     media.getId(),
                     PREVIEW_MAX_DIMENSION
             );
-            if (localMediaStorageService.ensureVideoCover(
-                    media.getStoragePath(),
-                    media.getId(),
-                    PREVIEW_MAX_DIMENSION
-            )) {
-                media.setCoverObjectKey(coverObjectKey);
-                media.setPreviewObjectKey(coverObjectKey);
-            } else {
-                logger.warn("Video cover generation failed for media {} (type={}), cover will be unavailable",
-                        media.getId(), media.getMimeType());
-                media.setCoverObjectKey(null);
-                media.setPreviewObjectKey(null);
-            }
+            media.setCoverObjectKey(coverObjectKey);
+            media.setPreviewObjectKey(coverObjectKey);
+            warmVideoCoverAsync(media.getStoragePath(), media.getId(), media.getMimeType());
         }
+    }
+
+    private void warmVideoCoverAsync(String storagePath, String mediaId, String mimeType) {
+        CompletableFuture.runAsync(() -> {
+            try {
+                if (!localMediaStorageService.ensureVideoCover(storagePath, mediaId, PREVIEW_MAX_DIMENSION)) {
+                    logger.warn("Video cover generation failed for media {} (type={}), cover will be generated lazily if possible",
+                            mediaId, mimeType);
+                }
+            } catch (Exception exception) {
+                logger.warn("Video cover warmup failed for media {} (type={})", mediaId, mimeType, exception);
+            }
+        });
     }
 
     private String normalizeSourceFingerprint(String rawFingerprint) {

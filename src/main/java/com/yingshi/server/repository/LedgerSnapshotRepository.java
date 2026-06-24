@@ -8,4 +8,6 @@ import java.util.Optional;
 public interface LedgerSnapshotRepository extends JpaRepository<LedgerSnapshotEntity, String> {
 
     Optional<LedgerSnapshotEntity> findByLibraryId(String libraryId);
+
+    Optional<LedgerSnapshotEntity> findFirstByLibraryIdOrderByUpdatedAtDesc(String libraryId);
 }

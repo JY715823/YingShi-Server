@@ -28,6 +28,10 @@ public interface MediaRepository extends JpaRepository<MediaEntity, String> {
 
     List<MediaEntity> findTop200ByMediaTypeAndDeletedAtIsNullOrderByUpdatedAtDesc(MediaType mediaType);
 
+    Optional<MediaEntity> findTopByLibraryIdAndDeletedAtIsNullOrderByUpdatedAtDesc(String libraryId);
+
+    Optional<MediaEntity> findTopByLibraryIdOrderByUpdatedAtDesc(String libraryId);
+
     Optional<MediaEntity> findFirstByLibraryIdAndMediaTypeAndMimeTypeAndSizeBytesAndDisplayTimeMillisAndWidthAndHeightAndDurationMillisAndDeletedAtIsNull(
             String libraryId,
             com.yingshi.server.domain.MediaType mediaType,

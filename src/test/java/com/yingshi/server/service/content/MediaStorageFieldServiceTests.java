@@ -36,6 +36,7 @@ class MediaStorageFieldServiceTests {
                 null,
                 null,
                 null,
+                null,
                 null
         );
         LocalMediaStorageService localMediaStorageService = new LocalMediaStorageService(
@@ -78,6 +79,7 @@ class MediaStorageFieldServiceTests {
                 null,
                 null,
                 null,
+                null,
                 null
         );
         LocalMediaStorageService localMediaStorageService = new LocalMediaStorageService(
@@ -89,7 +91,7 @@ class MediaStorageFieldServiceTests {
         MediaEntity media = new MediaEntity();
         media.setId("media_url_only");
         media.setMediaType(MediaType.IMAGE);
-        media.setStoragePath("https://example.trycloudflare.com/api/media/files/media_url_only");
+        media.setStoragePath("https://example.invalid/api/media/files/media_url_only");
         media.setOriginalUrl("https://oss-cn-hangzhou.aliyuncs.com/bucket/originals/media_url_only.jpg");
 
         assertTrue(service.fillMissingStorageFields(media));

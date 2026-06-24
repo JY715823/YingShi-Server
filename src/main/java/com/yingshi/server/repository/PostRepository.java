@@ -23,6 +23,16 @@ public interface PostRepository extends JpaRepository<PostEntity, String> {
 
     List<PostEntity> findByLibraryIdAndDeletedAtIsNullOrderByUpdatedAtDesc(String libraryId);
 
+    Optional<PostEntity> findFirstByLibraryIdAndDeletedAtIsNullOrderByUpdatedAtDesc(String libraryId);
+
+    Optional<PostEntity> findFirstByLibraryIdOrderByUpdatedAtDesc(String libraryId);
+
+    Optional<PostEntity> findFirstByLibraryIdAndDeletedAtIsNullAndSystemKeyIsNullOrderByUpdatedAtDesc(String libraryId);
+
+    Optional<PostEntity> findFirstByLibraryIdAndSystemKeyIsNullOrderByUpdatedAtDesc(String libraryId);
+
+    Optional<PostEntity> findFirstByLibraryIdAndDeletedAtIsNullAndSystemKeyIsNotNullOrderByUpdatedAtDesc(String libraryId);
+
     List<PostEntity> findByLibraryIdAndAlbumIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(
             String libraryId,
             String albumId

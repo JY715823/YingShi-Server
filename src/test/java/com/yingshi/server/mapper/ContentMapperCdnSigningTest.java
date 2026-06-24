@@ -39,7 +39,8 @@ class ContentMapperCdnSigningTest {
                 "t",
                 Duration.ofMinutes(15),
                 true,
-                false
+                false,
+                null
         );
         ContentMapper mapper = new ContentMapper(storageProperties, new EmptyObjectStorageService());
         MediaEntity media = imageMedia();

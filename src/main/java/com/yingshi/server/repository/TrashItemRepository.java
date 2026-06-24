@@ -34,5 +34,7 @@ public interface TrashItemRepository extends JpaRepository<TrashItemEntity, Stri
 
     List<TrashItemEntity> findByLibraryIdOrderByUpdatedAtDesc(String libraryId);
 
+    Optional<TrashItemEntity> findFirstByLibraryIdOrderByUpdatedAtDesc(String libraryId);
+
     List<TrashItemEntity> findByStateAndUndoDeadlineAtBeforeOrderByUndoDeadlineAtAsc(TrashItemState state, Instant undoDeadlineAt);
 }

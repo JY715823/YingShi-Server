@@ -71,6 +71,7 @@ app:
     direct-upload-public-endpoint: ${STORAGE_DIRECT_UPLOAD_PUBLIC_ENDPOINT:}
     force-path-style: ${STORAGE_FORCE_PATH_STYLE:true}
   push:
+    self-fallback-enabled: ${PUSH_SELF_FALLBACK_ENABLED:false}
     fcm:
       enabled: ${FCM_ENABLED:false}
       dry-run: ${FCM_DRY_RUN:false}

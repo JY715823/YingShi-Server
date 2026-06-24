@@ -32,6 +32,7 @@ import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.SharedLibraryMemberRepository;
 import com.yingshi.server.repository.UserRepository;
 import com.yingshi.server.service.push.PushNotificationService;
+import com.yingshi.server.service.push.PushDispatchSupport;
 import com.yingshi.server.service.trash.TrashService;
 import com.yingshi.server.dto.trash.TrashItemDto;
 import org.springframework.http.HttpStatus;
@@ -182,7 +183,7 @@ public class LifeConsoleService {
             albumRepository.save(album);
         }
 
-        pushNotificationService.notifyLifeConsoleChanged(libraryId, currentUser.userId(), "media_added");
+        notifyLifeConsoleChanged(libraryId, currentUser.userId(), "media_added");
         return getToday(today.toString(), DEFAULT_ZONE_ID, currentUser);
     }
 
@@ -195,7 +196,7 @@ public class LifeConsoleService {
             throw new ApiException(HttpStatus.FORBIDDEN, ErrorCode.FORBIDDEN, "You can only delete media from your own frame.");
         }
         TrashItemDto trashItem = trashService.systemDeleteMediaAllowingEmptySmallAlbums(mediaId, currentUser);
-        pushNotificationService.notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "media_deleted");
+        notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "media_deleted");
         return trashItem;
     }
 
@@ -208,7 +209,7 @@ public class LifeConsoleService {
         event.setUserId(currentUser.userId());
         event.setOccurredAtMillis(nowMillis);
         bowelEventRepository.save(event);
-        pushNotificationService.notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "bowel_added");
+        notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "bowel_added");
 
         ZoneId zone = ZoneId.of(DEFAULT_ZONE_ID);
         LocalDate today = LocalDate.now(zone);
@@ -234,7 +235,7 @@ public class LifeConsoleService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.NOT_FOUND, "No bowel event was found for today."));
         LifeConsoleBowelEventDto eventDto = toBowelEventDto(event);
         bowelEventRepository.delete(event);
-        pushNotificationService.notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "bowel_deleted");
+        notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "bowel_deleted");
 
         LifeUsers users = resolveLifeUsers(currentUser);
         return new LifeConsoleBowelMutationResponse(
@@ -261,6 +262,10 @@ public class LifeConsoleService {
                 buildMediaSlot(LifeConsoleCategory.MEAL, users.partnerUserId(), false, dateRange, YearMonth.from(date), currentUser.libraryId()),
                 buildBowelSummary(dateRange, users, currentUser.libraryId())
         );
+    }
+
+    private void notifyLifeConsoleChanged(String libraryId, String actorUserId, String reason) {
+        PushDispatchSupport.afterCommitAsync(() -> pushNotificationService.notifyLifeConsoleChanged(libraryId, actorUserId, reason));
     }
 
     private LifeConsoleMediaSlotDto buildMediaSlot(

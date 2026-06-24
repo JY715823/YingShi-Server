@@ -20,4 +20,8 @@ public interface BowelEventRepository extends JpaRepository<BowelEventEntity, St
             Long startMillis,
             Long endMillis
     );
+
+    Optional<BowelEventEntity> findFirstByLibraryIdOrderByUpdatedAtDesc(String libraryId);
+
+    List<BowelEventEntity> findTop50ByLibraryIdOrderByOccurredAtMillisDesc(String libraryId);
 }

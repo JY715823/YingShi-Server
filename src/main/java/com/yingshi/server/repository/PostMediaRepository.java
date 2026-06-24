@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface PostMediaRepository extends JpaRepository<PostMediaEntity, String> {
 
@@ -19,4 +20,6 @@ public interface PostMediaRepository extends JpaRepository<PostMediaEntity, Stri
     void deleteByLibraryIdAndPostId(String libraryId, String postId);
 
     void deleteByLibraryIdAndMediaId(String libraryId, String mediaId);
+
+    Optional<PostMediaEntity> findFirstByLibraryIdOrderByUpdatedAtDesc(String libraryId);
 }

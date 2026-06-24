@@ -21,6 +21,9 @@ public class LedgerSnapshotEntity extends LibraryScopedEntity {
     @Column(nullable = false, columnDefinition = "text")
     private String payloadJson;
 
+    @Column(name = "last_modified_by")
+    private String lastModifiedByUserId;
+
     public String getId() {
         return id;
     }
@@ -35,5 +38,13 @@ public class LedgerSnapshotEntity extends LibraryScopedEntity {
 
     public void setPayloadJson(String payloadJson) {
         this.payloadJson = payloadJson;
+    }
+
+    public String getLastModifiedByUserId() {
+        return lastModifiedByUserId;
+    }
+
+    public void setLastModifiedByUserId(String lastModifiedByUserId) {
+        this.lastModifiedByUserId = lastModifiedByUserId;
     }
 }
