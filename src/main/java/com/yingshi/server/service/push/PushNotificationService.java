@@ -199,6 +199,20 @@ public class PushNotificationService {
 
     @Transactional
     public void notifyPhotoChanged(String libraryId, String actorUserId, String category, String title, String body, String targetRoute) {
+        notifyPhotoChanged(libraryId, actorUserId, category, title, body, targetRoute, null, null);
+    }
+
+    @Transactional
+    public void notifyPhotoChanged(
+            String libraryId,
+            String actorUserId,
+            String category,
+            String title,
+            String body,
+            String targetRoute,
+            String notificationId,
+            String groupId
+    ) {
         String safeCategory = normalizePhotoCategory(category);
         String safeRoute = targetRoute == null || targetRoute.isBlank() ? "photos" : targetRoute.trim();
         TokenResolution resolution = targetTokensFor(libraryId, actorUserId, MODULE_PHOTOS, safeCategory);
@@ -229,6 +243,12 @@ public class PushNotificationService {
         data.put("body", body == null || body.isBlank() ? "对方刚更新了照片内容。" : body.trim());
         data.put("targetRoute", safeRoute);
         data.put("occurredAtMillis", Long.toString(Instant.now().toEpochMilli()));
+        if (notificationId != null && !notificationId.isBlank()) {
+            data.put("notificationId", notificationId.trim());
+        }
+        if (groupId != null && !groupId.isBlank()) {
+            data.put("groupId", groupId.trim());
+        }
         PushDeliveryResult result = pushMessageSender.sendDataMessage(resolution.targetTokens(), data);
         if (!result.invalidTokens().isEmpty()) {
             disableInvalidTokens(result.invalidTokens());

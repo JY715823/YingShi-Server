@@ -331,9 +331,16 @@ public class LocalMediaStorageService {
         return "avatars/" + userId + ".jpg";
     }
 
+    private static final long MAX_AVATAR_FILE_SIZE = 10L * 1024 * 1024;
+    private static final int MAX_AVATAR_DIMENSION = 512;
+
     public String storeAvatarImage(String userId, MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "Avatar file must not be empty.");
+        }
+        if (file.getSize() > MAX_AVATAR_FILE_SIZE) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR,
+                    "Avatar file must not exceed 10MB.");
         }
         try (InputStream inputStream = file.getInputStream()) {
             BufferedImage sourceImage = ImageIO.read(inputStream);
@@ -341,16 +348,47 @@ public class LocalMediaStorageService {
                 throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "Avatar file must be a readable image.");
             }
 
+            BufferedImage imageToNormalize = sourceImage;
+
+            if (sourceImage.getWidth() > MAX_AVATAR_DIMENSION || sourceImage.getHeight() > MAX_AVATAR_DIMENSION) {
+                int originalWidth = sourceImage.getWidth();
+                int originalHeight = sourceImage.getHeight();
+                double scale = Math.min(
+                        (double) MAX_AVATAR_DIMENSION / originalWidth,
+                        (double) MAX_AVATAR_DIMENSION / originalHeight
+                );
+                int targetWidth = Math.max(1, (int) (originalWidth * scale));
+                int targetHeight = Math.max(1, (int) (originalHeight * scale));
+
+                java.awt.Image scaledInstance = sourceImage.getScaledInstance(
+                        targetWidth, targetHeight, java.awt.Image.SCALE_SMOOTH
+                );
+                BufferedImage resizedImage = new BufferedImage(
+                        targetWidth, targetHeight, BufferedImage.TYPE_INT_RGB
+                );
+                Graphics2D resizeGraphics = resizedImage.createGraphics();
+                try {
+                    resizeGraphics.setRenderingHint(
+                            RenderingHints.KEY_INTERPOLATION,
+                            RenderingHints.VALUE_INTERPOLATION_BILINEAR
+                    );
+                    resizeGraphics.drawImage(scaledInstance, 0, 0, null);
+                } finally {
+                    resizeGraphics.dispose();
+                }
+                imageToNormalize = resizedImage;
+            }
+
             BufferedImage normalizedImage = new BufferedImage(
-                    sourceImage.getWidth(),
-                    sourceImage.getHeight(),
+                    imageToNormalize.getWidth(),
+                    imageToNormalize.getHeight(),
                     BufferedImage.TYPE_INT_RGB
             );
             Graphics2D graphics = normalizedImage.createGraphics();
             try {
                 graphics.setColor(Color.WHITE);
                 graphics.fillRect(0, 0, normalizedImage.getWidth(), normalizedImage.getHeight());
-                graphics.drawImage(sourceImage, 0, 0, null);
+                graphics.drawImage(imageToNormalize, 0, 0, null);
             } finally {
                 graphics.dispose();
             }

@@ -292,8 +292,8 @@ public class TrashService {
     @Transactional
     public TrashItemDto purgeTrashItem(String trashItemId, AuthenticatedUser currentUser) {
         TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
-        if (item.getState() != TrashItemState.IN_TRASH) {
-            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Only in-trash items can be permanently deleted.");
+        if (item.getState() != TrashItemState.IN_TRASH && item.getState() != TrashItemState.PENDING_CLEANUP) {
+            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Only in-trash or pending-cleanup items can be permanently deleted.");
         }
 
         TrashItemDto itemDto = toTrashItemDto(item);

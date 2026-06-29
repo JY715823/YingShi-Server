@@ -668,7 +668,9 @@ public class UploadService {
                 PushNotificationService.CATEGORY_PHOTOS_CONTENT_UPDATE,
                 "照片内容有更新",
                 "对方刚导入了" + mediaSummary + "。",
-                targetRoute
+                targetRoute,
+                "upload:" + (operationId == null ? completedTask.getId() : operationId),
+                "upload:" + (operationId == null ? completedTask.getId() : operationId)
         );
     }
 

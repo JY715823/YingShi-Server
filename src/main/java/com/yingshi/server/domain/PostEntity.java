@@ -44,6 +44,9 @@ public class PostEntity extends LibraryScopedEntity {
     @Column(name = "creator_user_id", length = 255)
     private String creatorUserId;
 
+    @Column(name = "last_modified_by_user_id", length = 255)
+    private String lastModifiedByUserId;
+
     @Column(name = "participant_user_ids", length = 2000)
     private String participantUserIds;
 
@@ -141,6 +144,14 @@ public class PostEntity extends LibraryScopedEntity {
         this.creatorUserId = creatorUserId;
     }
 
+    public String getLastModifiedByUserId() {
+        return lastModifiedByUserId;
+    }
+
+    public void setLastModifiedByUserId(String lastModifiedByUserId) {
+        this.lastModifiedByUserId = lastModifiedByUserId;
+    }
+
     public String getParticipantUserIds() {
         return participantUserIds;
     }
@@ -163,5 +174,9 @@ public class PostEntity extends LibraryScopedEntity {
 
     public void setSystemKey(String systemKey) {
         this.systemKey = systemKey;
+    }
+
+    public void touch() {
+        setUpdatedAt(Instant.now());
     }
 }

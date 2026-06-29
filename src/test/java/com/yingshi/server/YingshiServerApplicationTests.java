@@ -2062,6 +2062,45 @@ class YingshiServerApplicationTests {
     }
 
     @Test
+    void pendingCleanupItemCanBePurgedImmediately() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        MvcResult deleteResult = mockMvc.perform(delete("/api/small-albums/post_002")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.itemType").value("smallAlbumDeleted"))
+                .andReturn();
+
+        String trashItemId = readField(deleteResult, "/data/trashItemId");
+
+        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/remove")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trashItemId").value(trashItemId))
+                .andExpect(jsonPath("$.data.item.state").value("pendingCleanup"));
+
+        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/purge")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trashItemId").value(trashItemId))
+                .andExpect(jsonPath("$.data.itemType").value("smallAlbumDeleted"));
+
+        mockMvc.perform(get("/api/trash/items/" + trashItemId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("TRASH_ITEM_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/small-albums/post_002")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("SMALL_ALBUM_NOT_FOUND"));
+
+        mockMvc.perform(get("/api/media/files/media_003")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void deletedPostCanBeRestoredFromTrashWithCommentVisibility() throws Exception {
         String accessToken = loginAndGetAccessToken();
 

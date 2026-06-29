@@ -410,7 +410,11 @@ public class NotificationService {
         String body = summary == null || summary.isBlank()
                 ? "「" + safeTitle(post.getTitle()) + "」有内容更新。"
                 : summary;
-        ActorDescriptor actor = actorDescriptor(post.getCreatorUserId(), context.usersById().get(post.getCreatorUserId()), null);
+        String actorUserId = emptyToNull(post.getLastModifiedByUserId());
+        if (actorUserId == null) {
+            actorUserId = post.getCreatorUserId();
+        }
+        ActorDescriptor actor = actorDescriptor(actorUserId, context.usersById().get(actorUserId), null);
         return new NotificationEvent(
                 "post:" + post.getId() + ":" + updatedAtMillis,
                 "content_update",

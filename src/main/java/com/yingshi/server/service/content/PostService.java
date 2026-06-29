@@ -28,6 +28,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -101,6 +102,7 @@ public class PostService {
         post.setDisplayTimeSource(normalizeDisplayTimeSource(request.displayTimeSource(), "MANUAL"));
         post.setCoverMediaId(coverMediaId);
         post.setCreatorUserId(currentUser.userId());
+        post.setLastModifiedByUserId(currentUser.userId());
         post.setParticipantUserIds(joinParticipantUserIds(normalizeParticipantUserIds(request.participantUserIds())));
         postRepository.save(post);
 
@@ -148,6 +150,7 @@ public class PostService {
             post.setAlbumId(requireAlbum(libraryId, request.albumId()).getId());
         }
 
+        post.setLastModifiedByUserId(currentUser.userId());
         postRepository.save(post);
         PostDetailDto dto = buildPostDetail(post);
         notifyContentUpdated(currentUser, post, "对方更新了小相册内容。");
@@ -183,9 +186,15 @@ public class PostService {
                 throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.SMALL_ALBUM_COVER_INVALID, "coverMediaId must belong to the current small album.");
             }
             post.setCoverMediaId(request.coverMediaId());
+            post.setLastModifiedByUserId(currentUser.userId());
             postRepository.save(post);
         } else if (post.getCoverMediaId() == null) {
             post.setCoverMediaId(orderedMediaIds.get(0));
+            post.setLastModifiedByUserId(currentUser.userId());
+            postRepository.save(post);
+        } else {
+            post.setLastModifiedByUserId(currentUser.userId());
+            post.touch();
             postRepository.save(post);
         }
         PostDetailDto dto = buildPostDetail(post);
@@ -202,6 +211,7 @@ public class PostService {
         }
 
         post.setCoverMediaId(request.coverMediaId());
+        post.setLastModifiedByUserId(currentUser.userId());
         postRepository.save(post);
         PostDetailDto dto = buildPostDetail(post);
         notifyContentUpdated(currentUser, post, "对方调整了小相册封面。");
@@ -230,8 +240,9 @@ public class PostService {
 
         if (post.getCoverMediaId() == null) {
             post.setCoverMediaId(orderedMediaIds.get(0));
-            postRepository.save(post);
         }
+        post.setLastModifiedByUserId(currentUser.userId());
+        postRepository.save(post);
         PostDetailDto dto = buildPostDetail(post);
         notifyContentUpdated(currentUser, post, "对方调整了小相册媒体顺序。");
         return dto;
@@ -248,8 +259,14 @@ public class PostService {
                 PushNotificationService.CATEGORY_PHOTOS_CONTENT_UPDATE,
                 "照片内容有更新",
                 body,
-                "photos:small-album:" + post.getId()
+                "photos:small-album:" + post.getId(),
+                "post:" + post.getId() + ":" + toEpochMillis(post.getUpdatedAt()),
+                "post:" + post.getId()
         ));
+    }
+
+    private long toEpochMillis(Instant instant) {
+        return instant == null ? System.currentTimeMillis() : instant.toEpochMilli();
     }
 
     private PostEntity requirePost(String postId, String libraryId) {

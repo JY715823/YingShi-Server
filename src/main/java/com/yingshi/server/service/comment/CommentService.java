@@ -101,7 +101,9 @@ public class CommentService {
                 PushNotificationService.CATEGORY_PHOTOS_COMMENT,
                 "照片有新评论",
                 "对方评论了一个小相册。",
-                "photos:small-album:" + postId
+                "photos:small-album:" + postId,
+                "comment:" + dto.commentId(),
+                "comment:" + dto.commentId()
         ));
         return dto;
     }
@@ -123,7 +125,9 @@ public class CommentService {
                 PushNotificationService.CATEGORY_PHOTOS_COMMENT,
                 "照片有新评论",
                 "对方评论了一项媒体。",
-                "photos:media:" + mediaId
+                "photos:media:" + mediaId,
+                "comment:" + dto.commentId(),
+                "comment:" + dto.commentId()
         ));
         return dto;
     }

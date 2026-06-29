@@ -1,6 +1,6 @@
 ﻿# Trash API Contract
 
-更新时间：2026-06-11
+更新时间：2026-06-25
 
 ## 状态
 
@@ -13,6 +13,8 @@
 - 所有接口都要求 bearer auth
 - 默认分页：`page=1`、`size=10`
 - 排序：按 `deletedAtMillis` 倒序
+- `remove` 表示移出回收站进入 24 小时 `pendingCleanup`，不执行物理删除
+- `purge` 表示永久删除，允许 `inTrash` 与 `pendingCleanup` 状态
 
 ## Trash Item DTO
 
@@ -98,8 +100,13 @@ Response `data`:
 ### `POST /api/trash/items/{trashItemId}/remove`
 
 - 返回 `PendingCleanupDto`
+- 将条目移动到 `pendingCleanup`
+- 返回 `removedAtMillis` 和 `undoDeadlineMillis`
 
 ### `POST /api/trash/items/{trashItemId}/purge`
+
+- 允许从 `inTrash` 或 `pendingCleanup` 执行
+- Android 主流程只从待清理页触发，列表/详情主删除按钮先调用 `remove`
 
 当前后端行为：
 
@@ -128,6 +135,12 @@ Response `data`:
 ### `GET /api/trash/pending-cleanup`
 
 - returns `List<PendingCleanupDto>`
+
+## Android compatibility
+
+- Canonical small-album fields are `sourceSmallAlbumId` and `relatedSmallAlbumIds`.
+- Android continues to expose compatibility aliases `sourcePostId` and `relatedPostIds` locally while server payloads stay on small-album names.
+- Canonical item types are `largeAlbumDeleted`, `smallAlbumDeleted`, `mediaRemoved`, and `mediaSystemDeleted`.
 
 ## 错误码
 
