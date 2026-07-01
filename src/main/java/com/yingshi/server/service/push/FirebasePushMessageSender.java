@@ -40,6 +40,8 @@ public class FirebasePushMessageSender implements PushMessageSender {
         this.firebaseMessaging = FirebaseMessaging.getInstance(firebaseApp(fcmProperties));
     }
 
+    private static final int MAX_SEND_RETRIES = 3;
+
     @Override
     public PushDeliveryResult sendDataMessage(
             List<PushDeviceTokenEntity> targetTokens,
@@ -56,30 +58,66 @@ public class FirebasePushMessageSender implements PushMessageSender {
                             .setPriority(AndroidConfig.Priority.HIGH)
                             .build())
                     .build();
-            try {
-                firebaseMessaging.send(message, fcmProperties.dryRun());
-                successful++;
-            } catch (FirebaseMessagingException exception) {
-                if (isInvalidToken(exception)) {
-                    invalidTokens.add(targetToken.getToken());
+            boolean sent = false;
+            for (int attempt = 1; attempt <= MAX_SEND_RETRIES; attempt++) {
+                try {
+                    firebaseMessaging.send(message, fcmProperties.dryRun());
+                    successful++;
+                    sent = true;
+                    break;
+                } catch (FirebaseMessagingException exception) {
+                    if (isInvalidToken(exception)) {
+                        invalidTokens.add(targetToken.getToken());
+                        log.warn(
+                                "FCM send failed (invalid token) tokenId={}, messagingErrorCode={}",
+                                targetToken.getId(),
+                                exception.getMessagingErrorCode()
+                        );
+                        break;
+                    }
+                    if (isTransient(exception) && attempt < MAX_SEND_RETRIES) {
+                        long delayMs = (long) Math.pow(2, attempt - 1) * 1000;
+                        log.info(
+                                "FCM send transient error tokenId={}, attempt={}/{}, retrying in {}ms: {}",
+                                targetToken.getId(), attempt, MAX_SEND_RETRIES, delayMs, exception.getMessage()
+                        );
+                        try {
+                            Thread.sleep(delayMs);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    } else {
+                        log.warn(
+                                "FCM send failed tokenId={}, attempt={}/{}, errorCode={}, messagingErrorCode={}",
+                                targetToken.getId(), attempt, MAX_SEND_RETRIES,
+                                exception.getErrorCode(), exception.getMessagingErrorCode(),
+                                exception
+                        );
+                    }
                 }
-                log.warn(
-                        "FCM send failed for tokenId={}, errorCode={}, messagingErrorCode={}",
-                        targetToken.getId(),
-                        exception.getErrorCode(),
-                        exception.getMessagingErrorCode(),
-                        exception
-                );
+            }
+            if (!sent) {
+                log.warn("FCM send exhausted retries for tokenId={}", targetToken.getId());
             }
         }
 
         return new PushDeliveryResult(targetTokens.size(), successful, invalidTokens);
     }
 
+    private boolean isTransient(FirebaseMessagingException exception) {
+        com.google.firebase.ErrorCode errorCode = exception.getErrorCode();
+        return errorCode == com.google.firebase.ErrorCode.UNAVAILABLE ||
+                errorCode == com.google.firebase.ErrorCode.DEADLINE_EXCEEDED ||
+                errorCode == com.google.firebase.ErrorCode.INTERNAL ||
+                errorCode == com.google.firebase.ErrorCode.RESOURCE_EXHAUSTED;
+    }
+
     private boolean isInvalidToken(FirebaseMessagingException exception) {
         MessagingErrorCode messagingErrorCode = exception.getMessagingErrorCode();
         return messagingErrorCode == MessagingErrorCode.UNREGISTERED ||
-                messagingErrorCode == MessagingErrorCode.INVALID_ARGUMENT;
+                messagingErrorCode == MessagingErrorCode.INVALID_ARGUMENT ||
+                messagingErrorCode == MessagingErrorCode.SENDER_ID_MISMATCH;
     }
 
     private FirebaseApp firebaseApp(FcmProperties properties) {

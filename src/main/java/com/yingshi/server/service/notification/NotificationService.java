@@ -4,6 +4,7 @@ import com.yingshi.server.common.IdGenerator;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
+import com.yingshi.server.domain.AlbumEntity;
 import com.yingshi.server.domain.BowelEventEntity;
 import com.yingshi.server.domain.CommentEntity;
 import com.yingshi.server.domain.CommentTargetType;
@@ -20,6 +21,7 @@ import com.yingshi.server.domain.UserEntity;
 import com.yingshi.server.dto.notification.NotificationDto;
 import com.yingshi.server.dto.notification.NotificationMarkAllReadResponse;
 import com.yingshi.server.dto.notification.NotificationMediaItemDto;
+import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.BowelEventRepository;
 import com.yingshi.server.repository.CommentRepository;
 import com.yingshi.server.repository.LedgerSnapshotRepository;
@@ -58,6 +60,7 @@ public class NotificationService {
     private final MediaRepository mediaRepository;
     private final BowelEventRepository bowelEventRepository;
     private final LedgerSnapshotRepository ledgerSnapshotRepository;
+    private final AlbumRepository albumRepository;
 
     public NotificationService(
             CommentRepository commentRepository,
@@ -68,7 +71,8 @@ public class NotificationService {
             UserRepository userRepository,
             MediaRepository mediaRepository,
             BowelEventRepository bowelEventRepository,
-            LedgerSnapshotRepository ledgerSnapshotRepository
+            LedgerSnapshotRepository ledgerSnapshotRepository,
+            AlbumRepository albumRepository
     ) {
         this.commentRepository = commentRepository;
         this.postRepository = postRepository;
@@ -79,6 +83,7 @@ public class NotificationService {
         this.mediaRepository = mediaRepository;
         this.bowelEventRepository = bowelEventRepository;
         this.ledgerSnapshotRepository = ledgerSnapshotRepository;
+        this.albumRepository = albumRepository;
     }
 
     @Transactional(readOnly = true)
@@ -151,11 +156,34 @@ public class NotificationService {
         List<BowelEventEntity> bowelEvents = bowelEventRepository.findTop50ByLibraryIdOrderByOccurredAtMillisDesc(libraryId);
         LedgerSnapshotEntity ledgerSnapshot = ledgerSnapshotRepository.findByLibraryId(libraryId).orElse(null);
 
+        // Filter out posts belonging to life-console albums (人物痕迹, 吃饭, etc.).
+        // These albums have includeInPhotoFeed=false and their own FCM push flow
+        // via LifeConsoleService.notifyLifeConsoleChanged(). Generating a "小相册有内容更新"
+        // notification for them causes wrong text and duplicates.
+        Set<String> lifeConsoleAlbumIds = new HashSet<>();
+        Set<String> postAlbumIds = posts.stream()
+                .map(PostEntity::getAlbumId)
+                .filter(id -> id != null && !id.isBlank())
+                .collect(Collectors.toSet());
+        if (!postAlbumIds.isEmpty()) {
+            albumRepository.findByLibraryIdAndIdIn(libraryId, postAlbumIds).stream()
+                    .filter(album -> Boolean.FALSE.equals(album.getIncludeInPhotoFeed()))
+                    .map(AlbumEntity::getId)
+                    .forEach(lifeConsoleAlbumIds::add);
+        }
+        List<PostEntity> photoFeedPosts = posts.stream()
+                .filter(post -> {
+                    String albumId = post.getAlbumId();
+                    if (albumId == null || albumId.isBlank()) return true;
+                    return !lifeConsoleAlbumIds.contains(albumId);
+                })
+                .toList();
+
         NotificationSupportContext context = buildSupportContext(libraryId, comments, posts, trashItems, uploadTasks, bowelEvents);
 
         List<NotificationEvent> events = new ArrayList<>();
         comments.forEach(comment -> events.addAll(toCommentEvents(comment, currentUser, context)));
-        posts.forEach(post -> events.add(toPostEvent(post, currentUser, context)));
+        photoFeedPosts.forEach(post -> events.add(toPostEvent(post, currentUser, context)));
         trashItems.forEach(item -> events.add(toTrashEvent(item, currentUser, context)));
         toUploadEvents(uploadTasks, currentUser, context).forEach(events::add);
         bowelEvents.forEach(event -> events.add(toBowelEventNotification(event, currentUser, context)));
@@ -484,6 +512,7 @@ public class NotificationService {
                 }));
         return tasksByOperation.values().stream()
                 .map(group -> toUploadOperationEvent(group, currentUser, context))
+                .filter(java.util.Objects::nonNull)
                 .sorted(Comparator.comparingLong(NotificationEvent::createdAtMillis).reversed())
                 .toList();
     }
@@ -497,6 +526,9 @@ public class NotificationService {
                 .sorted(Comparator.comparingLong(this::uploadTaskSortMillis).reversed())
                 .toList();
         UploadTaskEntity primary = sorted.get(0);
+        if ("LIFE_CONSOLE".equalsIgnoreCase(primary.getOperationType())) {
+            return null;
+        }
         long createdAtMillis = sorted.stream().mapToLong(this::uploadTaskSortMillis).max().orElse(0L);
         String operationId = emptyToNull(primary.getOperationId());
         int successCount = (int) sorted.stream().filter(task -> task.getState() == UploadState.SUCCESS).count();
@@ -710,18 +742,18 @@ public class NotificationService {
                 "bowel:" + event.getId(),
                 "content_update",
                 "life",
-                "ledger",
-                actorDesc.displayName() + "添加了生活记录",
-                timeLabel + " 新增一条记录",
+                "trace",
+                actorDesc.displayName() + "记录了今日痕迹",
+                timeLabel + " 记录了一次排便",
                 createdAtMillis,
                 actorDesc,
                 "bowel:" + event.getId(),
                 null,
                 1,
                 List.of(),
-                "life:console",
+                "life:bowel",
                 "今日痕迹",
-                "LIFE_LEDGER",
+                "LIFE_BOWEL",
                 null,
                 null,
                 null

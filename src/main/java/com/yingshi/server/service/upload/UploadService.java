@@ -648,6 +648,12 @@ public class UploadService {
         if (successfulTasks.isEmpty()) {
             return;
         }
+        // Skip photos push for life console uploads — life push is sent by LifeConsoleService instead
+        String operationType = completedTask.getOperationType();
+        if ("LIFE_CONSOLE".equals(operationType)) {
+            logger.debug("Skip photos push for LIFE_CONSOLE operation: operationId={}", operationId);
+            return;
+        }
         String operationKey = libraryId + ":" + (operationId == null ? completedTask.getId() : operationId);
         if (!notifiedUploadOperationKeys.add(operationKey)) {
             logger.debug("Skip duplicate upload operation push: {}", operationKey);
@@ -833,7 +839,7 @@ public class UploadService {
         }
         String value = normalized.trim().toUpperCase(Locale.ROOT);
         return switch (value) {
-            case "IMPORT_TO_APP", "CREATE_POST", "ADD_TO_EXISTING_POST" -> value;
+            case "IMPORT_TO_APP", "CREATE_POST", "ADD_TO_EXISTING_POST", "LIFE_CONSOLE" -> value;
             default -> throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "operationType is invalid.");
         };
     }

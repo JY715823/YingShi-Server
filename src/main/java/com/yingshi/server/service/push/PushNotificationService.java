@@ -17,6 +17,8 @@ import com.yingshi.server.dto.push.UpdatePushPreferenceRequest;
 import com.yingshi.server.repository.PushDeviceTokenRepository;
 import com.yingshi.server.repository.PushDeliveryAuditRepository;
 import com.yingshi.server.repository.PushPreferenceRepository;
+import com.yingshi.server.repository.UserRepository;
+import com.yingshi.server.domain.UserEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -51,6 +53,7 @@ public class PushNotificationService {
     private final PushDeliveryAuditRepository pushDeliveryAuditRepository;
     private final PushPreferenceRepository pushPreferenceRepository;
     private final PushMessageSender pushMessageSender;
+    private final UserRepository userRepository;
     private final boolean selfFallbackEnabled;
 
     public PushNotificationService(
@@ -58,12 +61,14 @@ public class PushNotificationService {
             PushDeliveryAuditRepository pushDeliveryAuditRepository,
             PushPreferenceRepository pushPreferenceRepository,
             PushMessageSender pushMessageSender,
+            UserRepository userRepository,
             @Value("${app.push.self-fallback-enabled:false}") boolean selfFallbackEnabled
     ) {
         this.pushDeviceTokenRepository = pushDeviceTokenRepository;
         this.pushDeliveryAuditRepository = pushDeliveryAuditRepository;
         this.pushPreferenceRepository = pushPreferenceRepository;
         this.pushMessageSender = pushMessageSender;
+        this.userRepository = userRepository;
         this.selfFallbackEnabled = selfFallbackEnabled;
     }
 
@@ -170,7 +175,8 @@ public class PushNotificationService {
             return;
         }
 
-        Map<String, String> data = lifeConsoleChangedData(libraryId, actorUserId, reason, category);
+        String actorDisplayName = resolveDisplayName(actorUserId);
+        Map<String, String> data = lifeConsoleChangedData(libraryId, actorUserId, reason, category, actorDisplayName);
         PushDeliveryResult result = pushMessageSender.sendDataMessage(resolution.targetTokens(), data);
         if (!result.invalidTokens().isEmpty()) {
             disableInvalidTokens(result.invalidTokens());
@@ -239,8 +245,16 @@ public class PushNotificationService {
         data.put("category", safeCategory);
         data.put("libraryId", libraryId);
         data.put("actorUserId", actorUserId);
-        data.put("title", title == null || title.isBlank() ? "照片模块有新提醒" : title.trim());
-        data.put("body", body == null || body.isBlank() ? "对方刚更新了照片内容。" : body.trim());
+        String actorDisplayName = resolveDisplayName(actorUserId);
+        data.put("actorDisplayName", actorDisplayName);
+        String resolvedTitle = title == null || title.isBlank() ? "照片模块有新提醒" : title.trim();
+        String resolvedBody = body == null || body.isBlank() ? "对方刚更新了照片内容。" : body.trim();
+        if (!actorDisplayName.isBlank()) {
+            resolvedTitle = resolvedTitle.replace("对方", actorDisplayName);
+            resolvedBody = resolvedBody.replace("对方", actorDisplayName);
+        }
+        data.put("title", resolvedTitle);
+        data.put("body", resolvedBody);
         data.put("targetRoute", safeRoute);
         data.put("occurredAtMillis", Long.toString(Instant.now().toEpochMilli()));
         if (notificationId != null && !notificationId.isBlank()) {
@@ -285,7 +299,7 @@ public class PushNotificationService {
                 .orElse(defaultPreferenceEnabled(safeModule, safeCategory));
     }
 
-    private Map<String, String> lifeConsoleChangedData(String libraryId, String actorUserId, String reason, String category) {
+    private Map<String, String> lifeConsoleChangedData(String libraryId, String actorUserId, String reason, String category, String actorDisplayName) {
         String safeReason = reason == null || reason.isBlank() ? "changed" : reason.trim();
         Map<String, String> data = new HashMap<>();
         data.put("type", LIFE_CONSOLE_CHANGED);
@@ -294,9 +308,10 @@ public class PushNotificationService {
         data.put("category", category);
         data.put("libraryId", libraryId);
         data.put("actorUserId", actorUserId);
+        data.put("actorDisplayName", actorDisplayName);
         data.put("reason", safeReason);
-        data.put("title", "今日痕迹有新更新");
-        data.put("body", lifePushBody(safeReason));
+        data.put("title", lifePushTitle(safeReason, actorDisplayName));
+        data.put("body", lifePushBody(safeReason, actorDisplayName));
         data.put("targetRoute", safeReason.startsWith("bowel_") ? "life:bowel" : "life:trace");
         data.put("occurredAtMillis", Long.toString(Instant.now().toEpochMilli()));
         return data;
@@ -347,13 +362,30 @@ public class PushNotificationService {
         };
     }
 
-    private String lifePushBody(String reason) {
+    private String lifePushTitle(String reason, String actorDisplayName) {
+        String name = actorDisplayName == null || actorDisplayName.isBlank() ? null : actorDisplayName.trim();
         return switch (normalizeKey(reason)) {
-            case "media_added" -> "对方刚把新的照片或视频放进今日痕迹。";
-            case "media_deleted" -> "对方整理了今日痕迹里的媒体。";
-            case "bowel_added" -> "对方记录了一次排便。";
-            case "bowel_deleted" -> "对方撤回了一条排便记录。";
-            default -> "对方刚更新了生活记录。";
+            case "person_media_added" -> name != null ? name + "添加了新的人物痕迹" : "人物痕迹有新更新";
+            case "person_media_deleted" -> name != null ? name + "整理了人物痕迹" : "人物痕迹有变更";
+            case "meal_media_added" -> name != null ? name + "添加了新的吃饭记录" : "吃饭有新记录";
+            case "meal_media_deleted" -> name != null ? name + "整理了吃饭记录" : "吃饭记录有变更";
+            case "bowel_added", "bowel_deleted" -> name != null ? name + "记录了今日痕迹" : "今日痕迹有新更新";
+            default -> name != null ? name + "更新了生活记录" : "今日痕迹有新更新";
+        };
+    }
+
+    private String lifePushBody(String reason, String actorDisplayName) {
+        String name = actorDisplayName == null || actorDisplayName.isBlank() ? null : actorDisplayName.trim();
+        return switch (normalizeKey(reason)) {
+            case "person_media_added" -> name != null ? name + "刚添加了新的人物痕迹。" : "对方刚添加了新的人物痕迹。";
+            case "person_media_deleted" -> name != null ? name + "整理了人物痕迹里的媒体。" : "对方整理了人物痕迹里的媒体。";
+            case "meal_media_added" -> name != null ? name + "刚添加了新的吃饭记录。" : "对方刚添加了新的吃饭记录。";
+            case "meal_media_deleted" -> name != null ? name + "整理了吃饭记录里的媒体。" : "对方整理了吃饭记录里的媒体。";
+            case "media_added" -> name != null ? name + "刚把新的照片或视频放进今日痕迹。" : "对方刚把新的照片或视频放进今日痕迹。";
+            case "media_deleted" -> name != null ? name + "整理了今日痕迹里的媒体。" : "对方整理了今日痕迹里的媒体。";
+            case "bowel_added" -> name != null ? name + "记录了一次排便。" : "对方记录了一次排便。";
+            case "bowel_deleted" -> name != null ? name + "撤回了一条排便记录。" : "对方撤回了一条排便记录。";
+            default -> name != null ? name + "刚更新了生活记录。" : "对方刚更新了生活记录。";
         };
     }
 
@@ -365,7 +397,7 @@ public class PushNotificationService {
         List<PushDeviceTokenEntity> partnerTokens = partnerDeviceTokens.stream()
                 .filter(token -> isPushEnabled(token.getUserId(), module, category))
                 .toList();
-        if (!partnerTokens.isEmpty() || !selfFallbackEnabled || !partnerDeviceTokens.isEmpty()) {
+        if (!partnerTokens.isEmpty()) {
             return new TokenResolution(
                     partnerTokens,
                     enabledTokens.size(),
@@ -375,37 +407,17 @@ public class PushNotificationService {
                     false
             );
         }
-        if (MODULE_PHOTOS.equals(module) && CATEGORY_PHOTOS_DELETE.equals(category)) {
-            return new TokenResolution(
-                    List.of(),
-                    enabledTokens.size(),
-                    partnerDeviceTokens.size(),
-                    partnerTokens.size(),
-                    0,
-                    false
-            );
-        }
-        List<PushDeviceTokenEntity> selfTokens = enabledTokens.stream()
-                .filter(token -> actorUserId.equals(token.getUserId()))
-                .filter(token -> isPushEnabled(token.getUserId(), module, category))
-                .toList();
-        if (!selfTokens.isEmpty()) {
-            log.info(
-                    "Using self push fallback for local verification: libraryId={}, actorUserId={}, module={}, category={}, devices={}",
-                    libraryId,
-                    actorUserId,
-                    module,
-                    category,
-                    selfTokens.size()
-            );
-        }
+        // No partner token available — do NOT fall back to self tokens.
+        // In a two-person shared app, notifying the actor about their own action
+        // is always wrong. The notification will be visible via sync when the
+        // partner comes online.
         return new TokenResolution(
-                selfTokens,
+                List.of(),
                 enabledTokens.size(),
                 partnerDeviceTokens.size(),
-                partnerTokens.size(),
-                selfTokens.size(),
-                !selfTokens.isEmpty()
+                0,
+                0,
+                false
         );
     }
 
@@ -499,6 +511,17 @@ public class PushNotificationService {
                 audit.getUsedSelfFallback(),
                 audit.getCreatedAt().toEpochMilli()
         );
+    }
+
+    private String resolveDisplayName(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return "";
+        }
+        return userRepository.findById(userId)
+                .map(UserEntity::getDisplayName)
+                .filter(name -> name != null && !name.isBlank())
+                .map(String::trim)
+                .orElse("");
     }
 
     private String normalizeKey(String value) {

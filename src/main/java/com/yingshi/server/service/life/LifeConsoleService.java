@@ -183,20 +183,22 @@ public class LifeConsoleService {
             albumRepository.save(album);
         }
 
-        notifyLifeConsoleChanged(libraryId, currentUser.userId(), "media_added");
+        notifyLifeConsoleChanged(libraryId, currentUser.userId(),
+                category.name().toLowerCase() + "_media_added");
         return getToday(today.toString(), DEFAULT_ZONE_ID, currentUser);
     }
 
     @Transactional
     public TrashItemDto deleteMedia(String mediaId, String rawCategory, AuthenticatedUser currentUser) {
-        LifeConsoleCategory.parse(rawCategory);
+        LifeConsoleCategory category = LifeConsoleCategory.parse(rawCategory);
         MediaEntity media = mediaRepository.findByIdAndLibraryIdAndDeletedAtIsNull(mediaId, currentUser.libraryId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Media was not found."));
         if (!currentUser.userId().equals(media.getRecordOwnerUserId())) {
             throw new ApiException(HttpStatus.FORBIDDEN, ErrorCode.FORBIDDEN, "You can only delete media from your own frame.");
         }
         TrashItemDto trashItem = trashService.systemDeleteMediaAllowingEmptySmallAlbums(mediaId, currentUser);
-        notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "media_deleted");
+        notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(),
+                category.name().toLowerCase() + "_media_deleted");
         return trashItem;
     }
 
