@@ -1,0 +1,65 @@
+# ============================================================
+# YingShi Production Docker Compose
+# ============================================================
+# Usage:
+#   1. Copy .env.example to .env and configure all variables
+#   2. Place SSL certs in ./nginx/certs/
+#   3. Copy nginx-https.conf to ./nginx/nginx.conf (edit server_name)
+#   4. docker compose -f docker-compose.prod.yml up -d
+#
+# This extends the base docker-compose.yml with an Nginx reverse
+# proxy that terminates HTTPS and adds security headers.
+# ============================================================
+
+services:
+  # ---- Nginx HTTPS Reverse Proxy ----
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/certs:/etc/letsencrypt:ro
+    depends_on:
+      server:
+        condition: service_healthy
+    networks:
+      - yingshi-net
+
+  # ---- Base services (extended from docker-compose.yml) ----
+  postgres:
+    extends:
+      file: docker-compose.yml
+      service: postgres
+    networks:
+      - yingshi-net
+
+  minio:
+    extends:
+      file: docker-compose.yml
+      service: minio
+    networks:
+      - yingshi-net
+
+  minio-init:
+    extends:
+      file: docker-compose.yml
+      service: minio-init
+    networks:
+      - yingshi-net
+
+  server:
+    extends:
+      file: docker-compose.yml
+      service: server
+    # Bind to localhost only - Nginx handles external access
+    ports:
+      - "127.0.0.1:${SERVER_HOST_PORT:-8080}:8080"
+    networks:
+      - yingshi-net
+
+networks:
+  yingshi-net:
+    driver: bridge

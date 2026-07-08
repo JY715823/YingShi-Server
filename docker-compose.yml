@@ -9,7 +9,7 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-15432}:5432"
     volumes:
-      - E:/Study/App/YingShi_Storage/postgres-data:/var/lib/postgresql/data
+      - ${STORAGE_HOST_PATH:-E:/Study/App/YingShi_Storage}/postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-yingshi} -d ${POSTGRES_DB:-yingshi}"]
       interval: 10s
@@ -25,10 +25,10 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-yingshi_minio_access}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-yingshi_minio_secret}
     ports:
-      - "9000:9000"
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
       - "127.0.0.1:9001:9001"
     volumes:
-      - E:/Study/App/YingShi_Storage/minio-data:/data
+      - ${STORAGE_HOST_PATH:-E:/Study/App/YingShi_Storage}/minio-data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
@@ -87,6 +87,8 @@ services:
       STORAGE_DIRECT_UPLOAD_PUBLIC_ENDPOINT: ${STORAGE_DIRECT_UPLOAD_PUBLIC_ENDPOINT:-}
       STORAGE_FORCE_PATH_STYLE: ${STORAGE_FORCE_PATH_STYLE:-true}
       APP_AUTH_JWT_SECRET: ${APP_AUTH_JWT_SECRET:-change-me-to-a-long-dev-secret-at-least-32-characters}
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-}
+      APP_PRODUCTION_SAFETY_ENABLED: ${APP_PRODUCTION_SAFETY_ENABLED:-false}
       AUTH_MAIL_ENABLED: ${AUTH_MAIL_ENABLED:-true}
       AUTH_MAIL_HOST: ${AUTH_MAIL_HOST:-smtp.qq.com}
       AUTH_MAIL_PORT: ${AUTH_MAIL_PORT:-587}
@@ -108,10 +110,11 @@ services:
       FCM_SERVICE_ACCOUNT_PATH: ${FCM_SERVICE_ACCOUNT_PATH:-}
       FCM_SERVICE_ACCOUNT_JSON_BASE64: ${FCM_SERVICE_ACCOUNT_JSON_BASE64:-}
       PUSH_SELF_FALLBACK_ENABLED: ${PUSH_SELF_FALLBACK_ENABLED:-false}
-      HTTP_PROXY: ${HTTP_PROXY:-http://host.docker.internal:7897}
-      HTTPS_PROXY: ${HTTPS_PROXY:-http://host.docker.internal:7897}
-      NO_PROXY: localhost,127.0.0.1,postgres,minio
-      JAVA_TOOL_OPTIONS: "-Dhttp.proxyHost=host.docker.internal -Dhttp.proxyPort=7897 -Dhttps.proxyHost=host.docker.internal -Dhttps.proxyPort=7897 -Dhttp.nonProxyHosts=localhost|127.0.0.1|postgres|minio"
+      # 代理软依赖化：默认不走代理（直连 FCM）；用户需要时在 .env 设置 JAVA_TOOL_OPTIONS / HTTP_PROXY
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres,minio}
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:-}
       SERVER_PORT: ${SERVER_PORT:-8080}
     ports:
       - "${SERVER_HOST_PORT:-8080}:8080"

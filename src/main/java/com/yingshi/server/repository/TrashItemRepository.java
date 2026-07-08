@@ -6,6 +6,8 @@ import com.yingshi.server.domain.TrashItemType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
@@ -24,7 +26,8 @@ public interface TrashItemRepository extends JpaRepository<TrashItemEntity, Stri
             Pageable pageable
     );
 
-    List<TrashItemEntity> findByLibraryIdAndStateOrderByDeletedAtDesc(String libraryId, TrashItemState state);
+    @Query("SELECT t FROM TrashItemEntity t WHERE t.libraryId = :libraryId AND t.state = :state ORDER BY t.deletedAt DESC")
+    List<TrashItemEntity> findByLibraryIdAndStateOrderByDeletedAtDesc(@Param("libraryId") String libraryId, @Param("state") TrashItemState state);
 
     List<TrashItemEntity> findByLibraryIdAndStateAndItemType(
             String libraryId,
@@ -34,7 +37,9 @@ public interface TrashItemRepository extends JpaRepository<TrashItemEntity, Stri
 
     List<TrashItemEntity> findByLibraryIdOrderByUpdatedAtDesc(String libraryId);
 
-    Optional<TrashItemEntity> findFirstByLibraryIdOrderByUpdatedAtDesc(String libraryId);
+    @Query("SELECT MAX(t.updatedAt) FROM TrashItemEntity t WHERE t.libraryId = :libraryId")
+    Optional<Instant> findLatestUpdatedAtByLibraryId(@Param("libraryId") String libraryId);
 
-    List<TrashItemEntity> findByStateAndUndoDeadlineAtBeforeOrderByUndoDeadlineAtAsc(TrashItemState state, Instant undoDeadlineAt);
+    @Query("SELECT t FROM TrashItemEntity t WHERE t.state = :state AND t.undoDeadlineAt < :undoDeadlineAt ORDER BY t.undoDeadlineAt ASC")
+    List<TrashItemEntity> findByStateAndUndoDeadlineAtBeforeOrderByUndoDeadlineAtAsc(@Param("state") TrashItemState state, @Param("undoDeadlineAt") Instant undoDeadlineAt);
 }

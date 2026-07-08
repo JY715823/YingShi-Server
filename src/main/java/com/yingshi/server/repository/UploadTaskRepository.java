@@ -61,5 +61,8 @@ public interface UploadTaskRepository extends JpaRepository<UploadTaskEntity, St
             @Param("operationType") String operationType
     );
 
+    @Query("SELECT MAX(t.updatedAt) FROM UploadTaskEntity t WHERE t.libraryId = :libraryId")
+    Optional<Instant> findLatestUpdatedAtByLibraryId(@Param("libraryId") String libraryId);
+
     List<UploadTaskEntity> findByStateAndExpireAtBeforeOrderByExpireAtAsc(UploadState state, Instant cutoff);
 }

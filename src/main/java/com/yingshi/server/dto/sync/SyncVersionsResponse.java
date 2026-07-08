@@ -6,6 +6,7 @@ public record SyncVersionsResponse(
         long trashVersion,
         long notificationVersion,
         long lifeConsoleVersion,
+        long chatVersion,
         long serverTimeMillis
 ) {
 }

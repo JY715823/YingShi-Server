@@ -40,6 +40,7 @@ public class MediaService {
 
     private static final int DEFAULT_FEED_PAGE_SIZE = 60;
     private static final int MAX_FEED_PAGE_SIZE = 120;
+    private static final int FEED_OVER_FETCH_MARGIN = 60;
     private final MediaRepository mediaRepository;
     private final PostMediaRepository postMediaRepository;
     private final PostRepository postRepository;
@@ -135,27 +136,95 @@ public class MediaService {
         return results;
     }
 
+    @Transactional(readOnly = true)
     public MediaFeedPage getMediaFeedPage(AuthenticatedUser currentUser, String cursor, Integer pageSize) {
         int normalizedPageSize = normalizePageSize(pageSize);
-        List<MediaDto> allItems = getMediaFeed(currentUser);
-        if (allItems.isEmpty()) {
-            return new MediaFeedPage(List.of(), null, false, normalizedPageSize);
-        }
-
         Cursor decodedCursor = decodeCursor(cursor);
-        int startIndex = decodedCursor == null ? 0 : indexAfterCursor(allItems, decodedCursor);
-        if (startIndex >= allItems.size()) {
+
+        Long cursorDisplayTime = decodedCursor != null ? decodedCursor.displayTimeMillis() : null;
+        String cursorMediaId = decodedCursor != null ? decodedCursor.mediaId() : null;
+
+        int fetchLimit = normalizedPageSize + FEED_OVER_FETCH_MARGIN;
+        List<MediaEntity> mediaBatch = mediaRepository.findFeedPage(
+                currentUser.libraryId(),
+                cursorDisplayTime,
+                cursorMediaId,
+                org.springframework.data.domain.PageRequest.of(0, fetchLimit,
+                        org.springframework.data.domain.Sort.by(
+                                org.springframework.data.domain.Sort.Order.desc("displayTimeMillis"),
+                                org.springframework.data.domain.Sort.Order.asc("id")
+                        ))
+        );
+
+        if (mediaBatch.isEmpty()) {
             return new MediaFeedPage(List.of(), null, false, normalizedPageSize);
         }
 
-        int endExclusive = Math.min(startIndex + normalizedPageSize, allItems.size());
-        List<MediaDto> pageItems = allItems.subList(startIndex, endExclusive);
-        boolean hasMore = endExclusive < allItems.size();
-        String nextCursor = hasMore && !pageItems.isEmpty()
-                ? encodeCursor(pageItems.get(pageItems.size() - 1))
-                : null;
+        String libraryId = currentUser.libraryId();
+        List<String> batchMediaIds = mediaBatch.stream().map(MediaEntity::getId).toList();
 
-        return new MediaFeedPage(pageItems, nextCursor, hasMore, normalizedPageSize);
+        Map<String, PostEntity> activePostsById = postRepository
+                .findByLibraryIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(libraryId)
+                .stream()
+                .collect(Collectors.toMap(PostEntity::getId, post -> post));
+        Set<String> albumIds = activePostsById.values().stream().map(PostEntity::getAlbumId).collect(Collectors.toSet());
+        Map<String, AlbumEntity> albumsById = albumIds.isEmpty()
+                ? Map.of()
+                : albumRepository.findByLibraryIdAndIdIn(libraryId, albumIds)
+                .stream()
+                .collect(Collectors.toMap(AlbumEntity::getId, album -> album));
+
+        Set<String> activeRelatedMediaIds = new HashSet<>();
+        Map<String, List<String>> postIdsByMediaId = new LinkedHashMap<>();
+        for (PostMediaEntity relation : postMediaRepository.findByLibraryIdAndMediaIdIn(libraryId, batchMediaIds)) {
+            PostEntity post = activePostsById.get(relation.getPostId());
+            if (post == null) {
+                continue;
+            }
+            activeRelatedMediaIds.add(relation.getMediaId());
+            AlbumEntity album = albumsById.get(post.getAlbumId());
+            if (album != null && !Boolean.TRUE.equals(album.getIncludeInPhotoFeed())) {
+                continue;
+            }
+            postIdsByMediaId.computeIfAbsent(relation.getMediaId(), key -> new ArrayList<>());
+            List<String> postIds = postIdsByMediaId.get(relation.getMediaId());
+            if (!postIds.contains(relation.getPostId())) {
+                postIds.add(relation.getPostId());
+            }
+        }
+
+        LinkedHashMap<String, DeduplicatedFeedEntry> deduplicatedEntries = new LinkedHashMap<>();
+        for (MediaEntity media : mediaBatch) {
+            List<String> postIds = postIdsByMediaId.getOrDefault(media.getId(), List.of());
+            boolean hasAnyActivePostRelation = activeRelatedMediaIds.contains(media.getId());
+            if (!isRenderableMedia(media, postIds, hasAnyActivePostRelation)) {
+                continue;
+            }
+            String deduplicationKey = feedDeduplicationKey(media);
+            deduplicatedEntries
+                    .computeIfAbsent(deduplicationKey, ignored -> new DeduplicatedFeedEntry(media, postIds, hasAnyActivePostRelation))
+                    .merge(media, postIds, hasAnyActivePostRelation);
+        }
+
+        List<DeduplicatedFeedEntry> allDedupEntries = new ArrayList<>(deduplicatedEntries.values());
+        boolean hasMoreInBatch = allDedupEntries.size() > normalizedPageSize;
+        List<DeduplicatedFeedEntry> pageEntries = hasMoreInBatch
+                ? allDedupEntries.subList(0, normalizedPageSize)
+                : allDedupEntries;
+
+        List<MediaDto> results = new ArrayList<>();
+        for (DeduplicatedFeedEntry entry : pageEntries) {
+            results.add(contentMapper.toMediaDto(entry.representativeMedia(), entry.visiblePostIds()));
+        }
+
+        boolean hasMore = hasMoreInBatch || mediaBatch.size() >= fetchLimit;
+        String nextCursor = null;
+        if (hasMore && !results.isEmpty()) {
+            MediaDto lastItem = results.get(results.size() - 1);
+            nextCursor = encodeCursor(lastItem.displayTimeMillis(), lastItem.mediaId());
+        }
+
+        return new MediaFeedPage(results, nextCursor, hasMore, normalizedPageSize);
     }
 
     public List<MediaImportStatusDto> getImportStatus(AuthenticatedUser currentUser, List<String> sourceFingerprints) {
@@ -392,27 +461,15 @@ public class MediaService {
         return Math.min(pageSize, MAX_FEED_PAGE_SIZE);
     }
 
-    private int indexAfterCursor(List<MediaDto> items, Cursor cursor) {
-        for (int index = 0; index < items.size(); index++) {
-            MediaDto item = items.get(index);
-            if (item.displayTimeMillis().equals(cursor.displayTimeMillis()) && item.mediaId().equals(cursor.mediaId())) {
-                return index + 1;
-            }
-        }
-        for (int index = 0; index < items.size(); index++) {
-            MediaDto item = items.get(index);
-            if (item.displayTimeMillis() < cursor.displayTimeMillis()) {
-                return index;
-            }
-            if (item.displayTimeMillis().equals(cursor.displayTimeMillis()) && item.mediaId().compareTo(cursor.mediaId()) > 0) {
-                return index;
-            }
-        }
-        return items.size();
-    }
-
     private String encodeCursor(MediaDto item) {
         String rawCursor = item.displayTimeMillis() + "|" + item.mediaId();
+        return Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(rawCursor.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String encodeCursor(long displayTimeMillis, String mediaId) {
+        String rawCursor = displayTimeMillis + "|" + mediaId;
         return Base64.getUrlEncoder()
                 .withoutPadding()
                 .encodeToString(rawCursor.getBytes(StandardCharsets.UTF_8));

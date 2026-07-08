@@ -3,6 +3,7 @@ package com.yingshi.server.service.auth;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
+import com.yingshi.server.config.AuthAccountLockoutProperties;
 import com.yingshi.server.domain.SharedLibraryEntity;
 import com.yingshi.server.domain.SharedLibraryMemberEntity;
 import com.yingshi.server.domain.UserEntity;
@@ -50,6 +51,7 @@ public class AuthService {
     private final AuthLoginChallengeService authLoginChallengeService;
     private final AuthRememberedLoginService authRememberedLoginService;
     private final LocalMediaStorageService localMediaStorageService;
+    private final AuthAccountLockoutProperties accountLockoutProperties;
 
     public AuthService(
             UserRepository userRepository,
@@ -60,7 +62,8 @@ public class AuthService {
             AuthSessionService authSessionService,
             AuthLoginChallengeService authLoginChallengeService,
             AuthRememberedLoginService authRememberedLoginService,
-            LocalMediaStorageService localMediaStorageService
+            LocalMediaStorageService localMediaStorageService,
+            AuthAccountLockoutProperties accountLockoutProperties
     ) {
         this.userRepository = userRepository;
         this.libraryRepository = libraryRepository;
@@ -71,6 +74,7 @@ public class AuthService {
         this.authLoginChallengeService = authLoginChallengeService;
         this.authRememberedLoginService = authRememberedLoginService;
         this.localMediaStorageService = localMediaStorageService;
+        this.accountLockoutProperties = accountLockoutProperties;
     }
 
     @Transactional
@@ -78,10 +82,14 @@ public class AuthService {
         UserEntity user = userRepository.findByAccount(normalizeAccount(request.account()))
                 .orElseThrow(() -> invalidCredentials());
 
+        requireAccountNotLocked(user);
+
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+            recordFailedLogin(user);
             throw invalidCredentials();
         }
 
+        resetFailedLoginAttempts(user);
         return authLoginChallengeService.issueChallenge(user);
     }
 
@@ -126,9 +134,15 @@ public class AuthService {
     public AuthLoginResponse loginWithRememberedDevice(AuthRememberedLoginRequest request) {
         UserEntity user = userRepository.findByAccount(normalizeAccount(request.account()))
                 .orElseThrow(this::invalidCredentials);
+
+        requireAccountNotLocked(user);
+
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+            recordFailedLogin(user);
             throw invalidCredentials();
         }
+
+        resetFailedLoginAttempts(user);
         AuthRememberedLoginGrant rememberedLoginGrant = authRememberedLoginService.authenticate(
                 user,
                 request.deviceId(),
@@ -379,5 +393,39 @@ public class AuthService {
                 ErrorCode.AUTH_INVALID_CREDENTIALS,
                 "Invalid account or password."
         );
+    }
+
+    private void requireAccountNotLocked(UserEntity user) {
+        if (!accountLockoutProperties.isEnabled()) {
+            return;
+        }
+        Instant lockedUntil = user.getLockedUntil();
+        if (lockedUntil != null && lockedUntil.isAfter(Instant.now())) {
+            throw new ApiException(
+                    HttpStatus.TOO_MANY_REQUESTS,
+                    ErrorCode.AUTH_ACCOUNT_LOCKED,
+                    "Account is temporarily locked due to too many failed login attempts."
+            );
+        }
+    }
+
+    private void recordFailedLogin(UserEntity user) {
+        if (!accountLockoutProperties.isEnabled()) {
+            return;
+        }
+        int attempts = user.getFailedLoginAttempts() + 1;
+        user.setFailedLoginAttempts(attempts);
+        if (attempts >= accountLockoutProperties.getMaxAttempts()) {
+            user.setLockedUntil(Instant.now().plus(accountLockoutProperties.getLockDuration()));
+        }
+        userRepository.save(user);
+    }
+
+    private void resetFailedLoginAttempts(UserEntity user) {
+        if (user.getFailedLoginAttempts() > 0 || user.getLockedUntil() != null) {
+            user.setFailedLoginAttempts(0);
+            user.setLockedUntil(null);
+            userRepository.save(user);
+        }
     }
 }

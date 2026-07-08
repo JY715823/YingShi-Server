@@ -65,10 +65,13 @@ public class AlbumService {
     public List<AlbumDto> listAlbums(AuthenticatedUser currentUser) {
         String libraryId = currentUser.libraryId();
         List<AlbumEntity> albums = albumRepository.findByLibraryIdAndDeletedAtIsNullOrderByTitleAsc(libraryId);
-        Map<String, Long> postCountByAlbumId = postRepository
-                .findByLibraryIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(libraryId)
+
+        Map<String, Long> postCountByAlbumId = postRepository.countActivePostsGroupByAlbumId(libraryId)
                 .stream()
-                .collect(Collectors.groupingBy(PostEntity::getAlbumId, Collectors.counting()));
+                .collect(Collectors.toMap(
+                        row -> (String) row[0],
+                        row -> (Long) row[1]
+                ));
 
         List<AlbumDto> results = new ArrayList<>();
         for (AlbumEntity album : albums) {
@@ -113,10 +116,10 @@ public class AlbumService {
         album.setTitle(request.title().trim());
         album.setSubtitle(request.subtitle() == null ? "" : request.subtitle().trim());
         albumRepository.save(album);
-        long smallAlbumCount = postRepository.findByLibraryIdAndAlbumIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(
+        long smallAlbumCount = postRepository.countByLibraryIdAndAlbumIdAndDeletedAtIsNull(
                 currentUser.libraryId(),
                 album.getId()
-        ).size();
+        );
         return contentMapper.toAlbumDto(album, smallAlbumCount);
     }
 

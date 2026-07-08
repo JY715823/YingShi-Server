@@ -11,6 +11,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.data.domain.PageRequest;
 
 import java.util.List;
 
@@ -45,7 +46,7 @@ public class VideoCoverWarmupInitializer {
             return;
         }
 
-        List<MediaEntity> videos = mediaRepository.findTop200ByMediaTypeAndDeletedAtIsNullOrderByUpdatedAtDesc(MediaType.VIDEO);
+        List<MediaEntity> videos = mediaRepository.findTop200RecentByMediaType(MediaType.VIDEO, PageRequest.of(0, 200));
         int warmedCount = 0;
         int skippedCount = 0;
         for (MediaEntity media : videos) {

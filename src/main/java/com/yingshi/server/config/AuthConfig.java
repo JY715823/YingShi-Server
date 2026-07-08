@@ -15,6 +15,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
         AuthLoginCodeProperties.class,
         AuthRememberedLoginProperties.class,
         AuthMailProperties.class,
+        AuthRateLimitProperties.class,
+        AuthAccountLockoutProperties.class,
         StorageProperties.class,
         FcmProperties.class
 })

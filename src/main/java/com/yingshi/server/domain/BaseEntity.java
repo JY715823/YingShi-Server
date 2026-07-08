@@ -32,7 +32,7 @@ public abstract class BaseEntity {
         return createdAt;
     }
 
-    protected void setCreatedAt(Instant createdAt) {
+    public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
     }
 
@@ -40,7 +40,7 @@ public abstract class BaseEntity {
         return updatedAt;
     }
 
-    protected void setUpdatedAt(Instant updatedAt) {
+    public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
     }
 }

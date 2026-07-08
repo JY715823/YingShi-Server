@@ -63,6 +63,7 @@ public class LocalObjectStorageService implements ObjectStorageService {
                 Files.copy(digestInputStream, targetPath, StandardCopyOption.REPLACE_EXISTING);
             }
             String checksum = HexFormat.of().formatHex(digest.digest());
+            writeChecksumSidecar(targetPath, checksum);
             long actualSizeBytes = Files.size(targetPath);
             return new ObjectMetadata(
                     normalizedObjectKey,
@@ -128,7 +129,11 @@ public class LocalObjectStorageService implements ObjectStorageService {
     public boolean delete(String objectKey) {
         Path path = resolveObjectPath(normalizeObjectKey(objectKey));
         try {
-            return Files.deleteIfExists(path);
+            boolean deleted = Files.deleteIfExists(path);
+            if (deleted) {
+                Files.deleteIfExists(checksumSidecarPath(path));
+            }
+            return deleted;
         } catch (IOException exception) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to delete storage object.");
         }
@@ -146,7 +151,7 @@ public class LocalObjectStorageService implements ObjectStorageService {
                     normalizedObjectKey,
                     normalizeContentType(Files.probeContentType(path)),
                     Files.size(path),
-                    checksum(path),
+                    readChecksumSidecar(path),
                     Files.getLastModifiedTime(path).toMillis()
             ));
         } catch (IOException exception) {
@@ -172,7 +177,41 @@ public class LocalObjectStorageService implements ObjectStorageService {
         return path.toString().replace(FileSystems.getDefault().getSeparator(), "/");
     }
 
-    private String checksum(Path path) throws IOException {
+    private Path checksumSidecarPath(Path dataPath) {
+        return dataPath.resolveSibling(dataPath.getFileName().toString() + ".sha256");
+    }
+
+    private String readChecksumSidecar(Path dataPath) throws IOException {
+        Path sidecar = checksumSidecarPath(dataPath);
+        if (Files.isRegularFile(sidecar)) {
+            String cached = Files.readString(sidecar).trim();
+            if (isValidSha256(cached)) {
+                return cached;
+            }
+            // Sidecar exists but contains invalid data — remove and recompute
+            Files.deleteIfExists(sidecar);
+        }
+        // Sidecar missing or invalid — compute and cache
+        String computed = computeChecksum(dataPath);
+        writeChecksumSidecar(dataPath, computed);
+        return computed;
+    }
+
+    private static boolean isValidSha256(String value) {
+        if (value == null || value.length() != 64) return false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        }
+        return true;
+    }
+
+    private void writeChecksumSidecar(Path dataPath, String checksum) throws IOException {
+        Path sidecar = checksumSidecarPath(dataPath);
+        Files.writeString(sidecar, checksum);
+    }
+
+    private String computeChecksum(Path path) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             try (InputStream inputStream = Files.newInputStream(path);

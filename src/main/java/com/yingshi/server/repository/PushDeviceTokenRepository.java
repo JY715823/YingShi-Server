@@ -17,4 +17,8 @@ public interface PushDeviceTokenRepository extends JpaRepository<PushDeviceToken
     long countByLibraryIdAndEnabledTrue(String libraryId);
 
     long countByLibraryIdAndUserIdAndEnabledTrue(String libraryId, String userId);
+
+    List<PushDeviceTokenEntity> findByEnabledTrueAndLastSeenAtMillisBefore(long threshold);
+
+    List<PushDeviceTokenEntity> findByLastSeenAtMillisBefore(long threshold);
 }

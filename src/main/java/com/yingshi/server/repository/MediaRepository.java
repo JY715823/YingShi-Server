@@ -3,7 +3,10 @@ package com.yingshi.server.repository;
 import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.domain.MediaType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -22,34 +25,90 @@ public interface MediaRepository extends JpaRepository<MediaEntity, String> {
 
     List<MediaEntity> findByLibraryIdAndIdInAndDeletedAtIsNull(String libraryId, Collection<String> ids);
 
-    Optional<MediaEntity> findFirstByLibraryIdAndSourceFingerprintAndDeletedAtIsNull(String libraryId, String sourceFingerprint);
+    @Query("SELECT m FROM MediaEntity m WHERE m.libraryId = :libraryId AND m.sourceFingerprint = :sourceFingerprint AND m.deletedAt IS NULL")
+    Optional<MediaEntity> findFirstByLibraryIdAndSourceFingerprintAndDeletedAtIsNull(@Param("libraryId") String libraryId, @Param("sourceFingerprint") String sourceFingerprint);
 
-    List<MediaEntity> findByLibraryIdAndSourceFingerprintInAndDeletedAtIsNull(String libraryId, Collection<String> sourceFingerprints);
+    @Query("SELECT m FROM MediaEntity m WHERE m.libraryId = :libraryId AND m.sourceFingerprint IN :fingerprints AND m.deletedAt IS NULL")
+    List<MediaEntity> findByLibraryIdAndSourceFingerprintInAndDeletedAtIsNull(@Param("libraryId") String libraryId, @Param("fingerprints") Collection<String> sourceFingerprints);
 
-    List<MediaEntity> findTop200ByMediaTypeAndDeletedAtIsNullOrderByUpdatedAtDesc(MediaType mediaType);
+    @Query("""
+            SELECT m FROM MediaEntity m
+            WHERE m.mediaType = :mediaType AND m.deletedAt IS NULL
+            ORDER BY m.updatedAt DESC
+            """)
+    List<MediaEntity> findTop200RecentByMediaType(@Param("mediaType") MediaType mediaType,
+                                                  org.springframework.data.domain.Pageable pageable);
 
-    Optional<MediaEntity> findTopByLibraryIdAndDeletedAtIsNullOrderByUpdatedAtDesc(String libraryId);
+    @Query("SELECT m FROM MediaEntity m WHERE m.libraryId = :libraryId AND m.deletedAt IS NULL ORDER BY m.updatedAt DESC")
+    Optional<MediaEntity> findTopByLibraryIdAndDeletedAtIsNullOrderByUpdatedAtDesc(@Param("libraryId") String libraryId,
+                                                                                  org.springframework.data.domain.Pageable pageable);
 
-    Optional<MediaEntity> findTopByLibraryIdOrderByUpdatedAtDesc(String libraryId);
+    @Query("SELECT m FROM MediaEntity m WHERE m.libraryId = :libraryId ORDER BY m.updatedAt DESC")
+    Optional<MediaEntity> findTopByLibraryIdOrderByUpdatedAtDesc(@Param("libraryId") String libraryId,
+                                                                 org.springframework.data.domain.Pageable pageable);
 
-    Optional<MediaEntity> findFirstByLibraryIdAndMediaTypeAndMimeTypeAndSizeBytesAndDisplayTimeMillisAndWidthAndHeightAndDurationMillisAndDeletedAtIsNull(
-            String libraryId,
-            com.yingshi.server.domain.MediaType mediaType,
-            String mimeType,
-            Long sizeBytes,
-            Long displayTimeMillis,
-            Integer width,
-            Integer height,
-            Long durationMillis
+    @Query("""
+            SELECT m FROM MediaEntity m
+            WHERE m.libraryId = :libraryId
+              AND m.mediaType = :mediaType
+              AND m.mimeType = :mimeType
+              AND m.sizeBytes = :sizeBytes
+              AND m.displayTimeMillis = :displayTimeMillis
+              AND m.width = :width
+              AND m.height = :height
+              AND m.durationMillis IS NULL
+              AND m.deletedAt IS NULL
+            """)
+    Optional<MediaEntity> findDuplicateWithoutDuration(
+            @Param("libraryId") String libraryId,
+            @Param("mediaType") MediaType mediaType,
+            @Param("mimeType") String mimeType,
+            @Param("sizeBytes") Long sizeBytes,
+            @Param("displayTimeMillis") Long displayTimeMillis,
+            @Param("width") Integer width,
+            @Param("height") Integer height
     );
 
-    Optional<MediaEntity> findFirstByLibraryIdAndMediaTypeAndMimeTypeAndSizeBytesAndDisplayTimeMillisAndWidthAndHeightAndDurationMillisIsNullAndDeletedAtIsNull(
-            String libraryId,
-            com.yingshi.server.domain.MediaType mediaType,
-            String mimeType,
-            Long sizeBytes,
-            Long displayTimeMillis,
-            Integer width,
-            Integer height
+    @Query("""
+            SELECT m FROM MediaEntity m
+            WHERE m.libraryId = :libraryId
+              AND m.mediaType = :mediaType
+              AND m.mimeType = :mimeType
+              AND m.sizeBytes = :sizeBytes
+              AND m.displayTimeMillis = :displayTimeMillis
+              AND m.width = :width
+              AND m.height = :height
+              AND m.durationMillis = :durationMillis
+              AND m.deletedAt IS NULL
+            """)
+    Optional<MediaEntity> findDuplicateWithDuration(
+            @Param("libraryId") String libraryId,
+            @Param("mediaType") MediaType mediaType,
+            @Param("mimeType") String mimeType,
+            @Param("sizeBytes") Long sizeBytes,
+            @Param("displayTimeMillis") Long displayTimeMillis,
+            @Param("width") Integer width,
+            @Param("height") Integer height,
+            @Param("durationMillis") Long durationMillis
     );
+
+    @Query("SELECT MAX(m.updatedAt) FROM MediaEntity m WHERE m.libraryId = :libraryId")
+    Optional<Instant> findLatestUpdatedAtByLibraryId(@Param("libraryId") String libraryId);
+
+    @Query("SELECT MAX(m.updatedAt) FROM MediaEntity m WHERE m.libraryId = :libraryId AND m.deletedAt IS NULL")
+    Optional<Instant> findLatestUpdatedAtByLibraryIdAndDeletedAtIsNull(@Param("libraryId") String libraryId);
+
+    @Query("""
+            SELECT m FROM MediaEntity m
+            WHERE m.libraryId = :libraryId
+              AND m.deletedAt IS NULL
+              AND (:cursorDisplayTime IS NULL
+                   OR m.displayTimeMillis < :cursorDisplayTime
+                   OR (m.displayTimeMillis = :cursorDisplayTime AND m.id > :cursorMediaId))
+            ORDER BY m.displayTimeMillis DESC, m.id ASC
+            """)
+    List<MediaEntity> findFeedPage(@Param("libraryId") String libraryId,
+                                   @Param("cursorDisplayTime") Long cursorDisplayTime,
+                                   @Param("cursorMediaId") String cursorMediaId,
+                                   org.springframework.data.domain.Pageable pageable);
 }

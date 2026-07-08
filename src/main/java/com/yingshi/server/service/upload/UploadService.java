@@ -22,15 +22,12 @@ import com.yingshi.server.service.storage.ObjectKeyPolicy;
 import com.yingshi.server.service.storage.ObjectMetadata;
 import com.yingshi.server.service.storage.ObjectStorageService;
 import com.yingshi.server.service.storage.PresignedObjectUrl;
-import com.yingshi.server.service.push.PushNotificationService;
 import jakarta.persistence.EntityManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Duration;
@@ -38,10 +35,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 
 @Service
 public class UploadService {
@@ -51,9 +45,7 @@ public class UploadService {
     private static final int PREVIEW_MAX_DIMENSION = 1280;
     private static final int DEFAULT_HISTORY_PAGE_SIZE = 50;
     private static final int MAX_HISTORY_PAGE_SIZE = 200;
-    private static final long UPLOAD_OPERATION_NOTIFY_DELAY_MILLIS = 1800L;
     private static final Logger logger = LoggerFactory.getLogger(UploadService.class);
-    private final Set<String> notifiedUploadOperationKeys = ConcurrentHashMap.newKeySet();
 
     private final UploadTaskRepository uploadTaskRepository;
     private final MediaRepository mediaRepository;
@@ -61,7 +53,7 @@ public class UploadService {
     private final LocalMediaStorageService localMediaStorageService;
     private final ObjectStorageService objectStorageService;
     private final StorageProperties storageProperties;
-    private final PushNotificationService pushNotificationService;
+    private final UploadNotificationService uploadNotificationService;
     private final EntityManager entityManager;
 
     public UploadService(
@@ -71,7 +63,7 @@ public class UploadService {
             LocalMediaStorageService localMediaStorageService,
             ObjectStorageService objectStorageService,
             StorageProperties storageProperties,
-            PushNotificationService pushNotificationService,
+            UploadNotificationService uploadNotificationService,
             EntityManager entityManager
     ) {
         this.uploadTaskRepository = uploadTaskRepository;
@@ -80,7 +72,7 @@ public class UploadService {
         this.localMediaStorageService = localMediaStorageService;
         this.objectStorageService = objectStorageService;
         this.storageProperties = storageProperties;
-        this.pushNotificationService = pushNotificationService;
+        this.uploadNotificationService = uploadNotificationService;
         this.entityManager = entityManager;
     }
 
@@ -227,7 +219,7 @@ public class UploadService {
         if (duplicateMedia != null) {
             ensureUploadCanComplete(task, null, null);
             markTaskSuccessIfWaiting(task, duplicateMedia.getStoragePath(), duplicateMedia.getId(), null, null);
-            notifyUploadOperationIfCompleted(currentUser, task);
+            uploadNotificationService.notifyIfCompleted(currentUser.libraryId(), currentUser.userId(), task);
             MediaDto mediaDto = contentMapper.toMediaDto(duplicateMedia, List.of());
             return new UploadCompleteResponse(task.getId(), "success", mediaDto);
         }
@@ -262,7 +254,7 @@ public class UploadService {
         }
 
         markTaskSuccessIfWaiting(task, storedFile.storagePath(), media.getId(), storedFile.storagePath(), media);
-        notifyUploadOperationIfCompleted(currentUser, task);
+        uploadNotificationService.notifyIfCompleted(currentUser.libraryId(), currentUser.userId(), task);
 
         MediaDto mediaDto = contentMapper.toMediaDto(media, List.of());
         return new UploadCompleteResponse(task.getId(), "success", mediaDto);
@@ -306,7 +298,7 @@ public class UploadService {
                 ensureUploadCanComplete(task, objectKey, null);
                 deleteTaskStorageObject(objectKey);
                 markTaskSuccessIfWaiting(task, duplicateMedia.getStoragePath(), duplicateMedia.getId(), null, null);
-                notifyUploadOperationIfCompleted(currentUser, task);
+                uploadNotificationService.notifyIfCompleted(currentUser.libraryId(), currentUser.userId(), task);
                 return toUploadTaskResponse(task);
             }
 
@@ -333,7 +325,7 @@ public class UploadService {
             }
 
             markTaskSuccessIfWaiting(task, storedFile.storagePath(), media.getId(), objectKey, media);
-            notifyUploadOperationIfCompleted(currentUser, task);
+            uploadNotificationService.notifyIfCompleted(currentUser.libraryId(), currentUser.userId(), task);
         }
         return toUploadTaskResponse(task);
     }
@@ -408,7 +400,7 @@ public class UploadService {
         }
         if (task.getDurationMillis() == null) {
             return mediaRepository
-                    .findFirstByLibraryIdAndMediaTypeAndMimeTypeAndSizeBytesAndDisplayTimeMillisAndWidthAndHeightAndDurationMillisIsNullAndDeletedAtIsNull(
+                    .findDuplicateWithoutDuration(
                             task.getLibraryId(),
                             task.getMediaType(),
                             task.getMimeType(),
@@ -420,7 +412,7 @@ public class UploadService {
                     .orElse(null);
         }
         return mediaRepository
-                .findFirstByLibraryIdAndMediaTypeAndMimeTypeAndSizeBytesAndDisplayTimeMillisAndWidthAndHeightAndDurationMillisAndDeletedAtIsNull(
+                .findDuplicateWithDuration(
                         task.getLibraryId(),
                         task.getMediaType(),
                         task.getMimeType(),
@@ -591,138 +583,6 @@ public class UploadService {
                 metadata.checksum(),
                 metadata.sizeBytes()
         );
-    }
-
-    private void notifyUploadOperationIfCompleted(AuthenticatedUser currentUser, UploadTaskEntity completedTask) {
-        if (completedTask == null || completedTask.getState() != UploadState.SUCCESS) {
-            return;
-        }
-        String libraryId = currentUser.libraryId();
-        String actorUserId = currentUser.userId();
-        String operationId = normalizeNullable(completedTask.getOperationId());
-        String completedTaskId = completedTask.getId();
-        afterCommitAsync(() -> notifyUploadOperationIfCompletedAfterDelay(
-                libraryId,
-                actorUserId,
-                operationId,
-                completedTaskId
-        ));
-    }
-
-    private void notifyUploadOperationIfCompletedAfterDelay(
-            String libraryId,
-            String actorUserId,
-            String operationId,
-            String completedTaskId
-    ) {
-        List<UploadTaskEntity> operationTasks = operationId == null
-                ? uploadTaskRepository.findByIdAndLibraryId(completedTaskId, libraryId).map(List::of).orElse(List.of())
-                : uploadTaskRepository.findByLibraryIdAndOperationId(libraryId, operationId);
-        if (operationTasks.isEmpty()) {
-            return;
-        }
-        UploadTaskEntity completedTask = operationTasks.stream()
-                .filter(task -> completedTaskId.equals(task.getId()))
-                .findFirst()
-                .orElse(operationTasks.get(0));
-        if (completedTask.getState() != UploadState.SUCCESS) {
-            return;
-        }
-        int expectedCount = operationTasks.stream()
-                .map(UploadTaskEntity::getOperationMediaCount)
-                .filter(count -> count != null && count > 0)
-                .max(Integer::compareTo)
-                .orElse(operationTasks.size());
-        if (operationId != null && operationTasks.size() < expectedCount) {
-            return;
-        }
-        long finishedCount = operationTasks.stream()
-                .filter(task -> task.getState() == UploadState.SUCCESS || task.getState() == UploadState.CANCELLED || task.getState() == UploadState.FAILED)
-                .count();
-        if (expectedCount > 1 && finishedCount < expectedCount) {
-            return;
-        }
-        List<UploadTaskEntity> successfulTasks = operationTasks.stream()
-                .filter(task -> task.getState() == UploadState.SUCCESS)
-                .toList();
-        if (successfulTasks.isEmpty()) {
-            return;
-        }
-        // Skip photos push for life console uploads — life push is sent by LifeConsoleService instead
-        String operationType = completedTask.getOperationType();
-        if ("LIFE_CONSOLE".equals(operationType)) {
-            logger.debug("Skip photos push for LIFE_CONSOLE operation: operationId={}", operationId);
-            return;
-        }
-        String operationKey = libraryId + ":" + (operationId == null ? completedTask.getId() : operationId);
-        if (!notifiedUploadOperationKeys.add(operationKey)) {
-            logger.debug("Skip duplicate upload operation push: {}", operationKey);
-            return;
-        }
-        int imageCount = (int) successfulTasks.stream().filter(task -> task.getMediaType() == MediaType.IMAGE).count();
-        int videoCount = (int) successfulTasks.stream().filter(task -> task.getMediaType() == MediaType.VIDEO).count();
-        String mediaSummary = uploadMediaSummary(imageCount, videoCount);
-        String targetMediaId = successfulTasks.stream()
-                .map(UploadTaskEntity::getMediaId)
-                .filter(mediaId -> mediaId != null && !mediaId.isBlank())
-                .findFirst()
-                .orElse(completedTask.getMediaId());
-        String targetRoute = targetMediaId == null || targetMediaId.isBlank() ? "photos" : "photos:media:" + targetMediaId;
-        pushNotificationService.notifyPhotoChanged(
-                libraryId,
-                actorUserId,
-                PushNotificationService.CATEGORY_PHOTOS_CONTENT_UPDATE,
-                "照片内容有更新",
-                "对方刚导入了" + mediaSummary + "。",
-                targetRoute,
-                "upload:" + (operationId == null ? completedTask.getId() : operationId),
-                "upload:" + (operationId == null ? completedTask.getId() : operationId)
-        );
-    }
-
-    private void afterCommitAsync(Runnable action) {
-        Runnable asyncAction = () -> CompletableFuture.runAsync(() -> {
-            try {
-                if (UPLOAD_OPERATION_NOTIFY_DELAY_MILLIS > 0L) {
-                    TimeUnit.MILLISECONDS.sleep(UPLOAD_OPERATION_NOTIFY_DELAY_MILLIS);
-                }
-                action.run();
-            } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                logger.warn("Async upload completion side effect interrupted", exception);
-            } catch (Exception exception) {
-                logger.warn("Async upload completion side effect failed", exception);
-            }
-        }, CompletableFuture.delayedExecutor(0L, TimeUnit.MILLISECONDS));
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    asyncAction.run();
-                }
-            });
-            return;
-        }
-        asyncAction.run();
-    }
-
-    private List<UploadTaskEntity> uploadOperationTasks(UploadTaskEntity task) {
-        String operationId = normalizeNullable(task.getOperationId());
-        if (operationId == null) {
-            return List.of(task);
-        }
-        List<UploadTaskEntity> tasks = uploadTaskRepository.findByLibraryIdAndOperationId(task.getLibraryId(), operationId);
-        return tasks.isEmpty() ? List.of(task) : tasks;
-    }
-
-    private String uploadMediaSummary(int imageCount, int videoCount) {
-        if (imageCount > 0 && videoCount > 0) {
-            return imageCount + "张照片和" + videoCount + "个视频";
-        }
-        if (videoCount > 0) {
-            return videoCount + "个视频";
-        }
-        return imageCount + "张照片";
     }
 
     private String normalizeConfirmObjectKey(UploadTaskEntity task, UploadConfirmRequest request) {

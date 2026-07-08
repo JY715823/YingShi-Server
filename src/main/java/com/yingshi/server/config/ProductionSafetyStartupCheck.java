@@ -1,5 +1,7 @@
 package com.yingshi.server.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.env.Environment;
@@ -10,6 +12,8 @@ import java.util.List;
 
 @Component
 public class ProductionSafetyStartupCheck implements ApplicationRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(ProductionSafetyStartupCheck.class);
 
     private static final List<String> DEFAULT_SECRETS = List.of(
             "change-me-to-a-long-dev-secret-at-least-32-characters",
@@ -47,6 +51,14 @@ public class ProductionSafetyStartupCheck implements ApplicationRunner {
         rejectDefault("STORAGE_SECRET_KEY", storageProperties.secretKey(), DEFAULT_PASSWORDS);
         if (storageProperties.cdnDomain() != null && storageProperties.cdnAuthKey() == null) {
             throw new IllegalStateException("STORAGE_CDN_AUTH_KEY must be configured when CDN is enabled for production.");
+        }
+
+        // CORS wildcard check — warn but do not block startup
+        String corsOrigins = environment.getProperty("app.cors.allowed-origins", "");
+        if (corsOrigins == null || corsOrigins.isBlank()) {
+            log.warn("CORS WARNING: app.cors.allowed-origins is empty. "
+                    + "All origins are allowed with credentials=true. "
+                    + "Set APP_CORS_ALLOWED_ORIGINS for production deployments.");
         }
     }
 

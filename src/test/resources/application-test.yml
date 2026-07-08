@@ -1,0 +1,76 @@
+spring:
+  datasource:
+    username: test
+    password: test
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 1
+    locations: classpath:db/migration/postgresql
+  h2:
+    console:
+      enabled: false
+  sql:
+    init:
+      mode: never
+
+server:
+  port: 0
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+app:
+  auth:
+    jwt:
+      secret: test-secret-key-for-integration-tests-at-least-32-characters-long
+    rate-limit:
+      enabled: false
+    account-lockout:
+      enabled: true
+      max-attempts: 5
+      lock-duration: PT15M
+    login-code:
+      length: 6
+      ttl: PT5M
+      resend-cooldown: PT0S
+      rate-limit-window: PT30M
+      max-sends-per-window: 100
+      max-attempts-per-challenge: 10
+    remembered-login:
+      ttl: P7D
+    mail:
+      enabled: false
+  storage:
+    provider: local
+    local-root: ${java.io.tmpdir}/yingshi-test-storage
+    bucket: test-bucket
+  cors:
+    allowed-origins: http://localhost
+  production-safety:
+    enabled: false
+  push:
+    self-fallback-enabled: false
+    fcm:
+      enabled: false
+
+yingshi:
+  dev:
+    test-import:
+      enabled: false
+    recovery:
+      enabled: false
+
+logging:
+  level:
+    root: WARN
+    com.yingshi.server: INFO
+    org.flywaydb: INFO
+    org.testcontainers: WARN

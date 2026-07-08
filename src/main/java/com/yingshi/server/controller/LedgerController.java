@@ -5,16 +5,14 @@ import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.auth.CurrentUser;
 import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
-import com.yingshi.server.dto.ledger.LedgerSnapshotDto;
-import com.yingshi.server.dto.ledger.UpsertLedgerSnapshotRequest;
-import com.yingshi.server.service.ledger.LedgerService;
+import com.yingshi.server.dto.ledger.LedgerSyncRequest;
+import com.yingshi.server.dto.ledger.LedgerSyncResponse;
+import com.yingshi.server.service.ledger.LedgerSyncService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.Valid;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,29 +23,20 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/ledger")
 public class LedgerController {
 
-    private final LedgerService ledgerService;
+    private final LedgerSyncService ledgerSyncService;
 
-    public LedgerController(LedgerService ledgerService) {
-        this.ledgerService = ledgerService;
+    public LedgerController(LedgerSyncService ledgerSyncService) {
+        this.ledgerSyncService = ledgerSyncService;
     }
 
-    @Operation(summary = "Get current ledger snapshot", security = @SecurityRequirement(name = "bearerAuth"))
-    @GetMapping("/snapshot")
-    public ApiResponse<LedgerSnapshotDto> getSnapshot(
+    @Operation(summary = "Incremental ledger sync", security = @SecurityRequirement(name = "bearerAuth"))
+    @PostMapping("/sync")
+    public ApiResponse<LedgerSyncResponse> sync(
+            @RequestBody LedgerSyncRequest request,
             @CurrentUser AuthenticatedUser currentUser,
-            HttpServletRequest request
+            HttpServletRequest httpRequest
     ) {
-        return ApiResponse.success(requestId(request), ledgerService.getSnapshot(currentUser));
-    }
-
-    @Operation(summary = "Replace current ledger snapshot", security = @SecurityRequirement(name = "bearerAuth"))
-    @PutMapping("/snapshot")
-    public ApiResponse<LedgerSnapshotDto> upsertSnapshot(
-            @Valid @RequestBody UpsertLedgerSnapshotRequest requestBody,
-            @CurrentUser AuthenticatedUser currentUser,
-            HttpServletRequest request
-    ) {
-        return ApiResponse.success(requestId(request), ledgerService.upsertSnapshot(requestBody, currentUser));
+        return ApiResponse.success(requestId(httpRequest), ledgerSyncService.sync(request, currentUser));
     }
 
     private String requestId(HttpServletRequest request) {

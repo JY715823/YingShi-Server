@@ -33,11 +33,13 @@ public record CreatePostRequest(
         String displayTimeSource,
 
         @NotBlank(message = "albumId is required.")
+        @Size(max = 64, message = "albumId must be at most 64 characters.")
         String albumId,
 
         @NotNull(message = "initialMediaIds is required.")
         List<@NotBlank(message = "mediaId is required.") String> initialMediaIds,
 
+        @Size(max = 64, message = "coverMediaId must be at most 64 characters.")
         String coverMediaId
 ) {
     @JsonIgnore

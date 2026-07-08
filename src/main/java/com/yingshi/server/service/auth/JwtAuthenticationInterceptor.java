@@ -6,6 +6,7 @@ import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.MDC;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -64,7 +65,16 @@ public class JwtAuthenticationInterceptor implements HandlerInterceptor {
         );
         AuthenticatedUser currentUser = authenticatedUserLoader.loadCurrentUser(tokenUser);
         request.setAttribute(CURRENT_USER_ATTRIBUTE, currentUser);
+        MDC.put("userId", currentUser.userId());
+        MDC.put("libraryId", currentUser.libraryId());
         return true;
+    }
+
+    @Override
+    public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
+                                Object handler, Exception ex) {
+        MDC.remove("userId");
+        MDC.remove("libraryId");
     }
 
     private boolean isAuthRequired(HandlerMethod handlerMethod) {

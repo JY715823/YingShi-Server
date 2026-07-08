@@ -1,8 +1,5 @@
 package com.yingshi.server.service.trash;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yingshi.server.common.IdGenerator;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
@@ -43,7 +40,6 @@ import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -64,7 +60,7 @@ public class TrashService {
     private final TrashMapper trashMapper;
     private final LocalMediaStorageService localMediaStorageService;
     private final PushNotificationService pushNotificationService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final TrashSnapshotHelper snapshotHelper;
 
     public TrashService(
             TrashItemRepository trashItemRepository,
@@ -75,7 +71,8 @@ public class TrashService {
             CommentRepository commentRepository,
             TrashMapper trashMapper,
             LocalMediaStorageService localMediaStorageService,
-            PushNotificationService pushNotificationService
+            PushNotificationService pushNotificationService,
+            TrashSnapshotHelper snapshotHelper
     ) {
         this.trashItemRepository = trashItemRepository;
         this.albumRepository = albumRepository;
@@ -86,6 +83,7 @@ public class TrashService {
         this.trashMapper = trashMapper;
         this.localMediaStorageService = localMediaStorageService;
         this.pushNotificationService = pushNotificationService;
+        this.snapshotHelper = snapshotHelper;
     }
 
     @Transactional
@@ -125,7 +123,7 @@ public class TrashService {
                         : "Large album deleted with %d small albums".formatted(smallAlbumIds.size()),
                 smallAlbumIds,
                 mediaIds,
-                new LargeAlbumDeletedSnapshot(albumId, smallAlbumIds)
+                new TrashSnapshotHelper.LargeAlbumDeletedSnapshot(albumId, smallAlbumIds)
         );
         TrashItemDto dto = toTrashItemDto(item);
         notifyDeleted(currentUser, "对方删除了一个大相册。", "photos:trash:" + item.getId());
@@ -154,7 +152,7 @@ public class TrashService {
                 "Small album deleted",
                 List.of(smallAlbumId),
                 mediaIds,
-                new SmallAlbumDeletedSnapshot(smallAlbumId)
+                new TrashSnapshotHelper.SmallAlbumDeletedSnapshot(smallAlbumId)
         );
         TrashItemDto dto = toTrashItemDto(item);
         notifyDeleted(currentUser, "对方删除了一个小相册。", "photos:trash:" + item.getId());
@@ -194,7 +192,7 @@ public class TrashService {
                 "Media removed from small album",
                 List.of(smallAlbumId),
                 List.of(mediaId),
-                new MediaRemovedSnapshot(smallAlbumId, mediaId, sortOrder, wasCover)
+                new TrashSnapshotHelper.MediaRemovedSnapshot(smallAlbumId, mediaId, sortOrder, wasCover)
         );
         TrashItemDto dto = toTrashItemDto(item);
         notifyDeleted(currentUser, "对方从小相册移出了一项媒体。", "photos:trash:" + item.getId());
@@ -355,8 +353,8 @@ public class TrashService {
                 .map(PostMediaEntity::getPostId)
                 .distinct()
                 .toList();
-        List<MediaSystemRelationSnapshot> relationSnapshots = relations.stream()
-                .map(relation -> new MediaSystemRelationSnapshot(relation.getPostId(), relation.getSortOrder()))
+        List<TrashSnapshotHelper.MediaSystemRelationSnapshot> relationSnapshots = relations.stream()
+                .map(relation -> new TrashSnapshotHelper.MediaSystemRelationSnapshot(relation.getPostId(), relation.getSortOrder()))
                 .toList();
 
         List<PostEntity> smallAlbums = relatedSmallAlbumIds.isEmpty()
@@ -401,7 +399,7 @@ public class TrashService {
                 "Media system deleted",
                 relatedSmallAlbumIds,
                 List.of(mediaId),
-                new MediaSystemDeletedSnapshot(mediaId, relationSnapshots, new ArrayList<>(coverSmallAlbumIds))
+                new TrashSnapshotHelper.MediaSystemDeletedSnapshot(mediaId, relationSnapshots, new ArrayList<>(coverSmallAlbumIds))
         );
         TrashItemDto dto = toTrashItemDto(item);
         notifyDeleted(currentUser, "对方删除了一项媒体。", "photos:trash:" + item.getId());
@@ -424,7 +422,7 @@ public class TrashService {
     }
 
     private void restoreSmallAlbumDeleted(TrashItemEntity item, String libraryId) {
-        SmallAlbumDeletedSnapshot snapshot = readSmallAlbumDeletedSnapshot(item);
+        TrashSnapshotHelper.SmallAlbumDeletedSnapshot snapshot = snapshotHelper.readSmallAlbumDeletedSnapshot(item);
         PostEntity smallAlbum = postRepository.findByIdAndLibraryId(snapshot.smallAlbumId(), libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "Small album can no longer be restored."));
         smallAlbum.setDeletedAt(null);
@@ -432,7 +430,7 @@ public class TrashService {
     }
 
     private void restoreLargeAlbumDeleted(TrashItemEntity item, String libraryId) {
-        LargeAlbumDeletedSnapshot snapshot = readLargeAlbumDeletedSnapshot(item);
+        TrashSnapshotHelper.LargeAlbumDeletedSnapshot snapshot = snapshotHelper.readLargeAlbumDeletedSnapshot(item);
         AlbumEntity album = albumRepository.findByIdAndLibraryId(snapshot.albumId(), libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "Large album can no longer be restored."));
         if (album.getSystemKey() != null && !album.getSystemKey().isBlank()) {
@@ -461,7 +459,7 @@ public class TrashService {
     }
 
     private void restoreMediaRemoved(TrashItemEntity item, String libraryId) {
-        MediaRemovedSnapshot snapshot = readMediaRemovedSnapshot(item);
+        TrashSnapshotHelper.MediaRemovedSnapshot snapshot = snapshotHelper.readMediaRemovedSnapshot(item);
         PostEntity smallAlbum = postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(snapshot.smallAlbumId(), libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "原小相册不可用，无法恢复到原小相册"));
         requireActiveMedia(snapshot.mediaId(), libraryId);
@@ -476,7 +474,7 @@ public class TrashService {
     }
 
     private void restoreMediaSystemDeleted(TrashItemEntity item, String libraryId) {
-        MediaSystemDeletedSnapshot snapshot = readSnapshot(item.getSnapshotJson(), MediaSystemDeletedSnapshot.class);
+        TrashSnapshotHelper.MediaSystemDeletedSnapshot snapshot = snapshotHelper.readMediaSystemDeletedSnapshot(item);
         MediaEntity media = mediaRepository.findByIdAndLibraryId(snapshot.mediaId(), libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "Media can no longer be restored."));
 
@@ -495,7 +493,7 @@ public class TrashService {
         media.setDeletedAt(null);
         mediaRepository.save(media);
 
-        for (MediaSystemRelationSnapshot relationSnapshot : snapshot.relations()) {
+        for (TrashSnapshotHelper.MediaSystemRelationSnapshot relationSnapshot : snapshot.relations()) {
             postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(relationSnapshot.postId(), libraryId)
                     .ifPresent(post -> {
                         if (!postMediaRepository.existsByLibraryIdAndPostIdAndMediaId(libraryId, relationSnapshot.postId(), snapshot.mediaId())) {
@@ -516,7 +514,7 @@ public class TrashService {
     }
 
     private void purgeSmallAlbumDeleted(TrashItemEntity item, String libraryId) {
-        SmallAlbumDeletedSnapshot snapshot = readSmallAlbumDeletedSnapshot(item);
+        TrashSnapshotHelper.SmallAlbumDeletedSnapshot snapshot = snapshotHelper.readSmallAlbumDeletedSnapshot(item);
         purgeMediaRemovedItemsForSmallAlbum(libraryId, snapshot.smallAlbumId());
         postMediaRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.smallAlbumId());
         commentRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.smallAlbumId());
@@ -524,7 +522,7 @@ public class TrashService {
     }
 
     private void purgeLargeAlbumDeleted(TrashItemEntity item, String libraryId) {
-        LargeAlbumDeletedSnapshot snapshot = readLargeAlbumDeletedSnapshot(item);
+        TrashSnapshotHelper.LargeAlbumDeletedSnapshot snapshot = snapshotHelper.readLargeAlbumDeletedSnapshot(item);
         for (String smallAlbumId : snapshot.smallAlbumIds()) {
             purgeMediaRemovedItemsForSmallAlbum(libraryId, smallAlbumId);
             postMediaRepository.deleteByLibraryIdAndPostId(libraryId, smallAlbumId);
@@ -540,7 +538,7 @@ public class TrashService {
     }
 
     private void purgeMediaSystemDeleted(TrashItemEntity item, String libraryId) {
-        MediaSystemDeletedSnapshot snapshot = readMediaSystemDeletedSnapshot(item);
+        TrashSnapshotHelper.MediaSystemDeletedSnapshot snapshot = snapshotHelper.readMediaSystemDeletedSnapshot(item);
         MediaEntity media = mediaRepository.findByIdAndLibraryId(snapshot.mediaId(), libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Media can no longer be permanently deleted."));
 
@@ -595,7 +593,7 @@ public class TrashService {
         item.setPreviewInfo(previewInfo);
         item.setRelatedPostIds(String.join(",", relatedPostIds));
         item.setRelatedMediaIds(String.join(",", relatedMediaIds));
-        item.setSnapshotJson(writeSnapshot(snapshot));
+        item.setSnapshotJson(snapshotHelper.writeSnapshot(snapshot));
         item.setDeletedAt(Instant.now());
         return trashItemRepository.save(item);
     }
@@ -719,122 +717,6 @@ public class TrashService {
                 .toList();
     }
 
-    private String writeSnapshot(Object snapshot) {
-        try {
-            return objectMapper.writeValueAsString(snapshot);
-        } catch (JsonProcessingException exception) {
-            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.SERVER_ERROR, "Failed to serialize trash snapshot.");
-        }
-    }
-
-    private <T> T readSnapshot(String snapshotJson, Class<T> type) {
-        try {
-            return objectMapper.readValue(snapshotJson, type);
-        } catch (JsonProcessingException exception) {
-            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.SERVER_ERROR, "Failed to read trash snapshot.");
-        }
-    }
-
-    private SmallAlbumDeletedSnapshot readSmallAlbumDeletedSnapshot(TrashItemEntity item) {
-        String snapshotJson = normalizeLegacySnapshotJson(item);
-        try {
-            Map<String, Object> snapshot = objectMapper.readValue(snapshotJson, new TypeReference<>() {
-            });
-            String smallAlbumId = readString(snapshot, "smallAlbumId");
-            if (smallAlbumId == null || smallAlbumId.isBlank()) {
-                smallAlbumId = readString(snapshot, "postId");
-            }
-            if (smallAlbumId == null || smallAlbumId.isBlank()) {
-                throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.SERVER_ERROR, "Trash snapshot is missing small album id.");
-            }
-            return new SmallAlbumDeletedSnapshot(smallAlbumId);
-        } catch (JsonProcessingException exception) {
-            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.SERVER_ERROR, "Failed to read trash snapshot.");
-        }
-    }
-
-    private MediaRemovedSnapshot readMediaRemovedSnapshot(TrashItemEntity item) {
-        String snapshotJson = normalizeLegacySnapshotJson(item);
-        try {
-            Map<String, Object> snapshot = objectMapper.readValue(snapshotJson, new TypeReference<>() {
-            });
-            String smallAlbumId = readString(snapshot, "smallAlbumId");
-            if (smallAlbumId == null || smallAlbumId.isBlank()) {
-                smallAlbumId = readString(snapshot, "postId");
-            }
-            String mediaId = readString(snapshot, "mediaId");
-            int sortOrder = readInt(snapshot, "sortOrder", 1);
-            boolean wasCover = readBoolean(snapshot, "wasCover");
-            if (smallAlbumId == null || smallAlbumId.isBlank() || mediaId == null || mediaId.isBlank()) {
-                throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.SERVER_ERROR, "Trash snapshot is missing media restore fields.");
-            }
-            return new MediaRemovedSnapshot(smallAlbumId, mediaId, sortOrder, wasCover);
-        } catch (JsonProcessingException exception) {
-            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.SERVER_ERROR, "Failed to read trash snapshot.");
-        }
-    }
-
-    private MediaSystemDeletedSnapshot readMediaSystemDeletedSnapshot(TrashItemEntity item) {
-        return readSnapshot(normalizeLegacySnapshotJson(item), MediaSystemDeletedSnapshot.class);
-    }
-
-    private LargeAlbumDeletedSnapshot readLargeAlbumDeletedSnapshot(TrashItemEntity item) {
-        return readSnapshot(item.getSnapshotJson(), LargeAlbumDeletedSnapshot.class);
-    }
-
-    private String normalizeLegacySnapshotJson(TrashItemEntity item) {
-        String snapshotJson = item.getSnapshotJson();
-        if (snapshotJson == null || snapshotJson.isBlank()) {
-            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.SERVER_ERROR, "Trash snapshot is empty.");
-        }
-        if (!snapshotJson.matches("\\d+")) {
-            return snapshotJson;
-        }
-        String smallAlbumId = item.getSourcePostId();
-        if (smallAlbumId == null || smallAlbumId.isBlank()) {
-            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.SERVER_ERROR, "Trash snapshot is missing small album id.");
-        }
-        try {
-            return objectMapper.writeValueAsString(Map.of("smallAlbumId", smallAlbumId));
-        } catch (JsonProcessingException exception) {
-            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.SERVER_ERROR, "Failed to normalize trash snapshot.");
-        }
-    }
-
-    private String readString(Map<String, Object> snapshot, String key) {
-        Object value = snapshot.get(key);
-        if (value instanceof String stringValue) {
-            return stringValue;
-        }
-        return value == null ? null : String.valueOf(value);
-    }
-
-    private int readInt(Map<String, Object> snapshot, String key, int defaultValue) {
-        Object value = snapshot.get(key);
-        if (value instanceof Number number) {
-            return number.intValue();
-        }
-        if (value instanceof String stringValue) {
-            try {
-                return Integer.parseInt(stringValue);
-            } catch (NumberFormatException ignored) {
-                return defaultValue;
-            }
-        }
-        return defaultValue;
-    }
-
-    private boolean readBoolean(Map<String, Object> snapshot, String key) {
-        Object value = snapshot.get(key);
-        if (value instanceof Boolean booleanValue) {
-            return booleanValue;
-        }
-        if (value instanceof String stringValue) {
-            return Boolean.parseBoolean(stringValue);
-        }
-        return false;
-    }
-
     private TrashItemType parseItemType(String value) {
         String normalized = value.replaceAll("([a-z])([A-Z])", "$1_$2").toUpperCase(Locale.ROOT);
         try {
@@ -853,24 +735,5 @@ public class TrashService {
             return DEFAULT_SIZE;
         }
         return Math.min(size, 100);
-    }
-
-    private record SmallAlbumDeletedSnapshot(String smallAlbumId) {
-    }
-
-    private record LargeAlbumDeletedSnapshot(String albumId, List<String> smallAlbumIds) {
-    }
-
-    private record MediaRemovedSnapshot(String smallAlbumId, String mediaId, int sortOrder, boolean wasCover) {
-    }
-
-    private record MediaSystemDeletedSnapshot(
-            String mediaId,
-            List<MediaSystemRelationSnapshot> relations,
-            List<String> coverPostIds
-    ) {
-    }
-
-    private record MediaSystemRelationSnapshot(String postId, int sortOrder) {
     }
 }

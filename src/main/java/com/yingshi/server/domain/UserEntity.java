@@ -5,6 +5,8 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
+import java.time.Instant;
+
 @Entity
 @Table(name = "users")
 public class UserEntity extends BaseEntity {
@@ -29,6 +31,12 @@ public class UserEntity extends BaseEntity {
 
     @Column(nullable = false)
     private String defaultLibraryId;
+
+    @Column(nullable = false)
+    private int failedLoginAttempts = 0;
+
+    @Column
+    private Instant lockedUntil;
 
     public String getId() {
         return id;
@@ -84,5 +92,21 @@ public class UserEntity extends BaseEntity {
 
     public void setDefaultLibraryId(String defaultLibraryId) {
         this.defaultLibraryId = defaultLibraryId;
+    }
+
+    public int getFailedLoginAttempts() {
+        return failedLoginAttempts;
+    }
+
+    public void setFailedLoginAttempts(int failedLoginAttempts) {
+        this.failedLoginAttempts = failedLoginAttempts;
+    }
+
+    public Instant getLockedUntil() {
+        return lockedUntil;
+    }
+
+    public void setLockedUntil(Instant lockedUntil) {
+        this.lockedUntil = lockedUntil;
     }
 }

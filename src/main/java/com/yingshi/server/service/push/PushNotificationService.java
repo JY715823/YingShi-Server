@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -301,6 +302,7 @@ public class PushNotificationService {
 
     private Map<String, String> lifeConsoleChangedData(String libraryId, String actorUserId, String reason, String category, String actorDisplayName) {
         String safeReason = reason == null || reason.isBlank() ? "changed" : reason.trim();
+        String occurredAtMillis = Long.toString(Instant.now().toEpochMilli());
         Map<String, String> data = new HashMap<>();
         data.put("type", LIFE_CONSOLE_CHANGED);
         data.put("event", LIFE_CONSOLE_CHANGED);
@@ -313,7 +315,9 @@ public class PushNotificationService {
         data.put("title", lifePushTitle(safeReason, actorDisplayName));
         data.put("body", lifePushBody(safeReason, actorDisplayName));
         data.put("targetRoute", safeReason.startsWith("bowel_") ? "life:bowel" : "life:trace");
-        data.put("occurredAtMillis", Long.toString(Instant.now().toEpochMilli()));
+        data.put("occurredAtMillis", occurredAtMillis);
+        data.put("notificationId", "life:" + safeReason + ":" + occurredAtMillis);
+        data.put("groupId", "life:" + libraryId + ":" + LocalDate.now().toString());
         return data;
     }
 
@@ -537,11 +541,9 @@ public class PushNotificationService {
     }
 
     private void disableInvalidTokens(List<String> invalidTokens) {
-        pushDeviceTokenRepository.findByTokenIn(invalidTokens)
-                .forEach(token -> {
-                    token.setEnabled(false);
-                    pushDeviceTokenRepository.save(token);
-                });
+        List<PushDeviceTokenEntity> tokens = pushDeviceTokenRepository.findByTokenIn(invalidTokens);
+        tokens.forEach(token -> token.setEnabled(false));
+        pushDeviceTokenRepository.saveAll(tokens);
     }
 
     private record PushPreferenceDefaults(String module, String category, boolean enabled) {

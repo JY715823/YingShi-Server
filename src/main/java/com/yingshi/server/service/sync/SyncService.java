@@ -1,15 +1,5 @@
 package com.yingshi.server.service.sync;
 
-import com.yingshi.server.domain.AlbumEntity;
-import com.yingshi.server.domain.BowelEventEntity;
-import com.yingshi.server.domain.CommentEntity;
-import com.yingshi.server.domain.LedgerSnapshotEntity;
-import com.yingshi.server.domain.MediaEntity;
-import com.yingshi.server.domain.PostEntity;
-import com.yingshi.server.domain.PostMediaEntity;
-import com.yingshi.server.domain.TrashItemEntity;
-import com.yingshi.server.domain.UploadTaskEntity;
-import com.yingshi.server.dto.sync.SyncVersionsResponse;
 import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.BowelEventRepository;
 import com.yingshi.server.repository.CommentRepository;
@@ -19,6 +9,8 @@ import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.TrashItemRepository;
 import com.yingshi.server.repository.UploadTaskRepository;
+import com.yingshi.server.repository.chat.ImportedChatRepository;
+import com.yingshi.server.dto.sync.SyncVersionsResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,6 +29,7 @@ public class SyncService {
     private final LedgerSnapshotRepository ledgerSnapshotRepository;
     private final CommentRepository commentRepository;
     private final UploadTaskRepository uploadTaskRepository;
+    private final ImportedChatRepository importedChatRepository;
 
     public SyncService(
             MediaRepository mediaRepository,
@@ -47,7 +40,8 @@ public class SyncService {
             PostMediaRepository postMediaRepository,
             LedgerSnapshotRepository ledgerSnapshotRepository,
             CommentRepository commentRepository,
-            UploadTaskRepository uploadTaskRepository
+            UploadTaskRepository uploadTaskRepository,
+            ImportedChatRepository importedChatRepository
     ) {
         this.mediaRepository = mediaRepository;
         this.postRepository = postRepository;
@@ -58,65 +52,65 @@ public class SyncService {
         this.ledgerSnapshotRepository = ledgerSnapshotRepository;
         this.commentRepository = commentRepository;
         this.uploadTaskRepository = uploadTaskRepository;
+        this.importedChatRepository = importedChatRepository;
     }
 
     @Transactional(readOnly = true)
     public SyncVersionsResponse getVersions(String libraryId) {
-        Optional<Instant> latestCommentUpdatedAt = commentRepository.findFirstByLibraryIdOrderByUpdatedAtDesc(libraryId)
-                .map(CommentEntity::getUpdatedAt);
-        Optional<Instant> latestUploadTaskUpdatedAt = uploadTaskRepository.findFirstByLibraryIdOrderByUpdatedAtDesc(libraryId)
-                .map(UploadTaskEntity::getUpdatedAt);
-        long photoFeedVersion = maxEpochMillis(
-                mediaRepository.findTopByLibraryIdAndDeletedAtIsNullOrderByUpdatedAtDesc(libraryId)
-                        .map(MediaEntity::getUpdatedAt),
-                mediaRepository.findTopByLibraryIdOrderByUpdatedAtDesc(libraryId)
-                        .map(MediaEntity::getUpdatedAt)
+        Optional<Instant> latestComment = commentRepository.findLatestUpdatedAtByLibraryId(libraryId);
+        Optional<Instant> latestUploadTask = uploadTaskRepository.findLatestUpdatedAtByLibraryId(libraryId);
+
+        long photoFeedVersion = maxOf(
+                mediaRepository.findLatestUpdatedAtByLibraryIdAndDeletedAtIsNull(libraryId),
+                mediaRepository.findLatestUpdatedAtByLibraryId(libraryId)
         );
-        long albumsVersion = maxEpochMillis(
-                albumRepository.findTopByLibraryIdAndDeletedAtIsNullAndSystemKeyIsNullOrderByUpdatedAtDesc(libraryId)
-                        .map(AlbumEntity::getUpdatedAt),
-                albumRepository.findTopByLibraryIdAndSystemKeyIsNullOrderByUpdatedAtDesc(libraryId)
-                        .map(AlbumEntity::getUpdatedAt),
-                postRepository.findFirstByLibraryIdAndDeletedAtIsNullAndSystemKeyIsNullOrderByUpdatedAtDesc(libraryId)
-                        .map(PostEntity::getUpdatedAt),
-                postRepository.findFirstByLibraryIdAndSystemKeyIsNullOrderByUpdatedAtDesc(libraryId)
-                        .map(PostEntity::getUpdatedAt),
-                postMediaRepository.findFirstByLibraryIdOrderByUpdatedAtDesc(libraryId)
-                        .map(PostMediaEntity::getUpdatedAt),
-                latestCommentUpdatedAt
+
+        long albumsVersion = maxOf(
+                albumRepository.findLatestUpdatedAtByLibraryIdAndDeletedAtIsNullAndSystemKeyIsNull(libraryId),
+                albumRepository.findLatestUpdatedAtByLibraryIdAndSystemKeyIsNull(libraryId),
+                postRepository.findLatestUpdatedAtByLibraryIdAndDeletedAtIsNullAndSystemKeyIsNull(libraryId),
+                postRepository.findLatestUpdatedAtByLibraryIdAndSystemKeyIsNull(libraryId),
+                postMediaRepository.findLatestUpdatedAtByLibraryId(libraryId),
+                latestComment
         );
-        long trashVersion = trashItemRepository.findFirstByLibraryIdOrderByUpdatedAtDesc(libraryId)
-                .map(TrashItemEntity::getUpdatedAt)
-                .map(SyncService::toEpochMillis)
-                .orElse(0L);
-        long lifeConsoleVersion = maxEpochMillis(
-                bowelEventRepository.findFirstByLibraryIdOrderByUpdatedAtDesc(libraryId)
-                        .map(BowelEventEntity::getUpdatedAt),
-                postRepository.findFirstByLibraryIdAndDeletedAtIsNullAndSystemKeyIsNotNullOrderByUpdatedAtDesc(libraryId)
-                        .map(PostEntity::getUpdatedAt),
-                ledgerSnapshotRepository.findFirstByLibraryIdOrderByUpdatedAtDesc(libraryId)
-                        .map(LedgerSnapshotEntity::getUpdatedAt)
+
+        long trashVersion = toEpochMillis(
+                trashItemRepository.findLatestUpdatedAtByLibraryId(libraryId)
         );
-        long notificationVersion = maxEpochMillis(
+
+        long lifeConsoleVersion = maxOf(
+                bowelEventRepository.findLatestUpdatedAtByLibraryId(libraryId),
+                postRepository.findLatestUpdatedAtByLibraryIdAndDeletedAtIsNullAndSystemKeyIsNotNull(libraryId),
+                ledgerSnapshotRepository.findLatestUpdatedAtByLibraryId(libraryId)
+        );
+
+        long chatVersion = toEpochMillis(
+                importedChatRepository.findLatestUpdatedAtByLibraryId(libraryId)
+        );
+
+        long notificationVersion = maxOf(
                 Optional.of(Instant.ofEpochMilli(photoFeedVersion)),
                 Optional.of(Instant.ofEpochMilli(albumsVersion)),
                 Optional.of(Instant.ofEpochMilli(trashVersion)),
                 Optional.of(Instant.ofEpochMilli(lifeConsoleVersion)),
-                latestCommentUpdatedAt,
-                latestUploadTaskUpdatedAt
+                Optional.of(Instant.ofEpochMilli(chatVersion)),
+                latestComment,
+                latestUploadTask
         );
+
         return new SyncVersionsResponse(
                 photoFeedVersion,
                 albumsVersion,
                 trashVersion,
                 notificationVersion,
                 lifeConsoleVersion,
+                chatVersion,
                 System.currentTimeMillis()
         );
     }
 
     @SafeVarargs
-    private static long maxEpochMillis(Optional<Instant>... optionals) {
+    private static long maxOf(Optional<Instant>... optionals) {
         long max = 0L;
         for (Optional<Instant> opt : optionals) {
             if (opt.isPresent() && opt.get() != null) {
@@ -126,7 +120,7 @@ public class SyncService {
         return max;
     }
 
-    private static long toEpochMillis(Instant instant) {
-        return instant == null ? 0L : instant.toEpochMilli();
+    private static long toEpochMillis(Optional<Instant> instant) {
+        return instant.map(Instant::toEpochMilli).orElse(0L);
     }
 }
