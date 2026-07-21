@@ -18,7 +18,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
         AuthRateLimitProperties.class,
         AuthAccountLockoutProperties.class,
         StorageProperties.class,
-        FcmProperties.class
+        FcmProperties.class,
+        GeocodingProperties.class
 })
 public class AuthConfig {
 

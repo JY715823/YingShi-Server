@@ -9,8 +9,8 @@ import com.yingshi.server.domain.PushDeliveryAuditEntity;
 import com.yingshi.server.domain.PushPreferenceEntity;
 import com.yingshi.server.dto.push.PushDeliveryAuditDto;
 import com.yingshi.server.dto.push.PushDiagnosticsResponse;
-import com.yingshi.server.dto.life.RegisterPushTokenRequest;
-import com.yingshi.server.dto.life.RegisterPushTokenResponse;
+import com.yingshi.server.dto.push.RegisterPushTokenRequest;
+import com.yingshi.server.dto.push.RegisterPushTokenResponse;
 import com.yingshi.server.dto.push.PushPreferenceDto;
 import com.yingshi.server.dto.push.PushPreferencesResponse;
 import com.yingshi.server.dto.push.UpdatePushPreferenceRequest;
@@ -334,9 +334,11 @@ public class PushNotificationService {
                 new PushPreferenceDefaults(MODULE_PHOTOS, CATEGORY_PHOTOS_CONTENT_UPDATE, true),
                 new PushPreferenceDefaults(MODULE_PHOTOS, CATEGORY_PHOTOS_COMMENT, true),
                 new PushPreferenceDefaults(MODULE_PHOTOS, CATEGORY_PHOTOS_DELETE, false),
+                new PushPreferenceDefaults(MODULE_PHOTOS, CATEGORY_PHOTOS_SYSTEM, false),
                 new PushPreferenceDefaults(MODULE_LIFE, CATEGORY_LIFE_TRACE, true),
                 new PushPreferenceDefaults(MODULE_LIFE, CATEGORY_LIFE_LEDGER, false),
-                new PushPreferenceDefaults(MODULE_LIFE, CATEGORY_LIFE_CHAT, false)
+                new PushPreferenceDefaults(MODULE_LIFE, CATEGORY_LIFE_CHAT, false),
+                new PushPreferenceDefaults(MODULE_LIFE, CATEGORY_LIFE_SYSTEM, false)
         ).stream()
                 .sorted(Comparator.comparing(PushPreferenceDefaults::module).thenComparing(PushPreferenceDefaults::category))
                 .toList();

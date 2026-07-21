@@ -9,6 +9,7 @@ import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.dto.content.AlbumDto;
 import com.yingshi.server.dto.content.CreateAlbumRequest;
+import com.yingshi.server.dto.content.MoveSmallAlbumsRequest;
 import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.dto.content.UpdateAlbumRequest;
 import com.yingshi.server.dto.trash.TrashItemDto;
@@ -126,6 +127,67 @@ public class AlbumService {
     @Transactional
     public TrashItemDto deleteAlbum(String albumId, AuthenticatedUser currentUser) {
         return trashService.deleteLargeAlbum(albumId, currentUser);
+    }
+
+    @Transactional
+    public List<PostSummaryDto> moveSmallAlbums(
+            String targetAlbumId,
+            MoveSmallAlbumsRequest request,
+            AuthenticatedUser currentUser
+    ) {
+        String libraryId = currentUser.libraryId();
+        // 1. 校验目标大相册存在且属于当前 library
+        requireAlbum(targetAlbumId, libraryId);
+
+        // 2. 过滤 null/blank 的 smallAlbumId + 去重
+        List<String> smallAlbumIds = request.smallAlbumIds().stream()
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .toList();
+
+        if (smallAlbumIds.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR,
+                    "smallAlbumIds must not be empty");
+        }
+
+        // 3. 批量查询待移动的小相册（校验存在 + 未删除 + 属于同一 library）
+        List<PostEntity> smallAlbums = postRepository
+                .findByLibraryIdAndIdInAndDeletedAtIsNull(libraryId, smallAlbumIds);
+
+        if (smallAlbums.size() != smallAlbumIds.size()) {
+            List<String> foundIds = smallAlbums.stream().map(PostEntity::getId).toList();
+            List<String> missingIds = smallAlbumIds.stream()
+                    .filter(id -> !foundIds.contains(id))
+                    .toList();
+            throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.SMALL_ALBUM_NOT_FOUND,
+                    "Small albums not found: " + missingIds);
+        }
+
+        // 4. 逐条更新 albumId + 记录修改人 + touch updatedAt
+        for (PostEntity post : smallAlbums) {
+            post.setAlbumId(targetAlbumId);
+            post.setLastModifiedByUserId(currentUser.userId());
+            post.touch();
+        }
+        postRepository.saveAll(smallAlbums);
+
+        // 5. 转换为 PostSummaryDto 列表返回
+        List<String> postIds = smallAlbums.stream().map(PostEntity::getId).toList();
+        Map<String, Long> mediaCountByPostId = postMediaRepository
+                .findByLibraryIdAndPostIdIn(libraryId, postIds)
+                .stream()
+                .collect(Collectors.groupingBy(PostMediaEntity::getPostId, Collectors.counting()));
+
+        List<PostSummaryDto> results = new ArrayList<>();
+        for (PostEntity post : smallAlbums) {
+            results.add(contentMapper.toPostSummaryDto(
+                    post,
+                    post.getAlbumId(),
+                    post.getCoverMediaId(),
+                    mediaCountByPostId.getOrDefault(post.getId(), 0L)
+            ));
+        }
+        return results;
     }
 
     private AlbumEntity requireAlbum(String albumId, String libraryId) {

@@ -19,9 +19,12 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
@@ -32,6 +35,7 @@ import java.io.InputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -194,6 +198,37 @@ public class S3ObjectStorageService implements ObjectStorageService {
             }
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to read S3 storage object metadata.");
         }
+    }
+
+    @Override
+    public List<String> listByPrefix(String prefix, String contains) {
+        if (prefix == null || prefix.isBlank()) {
+            return List.of();
+        }
+        String normalizedPrefix = normalizeObjectKey(prefix);
+        List<String> result = new ArrayList<>();
+        String continuationToken = null;
+        try {
+            do {
+                ListObjectsV2Request.Builder requestBuilder = ListObjectsV2Request.builder()
+                        .bucket(bucket())
+                        .prefix(normalizedPrefix);
+                if (continuationToken != null) {
+                    requestBuilder.continuationToken(continuationToken);
+                }
+                ListObjectsV2Response response = s3Client.listObjectsV2(requestBuilder.build());
+                for (S3Object s3Object : response.contents()) {
+                    String key = s3Object.key();
+                    if (contains == null || contains.isBlank() || key.contains(contains)) {
+                        result.add(key);
+                    }
+                }
+                continuationToken = response.isTruncated() ? response.nextContinuationToken() : null;
+            } while (continuationToken != null);
+        } catch (S3Exception exception) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to list S3 objects by prefix.");
+        }
+        return result;
     }
 
     @Override

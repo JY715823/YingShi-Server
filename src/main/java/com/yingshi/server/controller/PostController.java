@@ -13,6 +13,7 @@ import com.yingshi.server.dto.content.CreatePostRequest;
 import com.yingshi.server.dto.content.PostDetailDto;
 import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.dto.content.UpdatePostCoverRequest;
+import com.yingshi.server.dto.content.UpdatePostMediaBatchRequest;
 import com.yingshi.server.dto.content.UpdatePostMediaOrderRequest;
 import com.yingshi.server.dto.content.UpdatePostRequest;
 import com.yingshi.server.service.content.PostService;
@@ -111,6 +112,17 @@ public class PostController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), postService.updatePostMediaOrder(smallAlbumId, updatePostMediaOrderRequest, currentUser));
+    }
+
+    @Operation(summary = "Batch remove media from small album", security = @SecurityRequirement(name = "bearerAuth"))
+    @PatchMapping("/{smallAlbumId}/media-batch")
+    public ApiResponse<PostDetailDto> batchRemoveSmallAlbumMedia(
+            @PathVariable String smallAlbumId,
+            @Valid @RequestBody UpdatePostMediaBatchRequest request,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest httpRequest
+    ) {
+        return ApiResponse.success(requestId(httpRequest), postService.batchRemovePostMedia(smallAlbumId, request, currentUser));
     }
 
     @Operation(summary = "Add media to small album", security = @SecurityRequirement(name = "bearerAuth"))

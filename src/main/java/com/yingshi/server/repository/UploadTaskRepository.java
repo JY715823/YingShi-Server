@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import org.springframework.data.domain.Pageable;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -59,6 +61,28 @@ public interface UploadTaskRepository extends JpaRepository<UploadTaskEntity, St
             @Param("updatedAfter") Instant updatedAfter,
             @Param("state") UploadState state,
             @Param("operationType") String operationType
+    );
+
+    @Query("""
+            select task from UploadTaskEntity task
+            where task.libraryId = :libraryId
+              and task.uploadedByUserId = :uploadedByUserId
+              and task.dismissedAt is null
+              and task.updatedAt >= :updatedAfter
+              and (:state is null or task.state = :state)
+              and (:operationType is null or task.operationType = :operationType)
+              and (:cursorUpdatedAt is null or task.updatedAt < :cursorUpdatedAt or (task.updatedAt = :cursorUpdatedAt and task.id < :cursorId))
+            order by task.updatedAt desc, task.id desc
+            """)
+    java.util.List<UploadTaskEntity> findVisibleHistoryPage(
+            @Param("libraryId") String libraryId,
+            @Param("uploadedByUserId") String uploadedByUserId,
+            @Param("updatedAfter") Instant updatedAfter,
+            @Param("state") UploadState state,
+            @Param("operationType") String operationType,
+            @Param("cursorUpdatedAt") Instant cursorUpdatedAt,
+            @Param("cursorId") String cursorId,
+            Pageable pageable
     );
 
     @Query("SELECT MAX(t.updatedAt) FROM UploadTaskEntity t WHERE t.libraryId = :libraryId")

@@ -37,12 +37,13 @@ public class NotificationController {
     @GetMapping
     public ApiResponse<List<NotificationDto>> listNotifications(
             @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) String cursor,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
         return ApiResponse.success(
                 requestId(request),
-                notificationService.listNotifications(currentUser, limit)
+                notificationService.listNotifications(currentUser, limit, cursor)
         );
     }
 

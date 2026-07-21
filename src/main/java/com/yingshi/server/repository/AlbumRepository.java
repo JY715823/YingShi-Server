@@ -29,6 +29,13 @@ public interface AlbumRepository extends JpaRepository<AlbumEntity, String> {
     @Query("SELECT a FROM AlbumEntity a WHERE a.libraryId = :libraryId AND a.systemKey = :systemKey AND a.deletedAt IS NULL")
     Optional<AlbumEntity> findByLibraryIdAndSystemKeyAndDeletedAtIsNull(@Param("libraryId") String libraryId, @Param("systemKey") String systemKey);
 
+    @Query("SELECT a FROM AlbumEntity a WHERE a.libraryId = :libraryId AND a.systemKey = :systemKey AND a.domain = :domain AND a.deletedAt IS NULL")
+    Optional<AlbumEntity> findByLibraryIdAndSystemKeyAndDomainAndDeletedAtIsNull(@Param("libraryId") String libraryId, @Param("systemKey") String systemKey, @Param("domain") String domain);
+
+    // Round 8 Bug 修复: 查找软删除的 system album 用于复活 (uk_albums_library_system_key 不含 deleted_at)
+    @Query("SELECT a FROM AlbumEntity a WHERE a.libraryId = :libraryId AND a.systemKey = :systemKey AND a.domain = :domain ORDER BY a.deletedAt NULLS FIRST")
+    Optional<AlbumEntity> findByLibraryIdAndSystemKeyAndDomain(@Param("libraryId") String libraryId, @Param("systemKey") String systemKey, @Param("domain") String domain);
+
     @Query("SELECT a FROM AlbumEntity a WHERE a.libraryId = :libraryId AND a.id IN :ids AND a.deletedAt IS NULL")
     List<AlbumEntity> findByLibraryIdAndIdInAndDeletedAtIsNull(@Param("libraryId") String libraryId, @Param("ids") Collection<String> ids);
 
@@ -52,4 +59,7 @@ public interface AlbumRepository extends JpaRepository<AlbumEntity, String> {
 
     @Query("SELECT MAX(a.updatedAt) FROM AlbumEntity a WHERE a.libraryId = :libraryId AND a.systemKey IS NULL")
     Optional<Instant> findLatestUpdatedAtByLibraryIdAndSystemKeyIsNull(@Param("libraryId") String libraryId);
+
+    @Query("SELECT MAX(a.updatedAt) FROM AlbumEntity a WHERE a.libraryId = :libraryId AND a.domain = :domain AND a.deletedAt IS NULL")
+    Optional<Instant> findLatestUpdatedAtByLibraryIdAndDomainAndDeletedAtIsNull(@Param("libraryId") String libraryId, @Param("domain") String domain);
 }

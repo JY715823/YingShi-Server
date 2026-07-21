@@ -40,11 +40,11 @@ public interface MediaRepository extends JpaRepository<MediaEntity, String> {
                                                   org.springframework.data.domain.Pageable pageable);
 
     @Query("SELECT m FROM MediaEntity m WHERE m.libraryId = :libraryId AND m.deletedAt IS NULL ORDER BY m.updatedAt DESC")
-    Optional<MediaEntity> findTopByLibraryIdAndDeletedAtIsNullOrderByUpdatedAtDesc(@Param("libraryId") String libraryId,
+    List<MediaEntity> findTopByLibraryIdAndDeletedAtIsNullOrderByUpdatedAtDesc(@Param("libraryId") String libraryId,
                                                                                   org.springframework.data.domain.Pageable pageable);
 
     @Query("SELECT m FROM MediaEntity m WHERE m.libraryId = :libraryId ORDER BY m.updatedAt DESC")
-    Optional<MediaEntity> findTopByLibraryIdOrderByUpdatedAtDesc(@Param("libraryId") String libraryId,
+    List<MediaEntity> findTopByLibraryIdOrderByUpdatedAtDesc(@Param("libraryId") String libraryId,
                                                                  org.springframework.data.domain.Pageable pageable);
 
     @Query("""
@@ -98,9 +98,27 @@ public interface MediaRepository extends JpaRepository<MediaEntity, String> {
     @Query("SELECT MAX(m.updatedAt) FROM MediaEntity m WHERE m.libraryId = :libraryId AND m.deletedAt IS NULL")
     Optional<Instant> findLatestUpdatedAtByLibraryIdAndDeletedAtIsNull(@Param("libraryId") String libraryId);
 
+    // Round 8: 查询某个用户在指定时间范围内的所有 media (不限 domain), 用于 life 模块 partner 回退展示
     @Query("""
             SELECT m FROM MediaEntity m
             WHERE m.libraryId = :libraryId
+              AND m.recordOwnerUserId = :userId
+              AND m.deletedAt IS NULL
+              AND m.displayTimeMillis >= :startMillis
+              AND m.displayTimeMillis < :endMillis
+            ORDER BY m.displayTimeMillis DESC
+            """)
+    List<MediaEntity> findByLibraryIdAndUserIdAndDisplayTimeRange(
+            @Param("libraryId") String libraryId,
+            @Param("userId") String userId,
+            @Param("startMillis") Long startMillis,
+            @Param("endMillis") Long endMillis
+    );
+
+    @Query("""
+            SELECT m FROM MediaEntity m
+            WHERE m.libraryId = :libraryId
+              AND m.domain = 'photo'
               AND m.deletedAt IS NULL
               AND (:cursorDisplayTime IS NULL
                    OR m.displayTimeMillis < :cursorDisplayTime

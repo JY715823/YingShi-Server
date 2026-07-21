@@ -179,7 +179,7 @@ public class ChatImportedSyncService {
         for (MessageSearchRow row : rows) {
             ImportedMessageSearchEntity entity;
             if (row.messageId() != null) {
-                entity = messageSearchRepository.findByIdAndLibraryId(row.messageId(), libraryId)
+                entity = messageSearchRepository.findByMessageIdAndLibraryId(row.messageId(), libraryId)
                         .orElseGet(() -> newMessageSearchEntity(libraryId));
             } else {
                 entity = newMessageSearchEntity(libraryId);
@@ -219,7 +219,7 @@ public class ChatImportedSyncService {
         deleteLongIfPresent(libraryId, idsByTable.get(TABLE_MESSAGE), messageRepository::deleteByLibraryIdAndIdIn);
         deleteLongIfPresent(libraryId, idsByTable.get(TABLE_PARTICIPANT), participantRepository::deleteByLibraryIdAndIdIn);
         deleteLongIfPresent(libraryId, idsByTable.get(TABLE_RESOURCE), resourceRepository::deleteByLibraryIdAndIdIn);
-        deleteLongIfPresent(libraryId, idsByTable.get(TABLE_MESSAGE_SEARCH), messageSearchRepository::deleteByLibraryIdAndIdIn);
+        deleteLongIfPresent(libraryId, idsByTable.get(TABLE_MESSAGE_SEARCH), messageSearchRepository::deleteByLibraryIdAndMessageIdIn);
     }
 
     private void deleteIfPresent(String libraryId, List<String> ids, BulkDeleter deleter) {

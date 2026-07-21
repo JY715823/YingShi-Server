@@ -7,6 +7,7 @@ import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.content.AlbumDto;
 import com.yingshi.server.dto.content.CreateAlbumRequest;
+import com.yingshi.server.dto.content.MoveSmallAlbumsRequest;
 import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.dto.content.UpdateAlbumRequest;
 import com.yingshi.server.dto.trash.TrashItemDto;
@@ -87,6 +88,17 @@ public class AlbumController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), albumService.deleteAlbum(albumId, currentUser));
+    }
+
+    @Operation(summary = "Move small albums to another large album", security = @SecurityRequirement(name = "bearerAuth"))
+    @PatchMapping("/{targetAlbumId}/move-small-albums")
+    public ApiResponse<List<PostSummaryDto>> moveSmallAlbums(
+            @PathVariable String targetAlbumId,
+            @Valid @RequestBody MoveSmallAlbumsRequest request,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest httpRequest
+    ) {
+        return ApiResponse.success(requestId(httpRequest), albumService.moveSmallAlbums(targetAlbumId, request, currentUser));
     }
 
     private String requestId(HttpServletRequest request) {

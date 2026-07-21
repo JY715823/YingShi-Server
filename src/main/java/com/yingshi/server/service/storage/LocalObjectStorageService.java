@@ -21,8 +21,11 @@ import java.nio.file.StandardCopyOption;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 @Service
 @ConditionalOnProperty(prefix = "app.storage", name = "provider", havingValue = "local", matchIfMissing = true)
@@ -157,6 +160,36 @@ public class LocalObjectStorageService implements ObjectStorageService {
         } catch (IOException exception) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to read storage object metadata.");
         }
+    }
+
+    @Override
+    public List<String> listByPrefix(String prefix, String contains) {
+        if (prefix == null || prefix.isBlank()) {
+            return List.of();
+        }
+        String normalizedPrefix = normalizeObjectKey(prefix);
+        Path prefixPath = resolveObjectPath(normalizedPrefix);
+        Path scanRoot = Files.isDirectory(prefixPath) ? prefixPath : prefixPath.getParent();
+        if (scanRoot == null || !Files.exists(scanRoot)) {
+            return List.of();
+        }
+        String separator = FileSystems.getDefault().getSeparator();
+        List<String> result = new ArrayList<>();
+        try (Stream<Path> stream = Files.walk(scanRoot)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(path -> !path.getFileName().toString().endsWith(".sha256"))
+                    .forEach(path -> {
+                        String relativeKey = rootPath.relativize(path).toString().replace(separator, "/");
+                        if (relativeKey.startsWith(normalizedPrefix)) {
+                            if (contains == null || contains.isBlank() || relativeKey.contains(contains)) {
+                                result.add(relativeKey);
+                            }
+                        }
+                    });
+        } catch (IOException exception) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR, "Failed to list local storage objects by prefix.");
+        }
+        return result;
     }
 
     private Path resolveObjectPath(String objectKey) {

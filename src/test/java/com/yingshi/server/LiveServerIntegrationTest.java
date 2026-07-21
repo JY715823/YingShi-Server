@@ -1,5 +1,6 @@
 package com.yingshi.server;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.MethodOrderer;
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Requires: yingshi-server running at http://localhost:8080
  * Run: mvnw test -Dtest=LiveServerIntegrationTest
  */
+@Disabled("Requires a running server at localhost:8080; excluded from regular mvnw test runs")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class LiveServerIntegrationTest {
 

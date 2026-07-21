@@ -35,6 +35,13 @@ public interface TrashItemRepository extends JpaRepository<TrashItemEntity, Stri
             TrashItemType itemType
     );
 
+    List<TrashItemEntity> findByLibraryIdAndStateAndItemTypeAndSourcePostId(
+            String libraryId,
+            TrashItemState state,
+            TrashItemType itemType,
+            String sourcePostId
+    );
+
     List<TrashItemEntity> findByLibraryIdOrderByUpdatedAtDesc(String libraryId);
 
     @Query("SELECT MAX(t.updatedAt) FROM TrashItemEntity t WHERE t.libraryId = :libraryId")

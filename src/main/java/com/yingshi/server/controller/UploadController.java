@@ -57,19 +57,21 @@ public class UploadController {
             @RequestParam(required = false) String state,
             @RequestParam(required = false) String operationType,
             @RequestParam(required = false) Integer pageSize,
+            @RequestParam(required = false) String cursor,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        java.util.List<UploadTaskResponse> items = uploadService.listUploadHistory(
+        UploadService.UploadHistoryResult result = uploadService.listUploadHistory(
                 currentUser,
                 state,
                 operationType,
-                pageSize
+                pageSize,
+                cursor
         );
         return ApiResponse.success(
                 requestId(request),
-                items,
-                new PageInfo(1, items.size(), null, false)
+                result.items(),
+                new PageInfo(1, result.items().size(), result.nextCursor(), result.hasMore())
         );
     }
 

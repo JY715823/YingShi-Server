@@ -15,6 +15,7 @@ import com.yingshi.server.dto.content.PostDetailDto;
 import com.yingshi.server.dto.content.PostMediaDto;
 import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.dto.content.UpdatePostCoverRequest;
+import com.yingshi.server.dto.content.UpdatePostMediaBatchRequest;
 import com.yingshi.server.dto.content.UpdatePostMediaOrderRequest;
 import com.yingshi.server.dto.content.UpdatePostRequest;
 import com.yingshi.server.mapper.ContentMapper;
@@ -245,6 +246,50 @@ public class PostService {
         postRepository.save(post);
         PostDetailDto dto = buildPostDetail(post);
         notifyContentUpdated(currentUser, post, "对方调整了小相册媒体顺序。");
+        return dto;
+    }
+
+    @Transactional
+    public PostDetailDto batchRemovePostMedia(String postId, UpdatePostMediaBatchRequest request, AuthenticatedUser currentUser) {
+        String libraryId = currentUser.libraryId();
+        PostEntity post = requirePost(postId, libraryId);
+        List<String> removeMediaIds = request.removeMediaIds();
+        validateDistinctIds(removeMediaIds, ErrorCode.SMALL_ALBUM_MEDIA_ORDER_INVALID, "removeMediaIds contains duplicates.");
+
+        List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, postId);
+        Set<String> existingMediaIds = relations.stream().map(PostMediaEntity::getMediaId).collect(Collectors.toSet());
+        for (String mediaId : removeMediaIds) {
+            if (!existingMediaIds.contains(mediaId)) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.MEDIA_NOT_FOUND,
+                    "One or more removeMediaIds do not belong to the small album.");
+            }
+        }
+
+        if (relations.size() - removeMediaIds.size() <= 0) {
+            throw new ApiException(HttpStatus.CONFLICT, ErrorCode.DELETE_CONFLICT,
+                "Batch removal would leave the small album empty; delete the whole small album instead.");
+        }
+
+        List<PostMediaEntity> toRemove = relations.stream()
+            .filter(r -> removeMediaIds.contains(r.getMediaId()))
+            .toList();
+        postMediaRepository.deleteAll(toRemove);
+        postMediaRepository.flush();
+
+        List<PostMediaEntity> remaining = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, postId);
+        for (int i = 0; i < remaining.size(); i++) {
+            remaining.get(i).setSortOrder(i + 1);
+        }
+        postMediaRepository.saveAll(remaining);
+
+        if (removeMediaIds.contains(post.getCoverMediaId())) {
+            post.setCoverMediaId(remaining.isEmpty() ? null : remaining.get(0).getMediaId());
+        }
+        post.setLastModifiedByUserId(currentUser.userId());
+        postRepository.save(post);
+
+        PostDetailDto dto = buildPostDetail(post);
+        notifyContentUpdated(currentUser, post, "对方从小相册批量移除了" + removeMediaIds.size() + "项媒体。");
         return dto;
     }
 

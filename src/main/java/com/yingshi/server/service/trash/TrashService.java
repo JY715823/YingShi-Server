@@ -122,8 +122,8 @@ public class TrashService {
                         ? "Large album deleted"
                         : "Large album deleted with %d small albums".formatted(smallAlbumIds.size()),
                 smallAlbumIds,
-                mediaIds,
-                new TrashSnapshotHelper.LargeAlbumDeletedSnapshot(albumId, smallAlbumIds)
+                truncateMediaIdsForColumn(mediaIds),
+                new TrashSnapshotHelper.LargeAlbumDeletedSnapshot(albumId, smallAlbumIds, mediaIds)
         );
         TrashItemDto dto = toTrashItemDto(item);
         notifyDeleted(currentUser, "对方删除了一个大相册。", "photos:trash:" + item.getId());
@@ -201,11 +201,6 @@ public class TrashService {
 
     @Transactional
     public TrashItemDto systemDeleteMedia(String mediaId, AuthenticatedUser currentUser) {
-        return systemDeleteMediaInternal(mediaId, currentUser, Optional.empty(), true);
-    }
-
-    @Transactional
-    public TrashItemDto systemDeleteMediaAllowingEmptySmallAlbums(String mediaId, AuthenticatedUser currentUser) {
         return systemDeleteMediaInternal(mediaId, currentUser, Optional.empty(), true);
     }
 
@@ -482,6 +477,27 @@ public class TrashService {
             Optional<MediaEntity> existing = mediaRepository
                     .findFirstByLibraryIdAndSourceFingerprintAndDeletedAtIsNull(libraryId, media.getSourceFingerprint());
             if (existing.isPresent() && !existing.get().getId().equals(media.getId())) {
+                MediaEntity existingMedia = existing.get();
+                // Migrate post_media relations from the duplicate media to the existing active media
+                for (TrashSnapshotHelper.MediaSystemRelationSnapshot relationSnapshot : snapshot.relations()) {
+                    postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(relationSnapshot.postId(), libraryId)
+                            .ifPresent(post -> {
+                                if (!postMediaRepository.existsByLibraryIdAndPostIdAndMediaId(libraryId, relationSnapshot.postId(), existingMedia.getId())) {
+                                    restoreRelationOrder(libraryId, relationSnapshot.postId(), existingMedia.getId(), relationSnapshot.sortOrder());
+                                }
+                            });
+                }
+                // Migrate cover references to the existing media
+                for (String postId : snapshot.coverPostIds()) {
+                    postRepository.findByIdAndLibraryIdAndDeletedAtIsNull(postId, libraryId)
+                            .ifPresent(post -> {
+                                if (post.getCoverMediaId() == null && postMediaRepository.existsByLibraryIdAndPostIdAndMediaId(libraryId, postId, existingMedia.getId())) {
+                                    post.setCoverMediaId(existingMedia.getId());
+                                    postRepository.save(post);
+                                }
+                            });
+                }
+                // Delete the duplicate media file + DB record + comments
                 localMediaStorageService.deleteStoredMediaFiles(media.getStoragePath(), media.getId());
                 postMediaRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
                 commentRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
@@ -515,8 +531,9 @@ public class TrashService {
 
     private void purgeSmallAlbumDeleted(TrashItemEntity item, String libraryId) {
         TrashSnapshotHelper.SmallAlbumDeletedSnapshot snapshot = snapshotHelper.readSmallAlbumDeletedSnapshot(item);
+        purgeMediaSystemDeletedItemsForSmallAlbum(libraryId, snapshot.smallAlbumId());
         purgeMediaRemovedItemsForSmallAlbum(libraryId, snapshot.smallAlbumId());
-        postMediaRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.smallAlbumId());
+        purgeSmallAlbumCascade(libraryId, snapshot.smallAlbumId());
         commentRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.smallAlbumId());
         postRepository.findByIdAndLibraryId(snapshot.smallAlbumId(), libraryId).ifPresent(postRepository::delete);
     }
@@ -524,8 +541,9 @@ public class TrashService {
     private void purgeLargeAlbumDeleted(TrashItemEntity item, String libraryId) {
         TrashSnapshotHelper.LargeAlbumDeletedSnapshot snapshot = snapshotHelper.readLargeAlbumDeletedSnapshot(item);
         for (String smallAlbumId : snapshot.smallAlbumIds()) {
+            purgeMediaSystemDeletedItemsForSmallAlbum(libraryId, smallAlbumId);
             purgeMediaRemovedItemsForSmallAlbum(libraryId, smallAlbumId);
-            postMediaRepository.deleteByLibraryIdAndPostId(libraryId, smallAlbumId);
+            purgeSmallAlbumCascade(libraryId, smallAlbumId);
             commentRepository.deleteByLibraryIdAndPostId(libraryId, smallAlbumId);
             postRepository.findByIdAndLibraryId(smallAlbumId, libraryId).ifPresent(postRepository::delete);
         }
@@ -549,14 +567,55 @@ public class TrashService {
     }
 
     private void purgeMediaRemovedItemsForSmallAlbum(String libraryId, String smallAlbumId) {
-        List<TrashItemEntity> mediaRemovedItems = trashItemRepository.findByLibraryIdAndStateAndItemType(
+        List<TrashItemEntity> mediaRemovedItems = trashItemRepository.findByLibraryIdAndStateAndItemTypeAndSourcePostId(
                 libraryId,
                 TrashItemState.IN_TRASH,
-                TrashItemType.MEDIA_REMOVED
+                TrashItemType.MEDIA_REMOVED,
+                smallAlbumId
         );
-        trashItemRepository.deleteAll(mediaRemovedItems.stream()
-                .filter(mediaRemovedItem -> smallAlbumId.equals(mediaRemovedItem.getSourcePostId()))
-                .toList());
+        if (!mediaRemovedItems.isEmpty()) {
+            trashItemRepository.deleteAll(mediaRemovedItems);
+        }
+    }
+
+    /**
+     * Permanently deletes MEDIA_SYSTEM_DELETED trash items whose media belonged to the given small album.
+     * This cascades the physical media file + DB record + comments deletion before removing the trash item itself.
+     */
+    private void purgeMediaSystemDeletedItemsForSmallAlbum(String libraryId, String smallAlbumId) {
+        List<TrashItemEntity> systemDeletedItems = trashItemRepository.findByLibraryIdAndStateAndItemType(
+                libraryId,
+                TrashItemState.IN_TRASH,
+                TrashItemType.MEDIA_SYSTEM_DELETED
+        );
+        for (TrashItemEntity systemDeletedItem : systemDeletedItems) {
+            TrashSnapshotHelper.MediaSystemDeletedSnapshot snapshot = snapshotHelper.readMediaSystemDeletedSnapshot(systemDeletedItem);
+            boolean belongsToSmallAlbum = snapshot.relations().stream()
+                    .anyMatch(rel -> smallAlbumId.equals(rel.postId()));
+            if (belongsToSmallAlbum) {
+                purgeMediaSystemDeleted(systemDeletedItem, libraryId);
+                trashItemRepository.delete(systemDeletedItem);
+            }
+        }
+    }
+
+    /**
+     * Cascade-deletes media files + DB records for all media in a small album that are not referenced by other posts.
+     * Post_media relations for this small album are deleted first; remaining references (from other posts) protect the media.
+     */
+    private void purgeSmallAlbumCascade(String libraryId, String smallAlbumId) {
+        List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, smallAlbumId);
+        Set<String> mediaIds = relations.stream().map(PostMediaEntity::getMediaId).collect(Collectors.toSet());
+        postMediaRepository.deleteByLibraryIdAndPostId(libraryId, smallAlbumId);
+        for (String mediaId : mediaIds) {
+            if (!postMediaRepository.existsByLibraryIdAndMediaId(libraryId, mediaId)) {
+                mediaRepository.findByIdAndLibraryId(mediaId, libraryId).ifPresent(media -> {
+                    localMediaStorageService.deleteStoredMediaFiles(media.getStoragePath(), media.getId());
+                    commentRepository.deleteByLibraryIdAndMediaId(libraryId, mediaId);
+                    mediaRepository.delete(media);
+                });
+            }
+        }
     }
 
     private void purgeItemData(TrashItemEntity item, String libraryId) {
@@ -596,6 +655,15 @@ public class TrashService {
         item.setSnapshotJson(snapshotHelper.writeSnapshot(snapshot));
         item.setDeletedAt(Instant.now());
         return trashItemRepository.save(item);
+    }
+
+    private static final int RELATED_MEDIA_IDS_SUMMARY_LIMIT = 20;
+
+    private List<String> truncateMediaIdsForColumn(List<String> mediaIds) {
+        if (mediaIds == null || mediaIds.size() <= RELATED_MEDIA_IDS_SUMMARY_LIMIT) {
+            return mediaIds;
+        }
+        return mediaIds.subList(0, RELATED_MEDIA_IDS_SUMMARY_LIMIT);
     }
 
     private void restoreRelationOrder(String libraryId, String postId, String mediaId, int sortOrder) {
@@ -685,11 +753,24 @@ public class TrashService {
 
     private Optional<String> resolveFirstVisibleMediaId(String libraryId, String postId, String excludedMediaId) {
         List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, postId);
+        List<String> mediaIds = relations.stream()
+                .filter(r -> excludedMediaId == null || !excludedMediaId.equals(r.getMediaId()))
+                .map(PostMediaEntity::getMediaId)
+                .distinct()
+                .toList();
+        if (mediaIds.isEmpty()) {
+            return Optional.empty();
+        }
+        Set<String> existingMediaIds = mediaRepository
+                .findByLibraryIdAndIdInAndDeletedAtIsNull(libraryId, mediaIds)
+                .stream()
+                .map(MediaEntity::getId)
+                .collect(Collectors.toSet());
         for (PostMediaEntity relation : relations) {
             if (excludedMediaId != null && excludedMediaId.equals(relation.getMediaId())) {
                 continue;
             }
-            if (mediaRepository.findByIdAndLibraryIdAndDeletedAtIsNull(relation.getMediaId(), libraryId).isPresent()) {
+            if (existingMediaIds.contains(relation.getMediaId())) {
                 return Optional.of(relation.getMediaId());
             }
         }

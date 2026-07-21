@@ -1,4 +1,4 @@
-package com.yingshi.server.dto.life;
+package com.yingshi.server.dto.push;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;

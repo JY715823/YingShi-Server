@@ -239,6 +239,7 @@ Response:
 
 ## Error Codes
 
+- `AUTH_ACCOUNT_LOCKED`
 - `AUTH_INVALID_CREDENTIALS`
 - `AUTH_LOGIN_CHALLENGE_INVALID`
 - `AUTH_LOGIN_CODE_EXPIRED`
@@ -255,3 +256,13 @@ Response:
 - `NOT_FOUND`
 - `VALIDATION_ERROR`
 - `SERVER_ERROR`
+
+## Account Lockout
+
+- Triggered by `POST /api/auth/login/challenge` and `POST /api/auth/login/remembered` after `app.auth.account-lockout.max-attempts` (default 5) consecutive password failures
+- HTTP status: `429 Too Many Requests`
+- Lock duration: `app.auth.account-lockout.lock-duration` (default 15 minutes)
+- Failed counter resets to 0 on successful password validation or after lock expiry
+- Verification code failures do NOT trigger account lockout (only invalidate the challenge)
+- Response body does not include `lockedUntil` / remaining time — clients should show a generic "try again later" message
+- Lock check happens before password validation in `AuthService.requireAccountNotLocked`

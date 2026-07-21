@@ -12,11 +12,11 @@ public interface ImportedMessageSearchRepository extends JpaRepository<ImportedM
 
     List<ImportedMessageSearchEntity> findByLibraryId(String libraryId);
 
-    List<ImportedMessageSearchEntity> findByLibraryIdAndIdIn(String libraryId, Collection<Long> ids);
+    List<ImportedMessageSearchEntity> findByLibraryIdAndMessageIdIn(String libraryId, Collection<Long> messageIds);
 
     List<ImportedMessageSearchEntity> findByLibraryIdAndUpdatedAtAfter(String libraryId, Instant since);
 
-    void deleteByLibraryIdAndIdIn(String libraryId, Collection<Long> ids);
+    void deleteByLibraryIdAndMessageIdIn(String libraryId, Collection<Long> messageIds);
 
-    Optional<ImportedMessageSearchEntity> findByIdAndLibraryId(Long id, String libraryId);
+    Optional<ImportedMessageSearchEntity> findByMessageIdAndLibraryId(Long messageId, String libraryId);
 }

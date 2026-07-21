@@ -5,10 +5,12 @@ import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.auth.CurrentUser;
 import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
+import com.yingshi.server.dto.life.AddBowelEventRequest;
 import com.yingshi.server.dto.life.LifeConsoleBowelMutationResponse;
 import com.yingshi.server.dto.life.LifeConsoleHistoryResponse;
 import com.yingshi.server.dto.life.LifeConsoleMediaRequest;
 import com.yingshi.server.dto.life.LifeConsoleTodayResponse;
+import com.yingshi.server.dto.life.UpdateLocationRequest;
 import com.yingshi.server.dto.trash.TrashItemDto;
 import com.yingshi.server.service.life.LifeConsoleService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -18,6 +20,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -66,10 +69,11 @@ public class LifeConsoleController {
     @PostMapping("/media")
     public ApiResponse<LifeConsoleTodayResponse> addMedia(
             @Valid @RequestBody LifeConsoleMediaRequest requestBody,
+            @RequestParam(required = false) String zoneId,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), lifeConsoleService.addMedia(requestBody, currentUser));
+        return ApiResponse.success(requestId(request), lifeConsoleService.addMedia(requestBody, zoneId, currentUser));
     }
 
     @Operation(summary = "System delete life console media owned by the current user", security = @SecurityRequirement(name = "bearerAuth"))
@@ -86,19 +90,44 @@ public class LifeConsoleController {
     @Operation(summary = "Add a bowel event for the current user", security = @SecurityRequirement(name = "bearerAuth"))
     @PostMapping("/bowel-events")
     public ApiResponse<LifeConsoleBowelMutationResponse> addBowelEvent(
+            @RequestParam(required = false) String zoneId,
+            @RequestBody(required = false) AddBowelEventRequest body,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), lifeConsoleService.addBowelEvent(currentUser));
+        return ApiResponse.success(requestId(request), lifeConsoleService.addBowelEvent(zoneId, body, currentUser));
     }
 
     @Operation(summary = "Delete the current user's latest bowel event today", security = @SecurityRequirement(name = "bearerAuth"))
     @DeleteMapping("/bowel-events/latest")
     public ApiResponse<LifeConsoleBowelMutationResponse> deleteLatestBowelEvent(
+            @RequestParam(required = false) String zoneId,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), lifeConsoleService.deleteLatestBowelEvent(currentUser));
+        return ApiResponse.success(requestId(request), lifeConsoleService.deleteLatestBowelEvent(zoneId, currentUser));
+    }
+
+    @Operation(summary = "Update the location of a life console media owned by the current user", security = @SecurityRequirement(name = "bearerAuth"))
+    @PatchMapping("/media/{mediaId}/location")
+    public ApiResponse<LifeConsoleTodayResponse> updateMediaLocation(
+            @PathVariable String mediaId,
+            @Valid @RequestBody UpdateLocationRequest requestBody,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), lifeConsoleService.updateMediaLocation(mediaId, requestBody, currentUser));
+    }
+
+    @Operation(summary = "Update the location of a bowel event owned by the current user", security = @SecurityRequirement(name = "bearerAuth"))
+    @PatchMapping("/bowel-events/{eventId}/location")
+    public ApiResponse<LifeConsoleBowelMutationResponse> updateBowelEventLocation(
+            @PathVariable String eventId,
+            @Valid @RequestBody UpdateLocationRequest requestBody,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), lifeConsoleService.updateBowelEventLocation(eventId, requestBody, currentUser));
     }
 
     private String requestId(HttpServletRequest request) {

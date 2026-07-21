@@ -57,7 +57,7 @@ public class ChatImportedZipService {
     private final ImportedResourceRepository resourceRepository;
     private final ImportedMessageSearchRepository messageSearchRepository;
     private final ObjectStorageService objectStorageService;
-    private final ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ChatImportedZipService(
             ImportedChatRepository chatRepository,
@@ -65,8 +65,7 @@ public class ChatImportedZipService {
             ImportedParticipantRepository participantRepository,
             ImportedResourceRepository resourceRepository,
             ImportedMessageSearchRepository messageSearchRepository,
-            ObjectStorageService objectStorageService,
-            ObjectMapper objectMapper
+            ObjectStorageService objectStorageService
     ) {
         this.chatRepository = chatRepository;
         this.messageRepository = messageRepository;
@@ -74,7 +73,6 @@ public class ChatImportedZipService {
         this.resourceRepository = resourceRepository;
         this.messageSearchRepository = messageSearchRepository;
         this.objectStorageService = objectStorageService;
-        this.objectMapper = objectMapper;
     }
 
     // -----------------------------------------------------------------------

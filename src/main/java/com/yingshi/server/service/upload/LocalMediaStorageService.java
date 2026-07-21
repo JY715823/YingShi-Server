@@ -77,9 +77,10 @@ public class LocalMediaStorageService {
             long displayTimeMillis,
             MediaType mediaType,
             String originalFileName,
-            MultipartFile file
+            MultipartFile file,
+            String domain
     ) {
-        String objectKey = originalObjectKeyForUpload(mediaId, displayTimeMillis, mediaType, originalFileName);
+        String objectKey = originalObjectKeyForUpload(mediaId, displayTimeMillis, mediaType, originalFileName, domain);
         try {
             ObjectMetadata metadata;
             try (InputStream inputStream = file.getInputStream()) {
@@ -103,10 +104,11 @@ public class LocalMediaStorageService {
             String mediaId,
             long displayTimeMillis,
             MediaType mediaType,
-            String originalFileName
+            String originalFileName,
+            String domain
     ) {
         String extension = resolveExtension(originalFileName, mediaType);
-        Path directory = rootPath.resolve("originals").resolve(monthBucket(displayTimeMillis)).normalize();
+        Path directory = rootPath.resolve(domain).resolve("originals").resolve(monthBucket(displayTimeMillis)).normalize();
         Path target = directory.resolve(mediaId + extension).normalize();
         return toRelativeStoragePath(target);
     }
@@ -866,13 +868,16 @@ public class LocalMediaStorageService {
             return List.of();
         }
         List<String> deletedKeys = new java.util.ArrayList<>();
-        for (String objectKey : List.of(
-                sourceObjectKey,
-                imagePreviewObjectKey(storagePath, cacheKey, 1280),
-                videoCoverObjectKey(storagePath, cacheKey, 1280)
-        )) {
-            if (objectStorageService.delete(objectKey)) {
-                deletedKeys.add(objectKey);
+        // Delete the original media object
+        if (objectStorageService.delete(sourceObjectKey)) {
+            deletedKeys.add(sourceObjectKey);
+        }
+        // Delete all derived objects (preview/cover variants across all dimensions) via prefix scan
+        String derivedPrefix = previewDirectoryObjectKey(storagePath) + "/";
+        List<String> derivedKeys = objectStorageService.listByPrefix(derivedPrefix, cacheKey + "-");
+        for (String derivedKey : derivedKeys) {
+            if (objectStorageService.delete(derivedKey)) {
+                deletedKeys.add(derivedKey);
             }
         }
         return deletedKeys;

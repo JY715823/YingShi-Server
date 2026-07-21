@@ -80,7 +80,7 @@ public class SyncService {
 
         long lifeConsoleVersion = maxOf(
                 bowelEventRepository.findLatestUpdatedAtByLibraryId(libraryId),
-                postRepository.findLatestUpdatedAtByLibraryIdAndDeletedAtIsNullAndSystemKeyIsNotNull(libraryId),
+                postRepository.findLatestUpdatedAtByLibraryIdAndDomainAndDeletedAtIsNullAndSystemKeyIsNotNull(libraryId, "life"),
                 ledgerSnapshotRepository.findLatestUpdatedAtByLibraryId(libraryId)
         );
 

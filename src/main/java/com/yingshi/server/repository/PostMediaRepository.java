@@ -20,6 +20,8 @@ public interface PostMediaRepository extends JpaRepository<PostMediaEntity, Stri
 
     boolean existsByLibraryIdAndPostIdAndMediaId(String libraryId, String postId, String mediaId);
 
+    boolean existsByLibraryIdAndMediaId(String libraryId, String mediaId);
+
     void deleteByLibraryIdAndPostId(String libraryId, String postId);
 
     void deleteByLibraryIdAndMediaId(String libraryId, String mediaId);

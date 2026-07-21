@@ -129,3 +129,9 @@ app:
       enabled: ${APP_PUSH_TOKEN_CLEANUP_ENABLED:true}
       fixed-delay-millis: ${APP_PUSH_TOKEN_CLEANUP_FIXED_DELAY_MILLIS:3600000}   # 每小时
       initial-delay-millis: ${APP_PUSH_TOKEN_CLEANUP_INITIAL_DELAY_MILLIS:300000} # 启动后5分钟
+  geocoding:
+    amap:
+      enabled: ${AMAP_GEOCODING_ENABLED:true}
+      key: ${AMAP_GEOCODING_KEY:}
+      endpoint: ${AMAP_GEOCODING_ENDPOINT:https://restapi.amap.com/v3/geocode/regeo}
+      timeout-millis: ${AMAP_GEOCODING_TIMEOUT_MILLIS:3000}

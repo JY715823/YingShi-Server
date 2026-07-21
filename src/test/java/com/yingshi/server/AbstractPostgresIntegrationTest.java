@@ -10,6 +10,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
@@ -46,6 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Import(AbstractPostgresIntegrationTest.TestCapturingConfig.class)
 public abstract class AbstractPostgresIntegrationTest {
 
     protected static final String ACCOUNT_A = "1085060329@qq.com";
@@ -53,11 +55,16 @@ public abstract class AbstractPostgresIntegrationTest {
     protected static final String TEMP_PASSWORD = "123456";
     protected static final String TEST_DEVICE_ID = "testcontainers-device";
 
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
+    // Singleton container pattern: started once, shared across all test classes
+    // to avoid stale datasource URLs when Spring caches the test context.
+    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
             .withDatabaseName("yingshi_test")
             .withUsername("test")
             .withPassword("test");
+
+    static {
+        postgres.start();
+    }
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {

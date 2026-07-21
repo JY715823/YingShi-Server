@@ -27,7 +27,11 @@ public record MediaDto(
         String recordOwnerUserId,
         String uploadedByUserId,
         List<String> smallAlbumIds,
-        List<MediaAccessDto> access
+        List<MediaAccessDto> access,
+        // FR-18: Location tracking (nullable, optional)
+        Double latitude,
+        Double longitude,
+        String locationLabel
 ) {
     @JsonIgnore
     public List<String> postIds() {

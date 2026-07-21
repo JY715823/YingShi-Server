@@ -87,11 +87,24 @@ public class UploadTaskEntity extends LibraryScopedEntity {
     @Column(length = 255)
     private String sourceItemId;
 
+    @Column(length = 20)
+    private String domain;
+
     @Column(length = 512)
     private String errorMessage;
 
     @Column
     private Instant dismissedAt;
+
+    // FR-18: Location tracking (transferred to MediaEntity on build)
+    @Column(name = "latitude")
+    private Double latitude;
+
+    @Column(name = "longitude")
+    private Double longitude;
+
+    @Column(name = "location_label", length = 255)
+    private String locationLabel;
 
     public String getId() {
         return id;
@@ -285,6 +298,14 @@ public class UploadTaskEntity extends LibraryScopedEntity {
         this.sourceItemId = sourceItemId;
     }
 
+    public String getDomain() {
+        return domain;
+    }
+
+    public void setDomain(String domain) {
+        this.domain = domain;
+    }
+
     public String getErrorMessage() {
         return errorMessage;
     }
@@ -299,5 +320,29 @@ public class UploadTaskEntity extends LibraryScopedEntity {
 
     public void setDismissedAt(Instant dismissedAt) {
         this.dismissedAt = dismissedAt;
+    }
+
+    public Double getLatitude() {
+        return latitude;
+    }
+
+    public void setLatitude(Double latitude) {
+        this.latitude = latitude;
+    }
+
+    public Double getLongitude() {
+        return longitude;
+    }
+
+    public void setLongitude(Double longitude) {
+        this.longitude = longitude;
+    }
+
+    public String getLocationLabel() {
+        return locationLabel;
+    }
+
+    public void setLocationLabel(String locationLabel) {
+        this.locationLabel = locationLabel;
     }
 }

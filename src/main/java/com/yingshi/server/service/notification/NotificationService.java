@@ -87,11 +87,12 @@ public class NotificationService {
     }
 
     @Transactional(readOnly = true)
-    public List<NotificationDto> listNotifications(AuthenticatedUser currentUser, Integer limit) {
+    public List<NotificationDto> listNotifications(AuthenticatedUser currentUser, Integer limit, String cursor) {
         return materializeNotifications(
                 collectNotificationEvents(currentUser),
                 currentUser.userId(),
-                normalizeLimit(limit)
+                normalizeLimit(limit),
+                cursor
         );
     }
 
@@ -100,6 +101,7 @@ public class NotificationService {
         return materializeNotifications(
                 collectNotificationEvents(currentUser),
                 currentUser.userId(),
+                null,
                 null
         ).stream()
                 .filter(notification -> notification.notificationId().equals(notificationId))
@@ -153,7 +155,7 @@ public class NotificationService {
         List<UploadTaskEntity> uploadTasks = uploadTaskRepository.findByLibraryIdOrderByUpdatedAtDesc(libraryId).stream()
                 .filter(task -> task.getState() == UploadState.SUCCESS || task.getState() == UploadState.CANCELLED)
                 .toList();
-        List<BowelEventEntity> bowelEvents = bowelEventRepository.findTop50ByLibraryIdOrderByOccurredAtMillisDesc(libraryId);
+        List<BowelEventEntity> bowelEvents = bowelEventRepository.findTop50ByLibraryIdAndDeletedAtIsNullOrderByOccurredAtMillisDesc(libraryId);
         LedgerSnapshotEntity ledgerSnapshot = ledgerSnapshotRepository.findByLibraryId(libraryId).orElse(null);
 
         // Filter out posts belonging to life-console albums (人物痕迹, 吃饭, etc.).
@@ -200,11 +202,34 @@ public class NotificationService {
     private List<NotificationDto> materializeNotifications(
             List<NotificationEvent> events,
             String userId,
-            Integer limit
+            Integer limit,
+            String cursor
     ) {
+        // Step 1: cursor filtering (before limit truncation)
+        // Cursor format: "createdAtMillis:notificationId" (composite key to avoid
+        // losing items with the same timestamp)
+        List<NotificationEvent> filteredEvents = events;
+        if (cursor != null && !cursor.isBlank()) {
+            String[] parts = cursor.split(":", 2);
+            if (parts.length == 2) {
+                try {
+                    long cursorTimestamp = Long.parseLong(parts[0]);
+                    String cursorId = parts[1];
+                    filteredEvents = events.stream()
+                            .filter(e -> e.createdAtMillis() < cursorTimestamp
+                                    || (e.createdAtMillis() == cursorTimestamp
+                                    && e.notificationId().compareTo(cursorId) > 0))
+                            .toList();
+                } catch (NumberFormatException ignored) {
+                    // Invalid cursor format, fall through to no filter
+                }
+            }
+        }
+
+        // Step 2: limit truncation
         List<NotificationEvent> visibleEvents = limit == null
-                ? events
-                : events.stream().limit(limit).toList();
+                ? filteredEvents
+                : filteredEvents.stream().limit(limit).toList();
         if (visibleEvents.isEmpty()) {
             return List.of();
         }
@@ -410,13 +435,17 @@ public class NotificationService {
                 ? actor.displayName() + "删除了你的小相册评论"
                 : actor.displayName() + "删除了你的媒体评论";
         long createdAtMillis = toEpochMillis(comment.getDeletedAt());
+        String deletedContent = abbreviate(comment.getContent(), 80);
+        String deletedBody = deletedContent != null && !deletedContent.isBlank()
+                ? "被删除的评论：" + deletedContent
+                : "你的评论被对方删除。";
         return new NotificationEvent(
                 "comment-delete:" + comment.getId() + ":" + createdAtMillis,
                 "comment_delete",
                 "photos",
                 "comment",
                 title,
-                "你的评论被对方删除。",
+                deletedBody,
                 createdAtMillis,
                 actor,
                 "comment:" + comment.getId(),
@@ -434,9 +463,11 @@ public class NotificationService {
 
     private NotificationEvent toPostEvent(PostEntity post, AuthenticatedUser currentUser, NotificationSupportContext context) {
         long updatedAtMillis = toEpochMillis(post.getUpdatedAt());
+        String albumName = safeTitle(post.getTitle());
+        String title = "「" + albumName + "」有内容更新";
         String summary = abbreviate(post.getSummary(), 120);
         String body = summary == null || summary.isBlank()
-                ? "「" + safeTitle(post.getTitle()) + "」有内容更新。"
+                ? title + "。"
                 : summary;
         String actorUserId = emptyToNull(post.getLastModifiedByUserId());
         if (actorUserId == null) {
@@ -467,15 +498,16 @@ public class NotificationService {
 
     private NotificationEvent toTrashEvent(TrashItemEntity item, AuthenticatedUser currentUser, NotificationSupportContext context) {
         long createdAtMillis = toEpochMillis(item.getUpdatedAt());
+        String itemName = safeTitle(item.getTitle());
         String title = switch (item.getState()) {
-            case IN_TRASH -> "内容已移入回收站";
-            case PENDING_CLEANUP -> "内容等待彻底清理";
-            case RESTORED -> "内容已从回收站恢复";
+            case IN_TRASH -> "「" + itemName + "」已移入回收站";
+            case PENDING_CLEANUP -> "「" + itemName + "」等待彻底清理";
+            case RESTORED -> "「" + itemName + "」已从回收站恢复";
         };
         String body = switch (item.getState()) {
-            case IN_TRASH -> safeTitle(item.getTitle()) + " 已进入回收站。";
-            case PENDING_CLEANUP -> safeTitle(item.getTitle()) + " 正在等待永久清理。";
-            case RESTORED -> safeTitle(item.getTitle()) + " 已恢复到原位置。";
+            case IN_TRASH -> itemName + " 已进入回收站。";
+            case PENDING_CLEANUP -> itemName + " 正在等待永久清理。";
+            case RESTORED -> itemName + " 已恢复到原位置。";
         };
         ActorDescriptor actor = actorDescriptor(item.getActorUserId(), context.usersById().get(item.getActorUserId()), null);
         return new NotificationEvent(
@@ -632,20 +664,20 @@ public class NotificationService {
     }
 
     private String resolvePostSummary(PostEntity post) {
-        return post == null ? "Small album" : safeTitle(post.getTitle());
+        return post == null ? "小相册" : safeTitle(post.getTitle());
     }
 
     private String resolveMediaSummary(MediaEntity media, String mediaId) {
         if (media == null) {
-            return mediaId == null || mediaId.isBlank() ? "Media" : "Media " + mediaId;
+            return mediaId == null || mediaId.isBlank() ? "媒体" : "媒体文件";
         }
-        String label = media.getMediaType() == MediaType.VIDEO ? "Video" : "Photo";
-        return label + " " + media.getId();
+        String label = media.getMediaType() == MediaType.VIDEO ? "视频" : "照片";
+        return label;
     }
 
     private String resolveUserName(UserEntity user) {
         return user == null || user.getDisplayName() == null || user.getDisplayName().isBlank()
-                ? "Another member"
+                ? "对方"
                 : user.getDisplayName().trim();
     }
 

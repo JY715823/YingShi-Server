@@ -1,4 +1,4 @@
-package com.yingshi.server.dto.life;
+package com.yingshi.server.dto.push;
 
 public record RegisterPushTokenResponse(
         String tokenId,

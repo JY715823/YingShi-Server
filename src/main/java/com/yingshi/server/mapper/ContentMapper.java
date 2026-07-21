@@ -143,7 +143,10 @@ public class ContentMapper {
                 media.getRecordOwnerUserId(),
                 media.getUploadedByUserId(),
                 normalizedSmallAlbumIds,
-                access(media, localMediaUrl, previewMediaUrl, originalUrl, videoUrl, coverUrl)
+                access(media, localMediaUrl, previewMediaUrl, originalUrl, videoUrl, coverUrl),
+                media.getLatitude(),
+                media.getLongitude(),
+                media.getLocationLabel()
         );
     }
 

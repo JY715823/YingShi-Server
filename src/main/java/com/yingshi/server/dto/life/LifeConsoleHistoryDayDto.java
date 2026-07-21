@@ -8,6 +8,8 @@ public record LifeConsoleHistoryDayDto(
         String date,
         String displayLabel,
         List<MediaDto> selfMedia,
-        List<MediaDto> partnerMedia
+        List<MediaDto> partnerMedia,
+        // FR-18: representative location label of the day (latest media's location, nullable)
+        String locationLabel
 ) {
 }

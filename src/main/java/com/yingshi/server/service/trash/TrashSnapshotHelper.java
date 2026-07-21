@@ -81,7 +81,7 @@ public class TrashSnapshotHelper {
     }
 
     public LargeAlbumDeletedSnapshot readLargeAlbumDeletedSnapshot(TrashItemEntity item) {
-        return readSnapshot(item.getSnapshotJson(), LargeAlbumDeletedSnapshot.class);
+        return readSnapshot(normalizeLegacySnapshotJson(item), LargeAlbumDeletedSnapshot.class);
     }
 
     private String normalizeLegacySnapshotJson(TrashItemEntity item) {
@@ -144,7 +144,7 @@ public class TrashSnapshotHelper {
     public record SmallAlbumDeletedSnapshot(String smallAlbumId) {
     }
 
-    public record LargeAlbumDeletedSnapshot(String albumId, List<String> smallAlbumIds) {
+    public record LargeAlbumDeletedSnapshot(String albumId, List<String> smallAlbumIds, List<String> mediaIds) {
     }
 
     public record MediaRemovedSnapshot(String smallAlbumId, String mediaId, int sortOrder, boolean wasCover) {

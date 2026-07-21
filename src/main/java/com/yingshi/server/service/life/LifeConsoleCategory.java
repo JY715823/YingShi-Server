@@ -7,7 +7,7 @@ import org.springframework.http.HttpStatus;
 import java.util.Locale;
 
 public enum LifeConsoleCategory {
-    PERSON("life.person", "人物记录", true),
+    PERSON("life.person", "人物记录", false),
     MEAL("life.meal", "吃饭记录", false);
 
     private final String albumSystemKey;

@@ -701,6 +701,9 @@ class YingshiServerApplicationTests {
 
     @Test
     void restoringDeletedLifeConsoleAlbumKeepsOnlyOneActiveSystemKeyAfterRecreation() throws Exception {
+        // Round 8 行为变更: 删除系统相册后再次上传时，ensureSystemAlbum 会复活软删除的相册
+        // (因为 uk_albums_library_system_key 唯一约束不含 deleted_at，无法 INSERT 新的)。
+        // 所以"删除+重新上传"不再创建新相册，而是复活同一个。此测试验证该行为。
         String accessToken = loginAndGetAccessToken();
         String firstPersonMediaId = uploadTestMedia(accessToken, "life-person-restore-a.jpg", "life-person-restore-a-" + System.nanoTime());
 
@@ -742,29 +745,30 @@ class YingshiServerApplicationTests {
                                 """.formatted(secondPersonMediaId)))
                 .andExpect(status().isOk());
 
+        // Round 8: 上传后复活了同一个相册 (deletedAlbumId)，而不是创建新的
         MvcResult recreatedAlbumsResult = mockMvc.perform(get("/api/albums")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andReturn();
         List<Map<String, Object>> recreatedSystemAlbums = readFilteredList(recreatedAlbumsResult, "$.data[?(@.systemKey=='life.person')]");
         assertEquals(1, recreatedSystemAlbums.size());
-        String recreatedAlbumId = String.valueOf(recreatedSystemAlbums.get(0).get("albumId"));
+        // 复活后相册 ID 不变 (不再是新创建的)
+        assertEquals(deletedAlbumId, String.valueOf(recreatedSystemAlbums.get(0).get("albumId")));
 
+        // 从回收站恢复: 相册已经被复活 (未软删除)，恢复操作应当幂等无副作用
         mockMvc.perform(post("/api/trash/items/" + trashItemId + "/restore")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.state").value("restored"));
 
+        // 最终: 仍然只有一个 systemKey='life.person' 的相册，且保留 systemKey
         MvcResult restoredAlbumsResult = mockMvc.perform(get("/api/albums")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andReturn();
         List<Map<String, Object>> restoredSystemAlbums = readFilteredList(restoredAlbumsResult, "$.data[?(@.systemKey=='life.person')]");
         assertEquals(1, restoredSystemAlbums.size());
-        assertEquals(recreatedAlbumId, String.valueOf(restoredSystemAlbums.get(0).get("albumId")));
-        List<Map<String, Object>> restoredOriginalAlbum = readFilteredList(restoredAlbumsResult, "$.data[?(@.albumId=='%s')]".formatted(deletedAlbumId));
-        assertEquals(1, restoredOriginalAlbum.size());
-        assertEquals(null, restoredOriginalAlbum.get(0).get("systemKey"));
+        assertEquals(deletedAlbumId, String.valueOf(restoredSystemAlbums.get(0).get("albumId")));
 
         mockMvc.perform(get("/api/albums/" + deletedAlbumId + "/small-albums")
                         .header("Authorization", "Bearer " + accessToken))
@@ -1475,7 +1479,9 @@ class YingshiServerApplicationTests {
         List<Map<String, Object>> mealAlbums = readFilteredList(albumsResult, "$.data[?(@.systemKey=='life.meal')]");
         assertEquals(1, personAlbums.size());
         assertEquals(1, mealAlbums.size());
-        assertEquals(Boolean.TRUE, personAlbums.get(0).get("includeInPhotoFeed"));
+        // Round 8: LifeConsoleCategory.PERSON.includeInPhotoFeed 已改为 false
+        // (LifeConsole 照片由模块自己管理，不再混入主照片流)
+        assertEquals(Boolean.FALSE, personAlbums.get(0).get("includeInPhotoFeed"));
         assertEquals(Boolean.FALSE, mealAlbums.get(0).get("includeInPhotoFeed"));
 
         YearMonth currentMonth = YearMonth.now(ZoneId.of("Asia/Shanghai"));

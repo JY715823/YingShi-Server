@@ -29,6 +29,9 @@ public class AlbumEntity extends LibraryScopedEntity {
     @Column(nullable = false)
     private Boolean includeInPhotoFeed = true;
 
+    @Column(nullable = false, length = 20)
+    private String domain = "photo";
+
     @Column
     private Instant deletedAt;
 
@@ -78,6 +81,14 @@ public class AlbumEntity extends LibraryScopedEntity {
 
     public void setIncludeInPhotoFeed(Boolean includeInPhotoFeed) {
         this.includeInPhotoFeed = includeInPhotoFeed;
+    }
+
+    public String getDomain() {
+        return domain;
+    }
+
+    public void setDomain(String domain) {
+        this.domain = domain;
     }
 
     public Instant getDeletedAt() {

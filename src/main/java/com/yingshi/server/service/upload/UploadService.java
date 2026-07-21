@@ -18,11 +18,13 @@ import com.yingshi.server.dto.upload.UploadTokenResponse;
 import com.yingshi.server.mapper.ContentMapper;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.UploadTaskRepository;
+import com.yingshi.server.service.geocoding.GeocodingService;
 import com.yingshi.server.service.storage.ObjectKeyPolicy;
 import com.yingshi.server.service.storage.ObjectMetadata;
 import com.yingshi.server.service.storage.ObjectStorageService;
 import com.yingshi.server.service.storage.PresignedObjectUrl;
 import jakarta.persistence.EntityManager;
+import org.springframework.data.domain.PageRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -55,6 +57,7 @@ public class UploadService {
     private final StorageProperties storageProperties;
     private final UploadNotificationService uploadNotificationService;
     private final EntityManager entityManager;
+    private final GeocodingService geocodingService;
 
     public UploadService(
             UploadTaskRepository uploadTaskRepository,
@@ -64,7 +67,8 @@ public class UploadService {
             ObjectStorageService objectStorageService,
             StorageProperties storageProperties,
             UploadNotificationService uploadNotificationService,
-            EntityManager entityManager
+            EntityManager entityManager,
+            GeocodingService geocodingService
     ) {
         this.uploadTaskRepository = uploadTaskRepository;
         this.mediaRepository = mediaRepository;
@@ -74,6 +78,7 @@ public class UploadService {
         this.storageProperties = storageProperties;
         this.uploadNotificationService = uploadNotificationService;
         this.entityManager = entityManager;
+        this.geocodingService = geocodingService;
     }
 
     @Transactional
@@ -91,11 +96,13 @@ public class UploadService {
 
         MediaType mediaType = parseMediaType(request.mediaType());
         String mediaId = IdGenerator.newId("media");
+        String domain = request.domain() != null && !request.domain().isBlank() ? request.domain().trim() : "photo";
         String objectKey = localMediaStorageService.originalObjectKeyForUpload(
                 mediaId,
                 displayTimeMillis,
                 mediaType,
-                request.fileName()
+                request.fileName(),
+                domain
         );
 
         UploadTaskEntity task = new UploadTaskEntity();
@@ -119,9 +126,16 @@ public class UploadService {
         task.setOperationTitle(normalizeBounded(request.operationTitle(), 255));
         task.setOperationMediaCount(request.operationMediaCount());
         task.setSourceItemId(normalizeBounded(request.sourceItemId(), 255));
+        task.setDomain(domain);
         task.setState(UploadState.WAITING);
         task.setExpireAt(Instant.now().plus(UPLOAD_TTL));
-        task.setMediaId(mediaId);
+        // FR-18: persist location fields on the upload task so they can be transferred to MediaEntity later
+        task.setLatitude(request.latitude());
+        task.setLongitude(request.longitude());
+        task.setLocationLabel(request.locationLabel());
+        // mediaId is not set here to avoid FK constraint violation on upload_tasks.media_id → media(id).
+        // The media entity is created during file upload or confirmation, where mediaId is resolved
+        // from task.getMediaId() (null → generated) — see uploadFile() and confirmUpload().
         boolean directUpload = storageProperties.directUploadEnabled()
                 && objectStorageService.supportsPresignedPut()
                 && objectStorageService.isDirectUploadAvailable();
@@ -168,11 +182,12 @@ public class UploadService {
     }
 
     @Transactional(readOnly = true)
-    public List<UploadTaskResponse> listUploadHistory(
+    public UploadHistoryResult listUploadHistory(
             AuthenticatedUser currentUser,
             String rawState,
             String rawOperationType,
-            Integer requestedPageSize
+            Integer requestedPageSize,
+            String cursor
     ) {
         UploadState state = parseOptionalState(rawState);
         String operationType = normalizeOperationType(rawOperationType);
@@ -180,18 +195,52 @@ public class UploadService {
                 ? DEFAULT_HISTORY_PAGE_SIZE
                 : Math.max(1, Math.min(requestedPageSize, MAX_HISTORY_PAGE_SIZE));
         Instant updatedAfter = Instant.now().minus(HISTORY_RETENTION);
-        return uploadTaskRepository.findVisibleHistory(
-                        currentUser.libraryId(),
-                        currentUser.userId(),
-                        updatedAfter,
-                        state,
-                        operationType
-                )
-                .stream()
-                .limit(pageSize)
+
+        Instant cursorUpdatedAt = null;
+        String cursorId = null;
+        if (cursor != null && !cursor.isBlank()) {
+            int colonIndex = cursor.lastIndexOf(':');
+            if (colonIndex > 0) {
+                try {
+                    cursorUpdatedAt = Instant.ofEpochMilli(Long.parseLong(cursor.substring(0, colonIndex)));
+                    cursorId = cursor.substring(colonIndex + 1);
+                } catch (Exception ignored) {
+                    // Invalid cursor — treat as no cursor (return first page)
+                }
+            }
+        }
+
+        PageRequest pageRequest = PageRequest.of(0, pageSize + 1);
+        List<UploadTaskEntity> entities = uploadTaskRepository.findVisibleHistoryPage(
+                currentUser.libraryId(),
+                currentUser.userId(),
+                updatedAfter,
+                state,
+                operationType,
+                cursorUpdatedAt,
+                cursorId,
+                pageRequest
+        );
+        boolean hasMore = entities.size() > pageSize;
+        List<UploadTaskEntity> pageItems = hasMore
+                ? entities.subList(0, pageSize)
+                : entities;
+        String nextCursor = null;
+        if (hasMore && !pageItems.isEmpty()) {
+            UploadTaskEntity last = pageItems.get(pageItems.size() - 1);
+            nextCursor = last.getUpdatedAt().toEpochMilli() + ":" + last.getId();
+        }
+        List<UploadTaskResponse> items = pageItems.stream()
                 .map(this::toUploadTaskResponse)
                 .toList();
+        return new UploadHistoryResult(items, nextCursor, hasMore);
     }
+
+    public record UploadHistoryResult(
+            List<UploadTaskResponse> items,
+            String nextCursor,
+            boolean hasMore
+    ) {}
 
     @Transactional
     public UploadCompleteResponse uploadFile(String uploadId, MultipartFile file, AuthenticatedUser currentUser) {
@@ -233,7 +282,8 @@ public class UploadService {
                 task.getDisplayTimeMillis(),
                 task.getMediaType(),
                 task.getFileName(),
-                file
+                file,
+                task.getDomain() != null ? task.getDomain() : "photo"
         );
         ensureUploadCanComplete(task, storedFile.storagePath(), null);
 
@@ -569,7 +619,22 @@ public class UploadService {
         media.setOriginalObjectKey(storedFile.objectKey());
         media.setChecksum(storedFile.checksum());
         media.setSourceFingerprint(task.getSourceFingerprint());
+        media.setDomain(task.getDomain() != null ? task.getDomain() : "photo");
         media.setUploadedByUserId(task.getUploadedByUserId());
+        // FR-18: transfer location fields from upload task, fall back to server-side reverse geocoding when label missing
+        Double lat = task.getLatitude();
+        Double lng = task.getLongitude();
+        String label = task.getLocationLabel();
+        if (lat != null && lng != null && (label == null || label.isBlank())) {
+            try {
+                label = geocodingService.reverseGeocode(lat, lng);
+            } catch (Exception ex) {
+                logger.warn("Geocoding failed for upload task {}: {}", task.getId(), ex.getMessage());
+            }
+        }
+        media.setLatitude(lat);
+        media.setLongitude(lng);
+        media.setLocationLabel(label);
         return media;
     }
 

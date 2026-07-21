@@ -50,6 +50,9 @@ public class PostEntity extends LibraryScopedEntity {
     @Column(name = "participant_user_ids", length = 2000)
     private String participantUserIds;
 
+    @Column(nullable = false, length = 20)
+    private String domain = "photo";
+
     @Column
     private Instant deletedAt;
 
@@ -158,6 +161,14 @@ public class PostEntity extends LibraryScopedEntity {
 
     public void setParticipantUserIds(String participantUserIds) {
         this.participantUserIds = participantUserIds;
+    }
+
+    public String getDomain() {
+        return domain;
+    }
+
+    public void setDomain(String domain) {
+        this.domain = domain;
     }
 
     public Instant getDeletedAt() {

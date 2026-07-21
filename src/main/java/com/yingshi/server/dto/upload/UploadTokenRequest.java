@@ -56,7 +56,17 @@ public record UploadTokenRequest(
         @Positive(message = "operationMediaCount must be positive.")
         Integer operationMediaCount,
 
+        @Size(max = 20, message = "domain must be at most 20 characters.")
+        String domain,
+
         @Size(max = 255, message = "sourceItemId must be at most 255 characters.")
-        String sourceItemId
+        String sourceItemId,
+
+        // FR-18: Location tracking (optional, all nullable)
+        Double latitude,
+        Double longitude,
+
+        @Size(max = 255, message = "locationLabel must be at most 255 characters.")
+        String locationLabel
 ) {
 }

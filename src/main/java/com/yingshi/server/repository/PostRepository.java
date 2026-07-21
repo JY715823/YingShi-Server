@@ -18,6 +18,13 @@ public interface PostRepository extends JpaRepository<PostEntity, String> {
 
     Optional<PostEntity> findByLibraryIdAndAlbumIdAndSystemKeyAndDeletedAtIsNull(String libraryId, String albumId, String systemKey);
 
+    @Query("SELECT p FROM PostEntity p WHERE p.libraryId = :libraryId AND p.albumId = :albumId AND p.systemKey = :systemKey AND p.domain = :domain AND p.deletedAt IS NULL")
+    Optional<PostEntity> findByLibraryIdAndAlbumIdAndSystemKeyAndDomainAndDeletedAtIsNull(@Param("libraryId") String libraryId, @Param("albumId") String albumId, @Param("systemKey") String systemKey, @Param("domain") String domain);
+
+    // Round 8 Bug 修复: 查找软删除的月度 small_album 用于复活 (uk_small_albums_library_album_system_key 不含 deleted_at)
+    @Query("SELECT p FROM PostEntity p WHERE p.libraryId = :libraryId AND p.albumId = :albumId AND p.systemKey = :systemKey AND p.domain = :domain ORDER BY p.deletedAt NULLS FIRST")
+    Optional<PostEntity> findByLibraryIdAndAlbumIdAndSystemKeyAndDomain(@Param("libraryId") String libraryId, @Param("albumId") String albumId, @Param("systemKey") String systemKey, @Param("domain") String domain);
+
     List<PostEntity> findByLibraryIdAndIdIn(String libraryId, Collection<String> ids);
 
     List<PostEntity> findByLibraryIdAndIdInAndDeletedAtIsNull(String libraryId, Collection<String> ids);
@@ -41,6 +48,13 @@ public interface PostRepository extends JpaRepository<PostEntity, String> {
     List<PostEntity> findByLibraryIdAndAlbumIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(
             @Param("libraryId") String libraryId,
             @Param("albumId") String albumId
+    );
+
+    @Query("SELECT p FROM PostEntity p WHERE p.libraryId = :libraryId AND p.albumId = :albumId AND p.domain = :domain AND p.deletedAt IS NULL ORDER BY p.displayTimeMillis DESC, p.updatedAt DESC")
+    List<PostEntity> findByLibraryIdAndAlbumIdAndDomainAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(
+            @Param("libraryId") String libraryId,
+            @Param("albumId") String albumId,
+            @Param("domain") String domain
     );
 
     @Query("""
@@ -67,4 +81,7 @@ public interface PostRepository extends JpaRepository<PostEntity, String> {
 
     @Query("SELECT MAX(p.updatedAt) FROM PostEntity p WHERE p.libraryId = :libraryId AND p.deletedAt IS NULL AND p.systemKey IS NOT NULL")
     Optional<Instant> findLatestUpdatedAtByLibraryIdAndDeletedAtIsNullAndSystemKeyIsNotNull(@Param("libraryId") String libraryId);
+
+    @Query("SELECT MAX(p.updatedAt) FROM PostEntity p WHERE p.libraryId = :libraryId AND p.domain = :domain AND p.deletedAt IS NULL AND p.systemKey IS NOT NULL")
+    Optional<Instant> findLatestUpdatedAtByLibraryIdAndDomainAndDeletedAtIsNullAndSystemKeyIsNotNull(@Param("libraryId") String libraryId, @Param("domain") String domain);
 }
