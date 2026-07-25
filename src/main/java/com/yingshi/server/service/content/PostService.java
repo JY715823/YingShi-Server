@@ -245,7 +245,9 @@ public class PostService {
         post.setLastModifiedByUserId(currentUser.userId());
         postRepository.save(post);
         PostDetailDto dto = buildPostDetail(post);
-        notifyContentUpdated(currentUser, post, "对方调整了小相册媒体顺序。");
+        // 调整媒体顺序不发送推送通知（用户需求）：
+        // 顺序调整是低频操作，对方刷新页面时自然会看到最新顺序，无需即时通知打扰
+        // notifyContentUpdated(currentUser, post, "对方调整了小相册媒体顺序。");
         return dto;
     }
 
@@ -289,7 +291,10 @@ public class PostService {
         postRepository.save(post);
 
         PostDetailDto dto = buildPostDetail(post);
-        notifyContentUpdated(currentUser, post, "对方从小相册批量移除了" + removeMediaIds.size() + "项媒体。");
+        // 批量移除媒体不发送推送通知（用户需求）：
+        // 1. 批量移除是低频操作，对方刷新页面时自然会看到最新状态
+        // 2. 移除的媒体已不在小相册中，通知跳转可能找不到目标
+        // notifyContentUpdated(currentUser, post, "对方从小相册批量移除了" + removeMediaIds.size() + "项媒体。");
         return dto;
     }
 
@@ -302,7 +307,7 @@ public class PostService {
                 currentUser.libraryId(),
                 currentUser.userId(),
                 PushNotificationService.CATEGORY_PHOTOS_CONTENT_UPDATE,
-                "照片内容有更新",
+                "小相册",
                 body,
                 "photos:small-album:" + post.getId(),
                 "post:" + post.getId() + ":" + toEpochMillis(post.getUpdatedAt()),

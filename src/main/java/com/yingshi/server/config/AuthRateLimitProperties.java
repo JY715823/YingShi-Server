@@ -10,6 +10,7 @@ public class AuthRateLimitProperties {
     private boolean enabled = true;
     private int maxRequests = 20;
     private Duration window = Duration.ofMinutes(5);
+    private boolean trustForwardedHeaders;
 
     public boolean isEnabled() {
         return enabled;
@@ -33,5 +34,13 @@ public class AuthRateLimitProperties {
 
     public void setWindow(Duration window) {
         this.window = window;
+    }
+
+    public boolean isTrustForwardedHeaders() {
+        return trustForwardedHeaders;
+    }
+
+    public void setTrustForwardedHeaders(boolean trustForwardedHeaders) {
+        this.trustForwardedHeaders = trustForwardedHeaders;
     }
 }

@@ -603,7 +603,10 @@ public class LocalMediaStorageService {
         }
         candidates.add(sourcePath);
 
-        Path previewRoot = rootPath.resolve("previews").normalize();
+        Path previewRoot = rootPath.resolve(previewDirectoryObjectKey(storagePath)).normalize();
+        if (!previewRoot.startsWith(rootPath)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.UPLOAD_STORAGE_ERROR, "Derived media path is outside of the configured local storage root.");
+        }
         if (Files.exists(previewRoot)) {
             try (Stream<Path> stream = Files.walk(previewRoot)) {
                 stream
@@ -667,11 +670,23 @@ public class LocalMediaStorageService {
 
     private Path previewDirectoryFor(Path sourcePath) {
         Path relative = rootPath.relativize(sourcePath.toAbsolutePath().normalize());
-        if (relative.getNameCount() >= 3 && "originals".equals(relative.getName(0).toString())) {
-            return rootPath.resolve("previews")
-                    .resolve(relative.getName(1).toString())
-                    .resolve(relative.getName(2).toString())
-                    .normalize();
+        if (relative.getNameCount() >= 3) {
+            int originalsIndex = -1;
+            for (int index = 0; index < relative.getNameCount(); index++) {
+                if ("originals".equals(relative.getName(index).toString())) {
+                    originalsIndex = index;
+                    break;
+                }
+            }
+            if (originalsIndex >= 0 && relative.getNameCount() >= originalsIndex + 3) {
+                Path previewRoot = originalsIndex == 0
+                        ? rootPath.resolve("previews")
+                        : rootPath.resolve(relative.subpath(0, originalsIndex)).resolve("previews");
+                return previewRoot
+                        .resolve(relative.getName(originalsIndex + 1).toString())
+                        .resolve(relative.getName(originalsIndex + 2).toString())
+                        .normalize();
+        }
         }
         return rootPath.resolve("previews").normalize();
     }
@@ -704,8 +719,7 @@ public class LocalMediaStorageService {
 
     private boolean isDerivedFileForCacheKey(Path path, String cacheKey) {
         Path normalized = path.toAbsolutePath().normalize();
-        Path previewRoot = rootPath.resolve("previews").normalize();
-        if (!normalized.startsWith(previewRoot)) {
+        if (!normalized.startsWith(rootPath)) {
             return false;
         }
         String fileName = normalized.getFileName().toString();
@@ -753,8 +767,13 @@ public class LocalMediaStorageService {
         if (objectKey != null) {
             String normalized = objectKey.replace('\\', '/');
             String[] parts = normalized.split("/");
-            if (parts.length >= 4 && "originals".equals(parts[0])) {
-                return "previews/" + parts[1] + "/" + parts[2];
+            for (int originalsIndex = 0; originalsIndex < parts.length; originalsIndex++) {
+                if ("originals".equals(parts[originalsIndex]) && parts.length >= originalsIndex + 3) {
+                    String prefix = originalsIndex == 0
+                            ? ""
+                            : String.join("/", java.util.Arrays.copyOf(parts, originalsIndex)) + "/";
+                    return prefix + "previews/" + parts[originalsIndex + 1] + "/" + parts[originalsIndex + 2];
+                }
             }
         }
         return "previews";

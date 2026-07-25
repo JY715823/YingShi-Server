@@ -2,6 +2,8 @@ package com.yingshi.server.service;
 
 import com.yingshi.server.dto.health.HealthResponse;
 import com.yingshi.server.service.storage.ObjectStorageService;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.info.BuildProperties;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
@@ -19,15 +21,18 @@ public class HealthService {
     private final Environment environment;
     private final DataSource dataSource;
     private final ObjectStorageService objectStorageService;
+    private final BuildProperties buildProperties;
 
     public HealthService(
             Environment environment,
             DataSource dataSource,
-            ObjectStorageService objectStorageService
+            ObjectStorageService objectStorageService,
+            ObjectProvider<BuildProperties> buildPropertiesProvider
     ) {
         this.environment = environment;
         this.dataSource = dataSource;
         this.objectStorageService = objectStorageService;
+        this.buildProperties = buildPropertiesProvider.getIfAvailable();
     }
 
     public HealthResponse getHealth() {
@@ -41,7 +46,9 @@ public class HealthService {
                 environment.getProperty("spring.application.name", "yingshi-server"),
                 activeProfiles,
                 checks,
-                Instant.now()
+                Instant.now(),
+                buildProperties != null ? buildProperties.getVersion() : "unknown",
+                buildProperties != null ? String.valueOf(buildProperties.getTime()) : "unknown"
         );
     }
 
@@ -57,9 +64,13 @@ public class HealthService {
         try {
             String provider = objectStorageService.provider();
             String bucket = objectStorageService.bucket();
-            return provider == null || provider.isBlank() || bucket == null || bucket.isBlank()
-                    ? "DOWN"
-                    : "UP";
+            if (provider == null || provider.isBlank() || bucket == null || bucket.isBlank()) {
+                return "DOWN";
+            }
+            // FR-10: Actually probe storage connectivity by checking a non-existent key
+            // This validates the full chain: credentials, network, bucket access
+            objectStorageService.exists("__health_check_probe__");
+            return "UP";
         } catch (Exception exception) {
             return "DOWN";
         }

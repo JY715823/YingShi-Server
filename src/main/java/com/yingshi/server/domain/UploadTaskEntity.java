@@ -87,8 +87,16 @@ public class UploadTaskEntity extends LibraryScopedEntity {
     @Column(length = 255)
     private String sourceItemId;
 
+    /** R3-DATA-003: Client-provided idempotency key to prevent duplicate upload token creation. */
+    @Column(length = 128)
+    private String idempotencyKey;
+
     @Column(length = 20)
     private String domain;
+
+    // life 模块分类：PERSON / MEAL / null（非 life 上传任务）
+    @Column(name = "life_category", length = 20)
+    private String lifeCategory;
 
     @Column(length = 512)
     private String errorMessage;
@@ -298,12 +306,28 @@ public class UploadTaskEntity extends LibraryScopedEntity {
         this.sourceItemId = sourceItemId;
     }
 
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
+    }
+
     public String getDomain() {
         return domain;
     }
 
     public void setDomain(String domain) {
         this.domain = domain;
+    }
+
+    public String getLifeCategory() {
+        return lifeCategory;
+    }
+
+    public void setLifeCategory(String lifeCategory) {
+        this.lifeCategory = lifeCategory;
     }
 
     public String getErrorMessage() {

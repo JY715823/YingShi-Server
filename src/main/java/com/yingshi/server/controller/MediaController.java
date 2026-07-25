@@ -10,6 +10,7 @@ import com.yingshi.server.dto.content.MediaDto;
 import com.yingshi.server.dto.content.MediaFeedPage;
 import com.yingshi.server.dto.content.MediaImportStatusDto;
 import com.yingshi.server.dto.content.MediaImportStatusRequest;
+import com.yingshi.server.dto.content.UpdateMediaTimeRequest;
 import com.yingshi.server.service.content.MediaService;
 import com.yingshi.server.service.content.MediaFilePayload;
 import com.yingshi.server.service.trash.TrashService;
@@ -28,6 +29,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -140,6 +142,18 @@ public class MediaController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), trashService.systemDeleteMedia(mediaId, currentUser));
+    }
+
+    @Operation(summary = "Update the display time of a media owned by the current user", security = @SecurityRequirement(name = "bearerAuth"))
+    @PatchMapping("/{mediaId}/time")
+    public ApiResponse<Long> updateMediaTime(
+            @PathVariable String mediaId,
+            @Valid @RequestBody UpdateMediaTimeRequest requestBody,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        Long updatedDisplayTimeMillis = mediaService.updateMediaTime(mediaId, requestBody.displayTimeMillis(), currentUser);
+        return ApiResponse.success(requestId(request), updatedDisplayTimeMillis);
     }
 
     private String requestId(HttpServletRequest request) {

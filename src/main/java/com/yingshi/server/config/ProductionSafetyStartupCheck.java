@@ -53,12 +53,37 @@ public class ProductionSafetyStartupCheck implements ApplicationRunner {
             throw new IllegalStateException("STORAGE_CDN_AUTH_KEY must be configured when CDN is enabled for production.");
         }
 
-        // CORS wildcard check — warn but do not block startup
+        // R3-SEC-003: CORS must be explicit whitelist in production — empty = block startup
         String corsOrigins = environment.getProperty("app.cors.allowed-origins", "");
         if (corsOrigins == null || corsOrigins.isBlank()) {
-            log.warn("CORS WARNING: app.cors.allowed-origins is empty. "
-                    + "All origins are allowed with credentials=true. "
-                    + "Set APP_CORS_ALLOWED_ORIGINS for production deployments.");
+            throw new IllegalStateException(
+                    "app.cors.allowed-origins must be explicitly configured for production. "
+                    + "Set APP_CORS_ALLOWED_ORIGINS to a comma-separated list of HTTPS origins.");
+        }
+        for (String origin : corsOrigins.split(",")) {
+            String normalized = origin.trim().toLowerCase();
+            if (normalized.isBlank() || normalized.contains("*") || !normalized.startsWith("https://")) {
+                throw new IllegalStateException(
+                        "APP_CORS_ALLOWED_ORIGINS must contain only explicit HTTPS origins without wildcards."
+                );
+            }
+        }
+
+        // R3-OPS-001: Swagger/OpenAPI must be disabled in production
+        boolean swaggerEnabled = environment.getProperty("springdoc.swagger-ui.enabled", Boolean.class, false);
+        boolean apiDocsEnabled = environment.getProperty("springdoc.api-docs.enabled", Boolean.class, false);
+        if (swaggerEnabled || apiDocsEnabled) {
+            throw new IllegalStateException(
+                    "Swagger/OpenAPI must be disabled in production. "
+                    + "Set springdoc.swagger-ui.enabled=false and springdoc.api-docs.enabled=false.");
+        }
+
+        // R3-SEC-001: Dev seed must not be enabled in production
+        boolean devSeedEnabled = environment.getProperty("app.dev-seed.enabled", Boolean.class, false);
+        if (devSeedEnabled) {
+            throw new IllegalStateException(
+                    "app.dev-seed.enabled must be false in production. "
+                    + "Development seed accounts with weak passwords cannot be used in production.");
         }
     }
 

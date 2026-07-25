@@ -44,6 +44,26 @@ build/
 ### VS Code ###
 .vscode/
 
+## FR-9: Log files
+*.log
+
+## FR-9: SSL certificates
+nginx/certs/
+*.pem
+*.crt
+*.key
+
+## FR-9: Java keystores
+*.jks
+*.p12
+*.keystore
+
+## FR-9: Docker override
+docker-compose.override.yml
+
+## APK download directory
+nginx/download/
+
 ## 媒体
 *.mp4
 *.mp3

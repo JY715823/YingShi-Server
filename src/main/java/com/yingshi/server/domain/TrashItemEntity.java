@@ -63,6 +63,11 @@ public class TrashItemEntity extends LibraryScopedEntity {
     @Column(name = "actor_user_id", length = 255)
     private String actorUserId;
 
+    // P1-2 改造: life 回收站分类（PERSON/MEAL），用于区分 life 媒体回收站 vs 照片回收站
+    // lifeCategory != null 表示 life 媒体回收站，lifeCategory == null 表示照片回收站
+    @Column(name = "life_category", length = 20)
+    private String lifeCategory;
+
     public String getId() {
         return id;
     }
@@ -181,5 +186,13 @@ public class TrashItemEntity extends LibraryScopedEntity {
 
     public void setActorUserId(String actorUserId) {
         this.actorUserId = actorUserId;
+    }
+
+    public String getLifeCategory() {
+        return lifeCategory;
+    }
+
+    public void setLifeCategory(String lifeCategory) {
+        this.lifeCategory = lifeCategory;
     }
 }

@@ -30,12 +30,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.time.YearMonth;
-import java.time.ZoneId;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -58,6 +56,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(properties = {
         "yingshi.dev.test-import.enabled=false",
         "yingshi.dev.recovery.enabled=false",
+        "app.push.upload-notification-delay-millis=0",
         "spring.datasource.url=jdbc:h2:mem:yingshi-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
         "spring.jpa.hibernate.ddl-auto=create-drop"
 })
@@ -172,61 +171,6 @@ class YingshiServerApplicationTests {
                         .content("{}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.success").value(true));
-    }
-
-    @Test
-    void ledgerSnapshotCanRoundTripAcrossSharedLibrary() throws Exception {
-        String demoAAccessToken = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
-        String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
-
-        mockMvc.perform(get("/api/ledger/snapshot")
-                        .header("Authorization", "Bearer " + demoAAccessToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.versionMillis").value(0))
-                .andExpect(jsonPath("$.data.payload").doesNotExist());
-
-        mockMvc.perform(put("/api/ledger/snapshot")
-                        .header("Authorization", "Bearer " + demoAAccessToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "payload": {
-                                    "books": [
-                                      {
-                                        "id": "book-001",
-                                        "name": "共享账本",
-                                        "template": "daily",
-                                        "currencyCode": "CNY",
-                                        "currencySymbol": "¥",
-                                        "coverColor": 4283215696,
-                                        "sortOrder": 0,
-                                        "createdAtMillis": 1780000000000,
-                                        "updatedAtMillis": 1780000000000,
-                                        "isDeleted": false
-                                      }
-                                    ],
-                                    "categories": [],
-                                    "accounts": [],
-                                    "transactions": [],
-                                    "budgets": [],
-                                    "categoryBudgets": [],
-                                    "deletedItems": [],
-                                    "recurringRules": [],
-                                    "recurringOccurrences": []
-                                }
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.versionMillis").isNumber())
-                .andExpect(jsonPath("$.data.payload.books[0].id").value("book-001"))
-                .andExpect(jsonPath("$.data.payload.books[0].name").value("共享账本"));
-
-        mockMvc.perform(get("/api/ledger/snapshot")
-                        .header("Authorization", "Bearer " + demoBAccessToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.versionMillis").isNumber())
-                .andExpect(jsonPath("$.data.payload.books[0].id").value("book-001"))
-                .andExpect(jsonPath("$.data.payload.books[0].name").value("共享账本"));
     }
 
     @Test
@@ -627,10 +571,11 @@ class YingshiServerApplicationTests {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("TRASH_ITEM_NOT_FOUND"));
 
-        mockMvc.perform(get("/api/albums")
+        MvcResult albumsResult = mockMvc.perform(get("/api/albums")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[?(@.albumId=='album_002')]").value(List.of()));
+                .andReturn();
+        assertEquals(List.of(), readFilteredList(albumsResult, "$.data[?(@.albumId=='album_002')]"));
 
         mockMvc.perform(get("/api/albums/album_002/small-albums")
                         .header("Authorization", "Bearer " + accessToken))
@@ -656,54 +601,29 @@ class YingshiServerApplicationTests {
                                   "category": "PERSON",
                                   "mediaIds": ["%s"]
                                 }
-                                """.formatted(personMediaId)))
+                        """.formatted(personMediaId)))
                 .andExpect(status().isOk());
 
         MvcResult albumsResult = mockMvc.perform(get("/api/albums")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andReturn();
-        List<Map<String, Object>> systemAlbums = readFilteredList(albumsResult, "$.data[?(@.systemKey=='life.person')]");
-        assertEquals(1, systemAlbums.size());
-        String systemAlbumId = String.valueOf(systemAlbums.get(0).get("albumId"));
+        assertEquals(List.of(), readFilteredList(albumsResult, "$.data[?(@.systemKey=='life.person' || @.systemKey=='life.meal')]") );
 
-        mockMvc.perform(patch("/api/albums/" + systemAlbumId)
-                        .header("Authorization", "Bearer " + accessToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "title": "不该改名"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.albumId").value(systemAlbumId))
-                .andExpect(jsonPath("$.data.title").value("不该改名"));
-
-        MvcResult deleteResult = mockMvc.perform(delete("/api/albums/" + systemAlbumId)
+        mockMvc.perform(get("/api/life-console/today")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.itemType").value("largeAlbumDeleted"))
+                .andExpect(jsonPath("$.data.personSelf.mediaItems[?(@.mediaId=='%s')]".formatted(personMediaId)).isNotEmpty());
+
+        MvcResult feedResult = mockMvc.perform(get("/api/media/feed")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
                 .andReturn();
-
-        String trashItemId = readField(deleteResult, "/data/trashItemId");
-
-        mockMvc.perform(post("/api/trash/items/" + trashItemId + "/restore")
-                        .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.state").value("restored"));
-
-        mockMvc.perform(get("/api/albums")
-                        .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[?(@.albumId=='%s')].title".formatted(systemAlbumId)).value(List.of("不该改名")))
-                .andExpect(jsonPath("$.data[?(@.albumId=='%s')].systemKey".formatted(systemAlbumId)).value(List.of("life.person")));
+        assertEquals(List.of(), readFilteredList(feedResult, "$.data[?(@.mediaId=='%s')]".formatted(personMediaId)));
     }
 
     @Test
     void restoringDeletedLifeConsoleAlbumKeepsOnlyOneActiveSystemKeyAfterRecreation() throws Exception {
-        // Round 8 行为变更: 删除系统相册后再次上传时，ensureSystemAlbum 会复活软删除的相册
-        // (因为 uk_albums_library_system_key 唯一约束不含 deleted_at，无法 INSERT 新的)。
-        // 所以"删除+重新上传"不再创建新相册，而是复活同一个。此测试验证该行为。
         String accessToken = loginAndGetAccessToken();
         String firstPersonMediaId = uploadTestMedia(accessToken, "life-person-restore-a.jpg", "life-person-restore-a-" + System.nanoTime());
 
@@ -715,21 +635,14 @@ class YingshiServerApplicationTests {
                                   "category": "PERSON",
                                   "mediaIds": ["%s"]
                                 }
-                                """.formatted(firstPersonMediaId)))
+                        """.formatted(firstPersonMediaId)))
                 .andExpect(status().isOk());
 
-        MvcResult firstAlbumsResult = mockMvc.perform(get("/api/albums")
+        MvcResult deleteResult = mockMvc.perform(delete("/api/life-console/media/" + firstPersonMediaId)
+                        .queryParam("category", "PERSON")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andReturn();
-        List<Map<String, Object>> firstSystemAlbums = readFilteredList(firstAlbumsResult, "$.data[?(@.systemKey=='life.person')]");
-        assertEquals(1, firstSystemAlbums.size());
-        String deletedAlbumId = String.valueOf(firstSystemAlbums.get(0).get("albumId"));
-
-        MvcResult deleteResult = mockMvc.perform(delete("/api/albums/" + deletedAlbumId)
-                        .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.itemType").value("largeAlbumDeleted"))
+                .andExpect(jsonPath("$.data.itemType").value("mediaSystemDeleted"))
                 .andReturn();
         String trashItemId = readField(deleteResult, "/data/trashItemId");
 
@@ -745,35 +658,22 @@ class YingshiServerApplicationTests {
                                 """.formatted(secondPersonMediaId)))
                 .andExpect(status().isOk());
 
-        // Round 8: 上传后复活了同一个相册 (deletedAlbumId)，而不是创建新的
-        MvcResult recreatedAlbumsResult = mockMvc.perform(get("/api/albums")
-                        .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isOk())
-                .andReturn();
-        List<Map<String, Object>> recreatedSystemAlbums = readFilteredList(recreatedAlbumsResult, "$.data[?(@.systemKey=='life.person')]");
-        assertEquals(1, recreatedSystemAlbums.size());
-        // 复活后相册 ID 不变 (不再是新创建的)
-        assertEquals(deletedAlbumId, String.valueOf(recreatedSystemAlbums.get(0).get("albumId")));
-
-        // 从回收站恢复: 相册已经被复活 (未软删除)，恢复操作应当幂等无副作用
         mockMvc.perform(post("/api/trash/items/" + trashItemId + "/restore")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.state").value("restored"));
 
-        // 最终: 仍然只有一个 systemKey='life.person' 的相册，且保留 systemKey
-        MvcResult restoredAlbumsResult = mockMvc.perform(get("/api/albums")
+        mockMvc.perform(get("/api/life-console/today")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.personSelf.mediaItems[?(@.mediaId=='%s')]".formatted(firstPersonMediaId)).isNotEmpty())
+                .andExpect(jsonPath("$.data.personSelf.mediaItems[?(@.mediaId=='%s')]".formatted(secondPersonMediaId)).isNotEmpty());
+
+        MvcResult albumsResult = mockMvc.perform(get("/api/albums")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andReturn();
-        List<Map<String, Object>> restoredSystemAlbums = readFilteredList(restoredAlbumsResult, "$.data[?(@.systemKey=='life.person')]");
-        assertEquals(1, restoredSystemAlbums.size());
-        assertEquals(deletedAlbumId, String.valueOf(restoredSystemAlbums.get(0).get("albumId")));
-
-        mockMvc.perform(get("/api/albums/" + deletedAlbumId + "/small-albums")
-                        .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()").value(1));
+        assertEquals(List.of(), readFilteredList(albumsResult, "$.data[?(@.systemKey=='life.person' || @.systemKey=='life.meal')]") );
     }
 
     @Test
@@ -1141,7 +1041,7 @@ class YingshiServerApplicationTests {
         MediaEntity uploadedMedia = mediaRepository.findById(mediaId).orElseThrow();
         assertEquals("local", uploadedMedia.getStorageProvider());
         assertEquals("yingshi-media", uploadedMedia.getBucket());
-        assertEquals("originals/2026/04/" + mediaId + ".jpg", uploadedMedia.getOriginalObjectKey());
+        assertEquals("photo/originals/2026/04/" + mediaId + ".jpg", uploadedMedia.getOriginalObjectKey());
         assertEquals(uploadedMedia.getStoragePath(), uploadedMedia.getOriginalObjectKey());
         assertNotNull(uploadedMedia.getChecksum());
         assertFalse(uploadedMedia.getOriginalObjectKey().contains("://"));
@@ -1259,7 +1159,7 @@ class YingshiServerApplicationTests {
         assertEquals("/api/media/files/" + mediaId + "?variant=cover", readField(uploadResult, "/data/media/previewUrl"));
         assertEquals("/api/media/files/" + mediaId + "?variant=cover", readField(uploadResult, "/data/media/coverUrl"));
         assertEquals("/api/media/files/" + mediaId, uploadedMedia.getVideoUrl());
-        assertEquals("originals/2026/04/" + mediaId + ".mp4", uploadedMedia.getOriginalObjectKey());
+        assertEquals("photo/originals/2026/04/" + mediaId + ".mp4", uploadedMedia.getOriginalObjectKey());
 
         mockMvc.perform(get("/api/media/files/" + mediaId)
                         .header("Authorization", "Bearer " + accessToken))
@@ -1268,7 +1168,7 @@ class YingshiServerApplicationTests {
     }
 
     @Test
-    void localVideoUploadWarmsCoverWhenVideoFrameExtractorIsAvailable() throws Exception {
+    void localVideoUploadWarmsCoverWhenFfmpegIsAvailable() throws Exception {
         String accessToken = loginAndGetAccessToken();
         byte[] fileBytes = tinyMp4Bytes();
 
@@ -1304,8 +1204,8 @@ class YingshiServerApplicationTests {
 
         String mediaId = readField(uploadResult, "/data/media/mediaId");
         MediaEntity uploadedMedia = mediaRepository.findById(mediaId).orElseThrow();
-        assertEquals("originals/2026/04/" + mediaId + ".mp4", uploadedMedia.getOriginalObjectKey());
-        assertEquals("previews/2026/04/" + mediaId + "-cover-v2-1280.jpg", uploadedMedia.getCoverObjectKey());
+        assertEquals("photo/originals/2026/04/" + mediaId + ".mp4", uploadedMedia.getOriginalObjectKey());
+        assertEquals("photo/previews/2026/04/" + mediaId + "-cover-v2-1280.jpg", uploadedMedia.getCoverObjectKey());
         assertEquals(uploadedMedia.getCoverObjectKey(), uploadedMedia.getPreviewObjectKey());
 
         mockMvc.perform(get("/api/media/files/" + mediaId)
@@ -1313,6 +1213,52 @@ class YingshiServerApplicationTests {
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Type", "image/jpeg"));
+    }
+
+    @Test
+    void uploadFailureMarksTaskAsFailed() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+
+        // 1. 申请上传 token
+        MvcResult tokenResult = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fileName": "failure-demo.jpg",
+                                  "mimeType": "image/jpeg",
+                                  "fileSizeBytes": 1024,
+                                  "mediaType": "image",
+                                  "width": 100,
+                                  "height": 100,
+                                  "displayTimeMillis": 1777416600000,
+                                  "sourceFingerprint": "test-upload-failure-%d"
+                                }
+                                """.formatted(System.nanoTime())))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String uploadId = readField(tokenResult, "/data/uploadId");
+
+        // 2. 调用 confirmUpload 传入不存在的 objectKey，触发 metadataForObjectKey 返回 null
+        mockMvc.perform(post("/api/uploads/" + uploadId + "/confirm")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "etag": "fake-etag",
+                                  "objectKey": "nonexistent/failure-demo-object-key-%d"
+                                }
+                                """.formatted(System.nanoTime())))
+                .andExpect(status().isBadRequest());
+
+        // 3. 查询 task 状态，验证 state=FAILED, errorMessage 非空, completedAtMillis 非空
+        mockMvc.perform(get("/api/uploads/" + uploadId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.state").value("failed"))
+                .andExpect(jsonPath("$.data.errorMessage").isNotEmpty())
+                .andExpect(jsonPath("$.data.completedAtMillis").isNotEmpty());
     }
 
     @Test
@@ -1475,33 +1421,15 @@ class YingshiServerApplicationTests {
                         .header("Authorization", "Bearer " + demoAAccessToken))
                 .andExpect(status().isOk())
                 .andReturn();
-        List<Map<String, Object>> personAlbums = readFilteredList(albumsResult, "$.data[?(@.systemKey=='life.person')]");
-        List<Map<String, Object>> mealAlbums = readFilteredList(albumsResult, "$.data[?(@.systemKey=='life.meal')]");
-        assertEquals(1, personAlbums.size());
-        assertEquals(1, mealAlbums.size());
-        // Round 8: LifeConsoleCategory.PERSON.includeInPhotoFeed 已改为 false
-        // (LifeConsole 照片由模块自己管理，不再混入主照片流)
-        assertEquals(Boolean.FALSE, personAlbums.get(0).get("includeInPhotoFeed"));
-        assertEquals(Boolean.FALSE, mealAlbums.get(0).get("includeInPhotoFeed"));
+        assertEquals(List.of(), readFilteredList(albumsResult, "$.data[?(@.systemKey=='life.person' || @.systemKey=='life.meal')]") );
 
-        YearMonth currentMonth = YearMonth.now(ZoneId.of("Asia/Shanghai"));
-        String expectedMonthTitle = "%04d年%02d月".formatted(currentMonth.getYear(), currentMonth.getMonthValue());
-        String personAlbumId = (String) personAlbums.get(0).get("albumId");
-        String mealAlbumId = (String) mealAlbums.get(0).get("albumId");
-        MvcResult personSmallAlbumsResult = mockMvc.perform(get("/api/albums/" + personAlbumId + "/small-albums")
+        MvcResult historyResult = mockMvc.perform(get("/api/life-console/history")
                         .header("Authorization", "Bearer " + demoAAccessToken))
                 .andExpect(status().isOk())
                 .andReturn();
-        MvcResult mealSmallAlbumsResult = mockMvc.perform(get("/api/albums/" + mealAlbumId + "/small-albums")
-                        .header("Authorization", "Bearer " + demoAAccessToken))
-                .andExpect(status().isOk())
-                .andReturn();
-        List<Map<String, Object>> personSmallAlbums = readFilteredList(personSmallAlbumsResult, "$.data[?(@.systemKey=='%s')]".formatted(currentMonth));
-        List<Map<String, Object>> mealSmallAlbums = readFilteredList(mealSmallAlbumsResult, "$.data[?(@.systemKey=='%s')]".formatted(currentMonth));
-        assertEquals(1, personSmallAlbums.size());
-        assertEquals(1, mealSmallAlbums.size());
-        assertEquals(expectedMonthTitle, personSmallAlbums.get(0).get("title"));
-        assertEquals(expectedMonthTitle, mealSmallAlbums.get(0).get("title"));
+        String historyBody = historyResult.getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertTrue(historyBody.contains(personMediaId));
+        assertTrue(historyBody.contains(mealMediaId));
 
         MvcResult feedResult = mockMvc.perform(get("/api/media/feed")
                         .header("Authorization", "Bearer " + demoAAccessToken))
@@ -1509,7 +1437,7 @@ class YingshiServerApplicationTests {
                 .andReturn();
         List<Map<String, Object>> personFeedItems = readFilteredList(feedResult, "$.data[?(@.mediaId=='%s')]".formatted(personMediaId));
         List<Map<String, Object>> mealFeedItems = readFilteredList(feedResult, "$.data[?(@.mediaId=='%s')]".formatted(mealMediaId));
-        assertEquals(1, personFeedItems.size());
+        assertEquals(0, personFeedItems.size());
         assertEquals(0, mealFeedItems.size());
 
         mockMvc.perform(delete("/api/life-console/media/" + personMediaId)
@@ -1691,7 +1619,7 @@ class YingshiServerApplicationTests {
     }
 
     @Test
-    void pushDeviceTokenRegistrationAndLifeConsoleChangePushWork() throws Exception {
+    void pushDeviceTokenRegistrationDoesNotDuplicateLifeConsoleSseViaFcm() throws Exception {
         String demoAAccessToken = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
         String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
         capturingPushMessageSender.clear();
@@ -1724,13 +1652,8 @@ class YingshiServerApplicationTests {
                         .header("Authorization", "Bearer " + demoAAccessToken))
                 .andExpect(status().isOk());
 
-        assertEquals(1, capturingPushMessageSender.deliveries.size());
-        CapturedPushDelivery delivery = capturingPushMessageSender.deliveries.get(0);
-        assertEquals(List.of("fcm-token-b"), delivery.tokens);
-        assertEquals("life_console.changed", delivery.data.get("type"));
-        assertEquals("life_console.changed", delivery.data.get("event"));
-        assertEquals("user_demo_a", delivery.data.get("actorUserId"));
-        assertEquals("bowel_added", delivery.data.get("reason"));
+        Thread.sleep(250L);
+        assertTrue(capturingPushMessageSender.deliveries.isEmpty());
     }
 
     @Test
@@ -2020,12 +1943,12 @@ class YingshiServerApplicationTests {
                 .andReturn();
 
         String mediaId = readField(uploadResult, "/data/media/mediaId");
-        Path originalPath = Path.of("local-storage", "originals", "2026", "04", mediaId + ".jpg");
+        Path originalPath = Path.of("local-storage", "photo", "originals", "2026", "04", mediaId + ".jpg");
         assertTrue(Files.exists(originalPath), "uploaded original should exist before purge");
         MediaEntity mediaBeforePreview = mediaRepository.findById(mediaId).orElseThrow();
         assertEquals("local", mediaBeforePreview.getStorageProvider());
         assertEquals("yingshi-media", mediaBeforePreview.getBucket());
-        assertEquals("originals/2026/04/" + mediaId + ".jpg", mediaBeforePreview.getOriginalObjectKey());
+        assertEquals("photo/originals/2026/04/" + mediaId + ".jpg", mediaBeforePreview.getOriginalObjectKey());
         assertNotNull(mediaBeforePreview.getChecksum());
 
         MvcResult deleteResult = mockMvc.perform(delete("/api/media/" + mediaId)
@@ -2041,9 +1964,9 @@ class YingshiServerApplicationTests {
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk());
         MediaEntity mediaAfterPreview = mediaRepository.findById(mediaId).orElseThrow();
-        assertEquals("previews/2026/04/" + mediaId + "-preview-v2-1280.jpg", mediaAfterPreview.getPreviewObjectKey());
+        assertEquals("photo/previews/2026/04/" + mediaId + "-preview-v2-1280.jpg", mediaAfterPreview.getPreviewObjectKey());
         assertFalse(mediaAfterPreview.getPreviewObjectKey().contains("://"));
-        Path previewPath = Path.of("local-storage", "previews", "2026", "04", mediaId + "-preview-v2-1280.jpg");
+        Path previewPath = Path.of("local-storage", "photo", "previews", "2026", "04", mediaId + "-preview-v2-1280.jpg");
         assertTrue(Files.exists(previewPath), "generated preview should exist before purge");
 
         mockMvc.perform(post("/api/trash/items/" + trashItemId + "/purge")
@@ -2103,7 +2026,7 @@ class YingshiServerApplicationTests {
 
         mockMvc.perform(get("/api/media/files/media_003")
                         .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isOk());
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -2341,7 +2264,7 @@ class YingshiServerApplicationTests {
     }
 
     static class CapturingPushMessageSender implements PushMessageSender {
-        private final List<CapturedPushDelivery> deliveries = new ArrayList<>();
+        private final List<CapturedPushDelivery> deliveries = new CopyOnWriteArrayList<>();
 
         @Override
         public PushDeliveryResult sendDataMessage(List<PushDeviceTokenEntity> targetTokens, Map<String, String> data) {

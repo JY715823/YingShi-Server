@@ -57,7 +57,6 @@ app:
   production-safety:
     enabled: false
   push:
-    self-fallback-enabled: false
     fcm:
       enabled: false
 

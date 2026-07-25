@@ -47,6 +47,19 @@ public class TrashController {
         return ApiResponse.success(requestId(request), trashService.listTrash(itemType, page, size, currentUser));
     }
 
+    /**
+     * P1-2 改造: life 回收站列表（按 category 过滤，PERSON/MEAL/null=所有 life）。
+     */
+    @Operation(summary = "List life trash items by category", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping("/life-items")
+    public ApiResponse<List<TrashItemDto>> listLifeTrash(
+            @RequestParam(required = false) String category,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), trashService.listLifeTrash(category, currentUser));
+    }
+
     @Operation(summary = "Get trash item detail", security = @SecurityRequirement(name = "bearerAuth"))
     @GetMapping("/items/{trashItemId}")
     public ApiResponse<TrashDetailDto> getTrashDetail(
@@ -104,6 +117,19 @@ public class TrashController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), trashService.getPendingCleanup(currentUser));
+    }
+
+    /**
+     * P1-2 改造: life 回收站 24h 撤回中心（pending cleanup by category）。
+     */
+    @Operation(summary = "List life pending cleanup items by category", security = @SecurityRequirement(name = "bearerAuth"))
+    @GetMapping("/life-pending-cleanup")
+    public ApiResponse<List<PendingCleanupDto>> getLifePendingCleanup(
+            @RequestParam(required = false) String category,
+            @CurrentUser AuthenticatedUser currentUser,
+            HttpServletRequest request
+    ) {
+        return ApiResponse.success(requestId(request), trashService.getLifePendingCleanup(category, currentUser));
     }
 
     private String requestId(HttpServletRequest request) {

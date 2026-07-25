@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.core.io.Resource;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -87,6 +88,10 @@ public class ChatMediaController {
         if (objectKey == null || objectKey.isBlank()) {
             return ResponseEntity.badRequest().build();
         }
+        // R3-AUTH-001: Verify objectKey belongs to current user's library
+        if (!objectKey.startsWith(currentUser.libraryId() + "/")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         StoredObject storedObject = chatMediaService.download(objectKey);
         if (storedObject == null || storedObject.resource() == null) {
             return ResponseEntity.notFound().build();
@@ -96,8 +101,12 @@ public class ChatMediaController {
                 ? metadata.contentType()
                 : MediaType.APPLICATION_OCTET_STREAM_VALUE;
         String fileName = extractFileName(objectKey);
+        String contentDisposition = ContentDisposition.attachment()
+                .filename(fileName, StandardCharsets.UTF_8)
+                .build()
+                .toString();
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
                 .contentType(MediaType.parseMediaType(mimeType))
                 .body(storedObject.resource());
     }
@@ -111,6 +120,10 @@ public class ChatMediaController {
         String objectKey = extractObjectKey(request);
         if (objectKey == null || objectKey.isBlank()) {
             return ResponseEntity.badRequest().build();
+        }
+        // R3-AUTH-001: Verify objectKey belongs to current user's library
+        if (!objectKey.startsWith(currentUser.libraryId() + "/")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         Optional<ObjectMetadata> metadata = chatMediaService.exists(objectKey);
         if (metadata.isEmpty()) {

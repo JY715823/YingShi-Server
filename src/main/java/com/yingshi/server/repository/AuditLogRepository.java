@@ -1,0 +1,13 @@
+package com.yingshi.server.repository;
+
+import com.yingshi.server.domain.AuditLogEntity;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface AuditLogRepository extends JpaRepository<AuditLogEntity, String> {
+
+    Page<AuditLogEntity> findByLibraryIdOrderByCreatedAtDesc(String libraryId, Pageable pageable);
+
+    Page<AuditLogEntity> findByActionOrderByCreatedAtDesc(String action, Pageable pageable);
+}

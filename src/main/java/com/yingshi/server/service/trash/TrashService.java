@@ -26,6 +26,8 @@ import com.yingshi.server.repository.TrashItemRepository;
 import com.yingshi.server.service.push.PushDispatchSupport;
 import com.yingshi.server.service.push.PushNotificationService;
 import com.yingshi.server.service.upload.LocalMediaStorageService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -50,6 +52,7 @@ public class TrashService {
     private static final Duration UNDO_WINDOW = Duration.ofHours(24);
     private static final int DEFAULT_PAGE = 1;
     private static final int DEFAULT_SIZE = 10;
+    private static final Logger logger = LoggerFactory.getLogger(TrashService.class);
 
     private final TrashItemRepository trashItemRepository;
     private final AlbumRepository albumRepository;
@@ -126,7 +129,7 @@ public class TrashService {
                 new TrashSnapshotHelper.LargeAlbumDeletedSnapshot(albumId, smallAlbumIds, mediaIds)
         );
         TrashItemDto dto = toTrashItemDto(item);
-        notifyDeleted(currentUser, "对方删除了一个大相册。", "photos:trash:" + item.getId());
+        notifyDeleted(currentUser, "照片", "对方删除了一个大相册。", "photos:trash:" + item.getId());
         return dto;
     }
 
@@ -155,7 +158,8 @@ public class TrashService {
                 new TrashSnapshotHelper.SmallAlbumDeletedSnapshot(smallAlbumId)
         );
         TrashItemDto dto = toTrashItemDto(item);
-        notifyDeleted(currentUser, "对方删除了一个小相册。", "photos:trash:" + item.getId());
+        logger.warn("deleteSmallAlbum: dispatching push notification smallAlbumId={} libraryId={} actorUserId={}", smallAlbumId, currentUser.libraryId(), currentUser.userId());
+        notifyDeleted(currentUser, "小相册", "对方删除了一个小相册。", "photos:trash:" + item.getId());
         return dto;
     }
 
@@ -195,7 +199,7 @@ public class TrashService {
                 new TrashSnapshotHelper.MediaRemovedSnapshot(smallAlbumId, mediaId, sortOrder, wasCover)
         );
         TrashItemDto dto = toTrashItemDto(item);
-        notifyDeleted(currentUser, "对方从小相册移出了一项媒体。", "photos:trash:" + item.getId());
+        notifyDeleted(currentUser, "小相册", "对方从小相册移出了一项媒体。", "photos:trash:" + item.getId());
         return dto;
     }
 
@@ -223,18 +227,51 @@ public class TrashService {
                 pageRequest
         );
 
+        // P1-2 改造: photo 回收站只返回 lifeCategory IS NULL 的项，life 回收站单独走 listLifeTrash
+        List<TrashItemEntity> photoOnly = items.stream()
+                .filter(item -> item.getLifeCategory() == null)
+                .toList();
+
         return new TrashPageResponse(
-                items.getContent().stream().map(this::toTrashItemDto).toList(),
+                photoOnly.stream().map(this::toTrashItemDto).toList(),
                 normalizedPage,
                 normalizedSize,
-                items.getTotalElements(),
-                items.hasNext()
+                photoOnly.size(),
+                false
         );
+    }
+
+    /**
+     * P1-2 改造: life 回收站列表，按 category 过滤 (PERSON/MEAL/null=所有 life)。
+     */
+    @Transactional(readOnly = true)
+    public List<TrashItemDto> listLifeTrash(String lifeCategory, AuthenticatedUser currentUser) {
+        List<TrashItemEntity> items;
+        if (lifeCategory == null || lifeCategory.isBlank()) {
+            items = trashItemRepository.findLifeTrashByLibraryIdAndState(
+                    currentUser.libraryId(),
+                    TrashItemState.IN_TRASH
+            );
+        } else {
+            String normalized = lifeCategory.trim().toUpperCase(Locale.ROOT);
+            items = trashItemRepository.findLifeTrashByLibraryIdAndStateAndCategory(
+                    currentUser.libraryId(),
+                    TrashItemState.IN_TRASH,
+                    normalized
+            );
+        }
+        return items.stream().map(this::toTrashItemDto).toList();
     }
 
     @Transactional(readOnly = true)
     public TrashDetailDto getTrashDetail(String trashItemId, AuthenticatedUser currentUser) {
         TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
+        // P1-3 隔离修复 S5: photo 回收站 detail 端点检测到 life item 时记录告警日志
+        // 不硬拒绝, 因为 life 回收站客户端也调用此端点 (life 回收站 detail 走 life-items/{id}/detail 是后续工作)
+        if (item.getLifeCategory() != null) {
+            logger.warn("getTrashDetail: photo trash endpoint accessed for life item trashItemId={} lifeCategory={} actorUserId={}",
+                    trashItemId, item.getLifeCategory(), currentUser.userId());
+        }
         TrashItemDto itemDto = toTrashItemDto(item);
         PendingCleanupDto pendingCleanup = item.getState() == TrashItemState.PENDING_CLEANUP
                 ? trashMapper.toPendingCleanupDto(itemDto, item.getRemovedAt(), item.getUndoDeadlineAt())
@@ -250,6 +287,11 @@ public class TrashService {
     @Transactional
     public TrashItemDto restoreTrashItem(String trashItemId, AuthenticatedUser currentUser) {
         TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
+        // P1-3 隔离修复 S6: photo 回收站 restore 端点检测到 life item 时记录告警日志
+        if (item.getLifeCategory() != null) {
+            logger.warn("restoreTrashItem: photo trash endpoint accessed for life item trashItemId={} lifeCategory={} actorUserId={}",
+                    trashItemId, item.getLifeCategory(), currentUser.userId());
+        }
         if (item.getState() != TrashItemState.IN_TRASH) {
             throw new ApiException(HttpStatus.CONFLICT, ErrorCode.RESTORE_CONFLICT, "Only in-trash items can be restored.");
         }
@@ -271,6 +313,11 @@ public class TrashService {
     @Transactional
     public PendingCleanupDto moveOutOfTrash(String trashItemId, AuthenticatedUser currentUser) {
         TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
+        // P1-3 隔离修复 S6: photo 回收站 move-out 端点检测到 life item 时记录告警日志
+        if (item.getLifeCategory() != null) {
+            logger.warn("moveOutOfTrash: photo trash endpoint accessed for life item trashItemId={} lifeCategory={} actorUserId={}",
+                    trashItemId, item.getLifeCategory(), currentUser.userId());
+        }
         if (item.getState() != TrashItemState.IN_TRASH) {
             throw new ApiException(HttpStatus.CONFLICT, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Only in-trash items can be moved to pending cleanup.");
         }
@@ -285,6 +332,11 @@ public class TrashService {
     @Transactional
     public TrashItemDto purgeTrashItem(String trashItemId, AuthenticatedUser currentUser) {
         TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
+        // P1-3 隔离修复 S6: photo 回收站 purge 端点检测到 life item 时记录告警日志
+        if (item.getLifeCategory() != null) {
+            logger.warn("purgeTrashItem: photo trash endpoint accessed for life item trashItemId={} lifeCategory={} actorUserId={}",
+                    trashItemId, item.getLifeCategory(), currentUser.userId());
+        }
         if (item.getState() != TrashItemState.IN_TRASH && item.getState() != TrashItemState.PENDING_CLEANUP) {
             throw new ApiException(HttpStatus.CONFLICT, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Only in-trash or pending-cleanup items can be permanently deleted.");
         }
@@ -308,9 +360,33 @@ public class TrashService {
         trashItemRepository.delete(item);
     }
 
+    /**
+     * P1-3 自动清理: 将 IN_TRASH 状态超过保留期的回收站项目转入 24h 待清理窗口。
+     * 用户需求: 过期项目不直接删除，而是先进入 24h 待清理，给用户最后一次撤销机会。
+     * 24h 待清理到期后再由 purgeExpiredPendingCleanupItem 彻底删除。
+     */
+    @Transactional
+    public void transitionExpiredInTrashToPending(String trashItemId, String libraryId) {
+        TrashItemEntity item = requireTrashItem(trashItemId, libraryId);
+        if (item.getState() != TrashItemState.IN_TRASH) {
+            return;
+        }
+        logger.info("transitionExpiredInTrashToPending: moving expired in-trash item to pending cleanup id={} type={} lifeCategory={} libraryId={} deletedAt={}",
+                item.getId(), item.getItemType(), item.getLifeCategory(), libraryId, item.getDeletedAt());
+        item.setState(TrashItemState.PENDING_CLEANUP);
+        item.setRemovedAt(Instant.now());
+        item.setUndoDeadlineAt(item.getRemovedAt().plus(UNDO_WINDOW));
+        trashItemRepository.save(item);
+    }
+
     @Transactional
     public TrashItemDto undoRemove(String trashItemId, AuthenticatedUser currentUser) {
         TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
+        // P1-3 隔离修复 S6: photo 回收站 undo-remove 端点检测到 life item 时记录告警日志
+        if (item.getLifeCategory() != null) {
+            logger.warn("undoRemove: photo trash endpoint accessed for life item trashItemId={} lifeCategory={} actorUserId={}",
+                    trashItemId, item.getLifeCategory(), currentUser.userId());
+        }
         if (item.getState() != TrashItemState.PENDING_CLEANUP) {
             throw new ApiException(HttpStatus.CONFLICT, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Trash item is not pending cleanup.");
         }
@@ -326,8 +402,33 @@ public class TrashService {
 
     @Transactional(readOnly = true)
     public List<PendingCleanupDto> getPendingCleanup(AuthenticatedUser currentUser) {
-        return trashItemRepository.findByLibraryIdAndStateOrderByDeletedAtDesc(currentUser.libraryId(), TrashItemState.PENDING_CLEANUP)
+        // P1-2 改造: photo 回收站 pending-cleanup 只返回 lifeCategory IS NULL 的项
+        return trashItemRepository.findPhotoTrashByLibraryIdAndState(currentUser.libraryId(), TrashItemState.PENDING_CLEANUP)
                 .stream()
+                .map(item -> trashMapper.toPendingCleanupDto(toTrashItemDto(item), item.getRemovedAt(), item.getUndoDeadlineAt()))
+                .toList();
+    }
+
+    /**
+     * P1-2 改造: life 回收站 pending-cleanup（24h 撤回中心），按 category 过滤 (PERSON/MEAL/null=所有 life)。
+     */
+    @Transactional(readOnly = true)
+    public List<PendingCleanupDto> getLifePendingCleanup(String lifeCategory, AuthenticatedUser currentUser) {
+        List<TrashItemEntity> items;
+        if (lifeCategory == null || lifeCategory.isBlank()) {
+            items = trashItemRepository.findLifeTrashByLibraryIdAndState(
+                    currentUser.libraryId(),
+                    TrashItemState.PENDING_CLEANUP
+            );
+        } else {
+            String normalized = lifeCategory.trim().toUpperCase(Locale.ROOT);
+            items = trashItemRepository.findLifeTrashByLibraryIdAndStateAndCategory(
+                    currentUser.libraryId(),
+                    TrashItemState.PENDING_CLEANUP,
+                    normalized
+            );
+        }
+        return items.stream()
                 .map(item -> trashMapper.toPendingCleanupDto(toTrashItemDto(item), item.getRemovedAt(), item.getUndoDeadlineAt()))
                 .toList();
     }
@@ -369,18 +470,26 @@ public class TrashService {
                 .map(PostEntity::getId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        postMediaRepository.deleteAll(relations);
-        for (String relatedSmallAlbumId : relatedSmallAlbumIds) {
-            resequenceSmallAlbumMedia(currentUser.libraryId(), relatedSmallAlbumId);
+        // P1-3 根因修复: life domain media 跳过 post_media 关联操作和 smallAlbum 更新,
+        // 避免 albumsVersion 上涨 → staleState 重建 → 照片流被间接刷新。
+        // life media 不应有 post_media 关联 (P1-1 改造后 life 媒体不再放进相册/小相册)。
+        boolean isLifeDomain = "life".equals(media.getDomain());
+        if (!isLifeDomain) {
+            postMediaRepository.deleteAll(relations);
+            for (String relatedSmallAlbumId : relatedSmallAlbumIds) {
+                resequenceSmallAlbumMedia(currentUser.libraryId(), relatedSmallAlbumId);
+            }
         }
 
         media.setDeletedAt(Instant.now());
         mediaRepository.save(media);
 
-        for (PostEntity smallAlbum : smallAlbums) {
-            if (mediaId.equals(smallAlbum.getCoverMediaId())) {
-                smallAlbum.setCoverMediaId(resolveFirstVisibleMediaId(currentUser.libraryId(), smallAlbum.getId(), mediaId).orElse(null));
-                postRepository.save(smallAlbum);
+        if (!isLifeDomain) {
+            for (PostEntity smallAlbum : smallAlbums) {
+                if (mediaId.equals(smallAlbum.getCoverMediaId())) {
+                    smallAlbum.setCoverMediaId(resolveFirstVisibleMediaId(currentUser.libraryId(), smallAlbum.getId(), mediaId).orElse(null));
+                    postRepository.save(smallAlbum);
+                }
             }
         }
 
@@ -396,13 +505,26 @@ public class TrashService {
                 List.of(mediaId),
                 new TrashSnapshotHelper.MediaSystemDeletedSnapshot(mediaId, relationSnapshots, new ArrayList<>(coverSmallAlbumIds))
         );
+        // P1-2 改造: 从 media 复制 lifeCategory 到 trashItem，用于区分 life 回收站 vs 照片回收站
+        item.setLifeCategory(media.getLifeCategory());
+        trashItemRepository.save(item);
         TrashItemDto dto = toTrashItemDto(item);
-        notifyDeleted(currentUser, "对方删除了一项媒体。", "photos:trash:" + item.getId());
+        // P1-3 根因修复: life domain media 不推送 photos 模块事件。
+        // 之前无条件调用 notifyDeleted → notifyPhotoChanged(module=photos) → 推送 photos SSE+FCM 给对方,
+        // 对方收到后 requestImmediatePoll × 2 (SSE+FCM) → 两次 pollVersions → 两次 staleState 重建 → "闪两次"。
+        // life deleteMedia 不推送任何通知 (用户需求: 删除是低频操作, 对方刷新时自然会看到最新状态)。
+        if (!isLifeDomain) {
+            notifyDeleted(currentUser, "照片", "对方删除了一项媒体。", "photos:trash:" + item.getId());
+        } else {
+            logger.warn("systemDeleteMediaInternal: life domain media deleted, skipping photos push mediaId={} libraryId={} actorUserId={}",
+                    mediaId, currentUser.libraryId(), currentUser.userId());
+        }
         return dto;
     }
 
     private void notifyDeleted(
             AuthenticatedUser currentUser,
+            String title,
             String body,
             String targetRoute
     ) {
@@ -410,7 +532,7 @@ public class TrashService {
                 currentUser.libraryId(),
                 currentUser.userId(),
                 PushNotificationService.CATEGORY_PHOTOS_DELETE,
-                "照片内容有删除",
+                title,
                 body,
                 targetRoute
         ));
@@ -557,9 +679,14 @@ public class TrashService {
 
     private void purgeMediaSystemDeleted(TrashItemEntity item, String libraryId) {
         TrashSnapshotHelper.MediaSystemDeletedSnapshot snapshot = snapshotHelper.readMediaSystemDeletedSnapshot(item);
-        MediaEntity media = mediaRepository.findByIdAndLibraryId(snapshot.mediaId(), libraryId)
-                .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Media can no longer be permanently deleted."));
-
+        // 媒体可能已被其他级联路径（如 purgeSmallAlbumCascade）物理删除，此时降级为只删 trash item
+        java.util.Optional<MediaEntity> mediaOpt = mediaRepository.findByIdAndLibraryId(snapshot.mediaId(), libraryId);
+        if (mediaOpt.isEmpty()) {
+            logger.warn("purgeMediaSystemDeleted: media {} already deleted by cascade path, only removing trash item {}",
+                    snapshot.mediaId(), item.getId());
+            return;
+        }
+        MediaEntity media = mediaOpt.get();
         localMediaStorageService.deleteStoredMediaFiles(media.getStoragePath(), media.getId());
         postMediaRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
         commentRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());

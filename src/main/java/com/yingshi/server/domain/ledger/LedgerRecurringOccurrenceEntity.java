@@ -22,6 +22,9 @@ public class LedgerRecurringOccurrenceEntity extends LibraryScopedEntity {
     @Column(name = "occurrence_at_millis", nullable = false)
     private Long occurrenceAtMillis;
 
+    @Column(name = "deleted_at_millis")
+    private Long deletedAtMillis;
+
     public String getId() {
         return id;
     }
@@ -52,5 +55,13 @@ public class LedgerRecurringOccurrenceEntity extends LibraryScopedEntity {
 
     public void setOccurrenceAtMillis(Long occurrenceAtMillis) {
         this.occurrenceAtMillis = occurrenceAtMillis;
+    }
+
+    public Long getDeletedAtMillis() {
+        return deletedAtMillis;
+    }
+
+    public void setDeletedAtMillis(Long deletedAtMillis) {
+        this.deletedAtMillis = deletedAtMillis;
     }
 }

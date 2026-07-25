@@ -4,11 +4,8 @@ import com.yingshi.server.common.IdGenerator;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
-import com.yingshi.server.domain.AlbumEntity;
 import com.yingshi.server.domain.BowelEventEntity;
 import com.yingshi.server.domain.MediaEntity;
-import com.yingshi.server.domain.PostEntity;
-import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.domain.SharedLibraryMemberEntity;
 import com.yingshi.server.domain.UserEntity;
 import com.yingshi.server.dto.content.MediaDto;
@@ -25,11 +22,8 @@ import com.yingshi.server.dto.life.LifeConsoleTodayResponse;
 import com.yingshi.server.dto.life.LifeConsoleUserDto;
 import com.yingshi.server.dto.life.UpdateLocationRequest;
 import com.yingshi.server.mapper.ContentMapper;
-import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.BowelEventRepository;
 import com.yingshi.server.repository.MediaRepository;
-import com.yingshi.server.repository.PostMediaRepository;
-import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.SharedLibraryMemberRepository;
 import com.yingshi.server.repository.UserRepository;
 import com.yingshi.server.service.geocoding.GeocodingService;
@@ -41,6 +35,8 @@ import com.yingshi.server.dto.life.AddBowelEventRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.time.DateTimeException;
@@ -56,7 +52,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -64,10 +59,8 @@ import java.util.stream.Collectors;
 public class LifeConsoleService {
 
     private static final String DEFAULT_ZONE_ID = "Asia/Shanghai";
+    private static final Logger log = LoggerFactory.getLogger(LifeConsoleService.class);
 
-    private final AlbumRepository albumRepository;
-    private final PostRepository postRepository;
-    private final PostMediaRepository postMediaRepository;
     private final MediaRepository mediaRepository;
     private final BowelEventRepository bowelEventRepository;
     private final UserRepository userRepository;
@@ -78,9 +71,6 @@ public class LifeConsoleService {
     private final GeocodingService geocodingService;
 
     public LifeConsoleService(
-            AlbumRepository albumRepository,
-            PostRepository postRepository,
-            PostMediaRepository postMediaRepository,
             MediaRepository mediaRepository,
             BowelEventRepository bowelEventRepository,
             UserRepository userRepository,
@@ -90,9 +80,6 @@ public class LifeConsoleService {
             PushNotificationService pushNotificationService,
             GeocodingService geocodingService
     ) {
-        this.albumRepository = albumRepository;
-        this.postRepository = postRepository;
-        this.postMediaRepository = postMediaRepository;
         this.mediaRepository = mediaRepository;
         this.bowelEventRepository = bowelEventRepository;
         this.userRepository = userRepository;
@@ -134,109 +121,52 @@ public class LifeConsoleService {
         LifeConsoleCategory category = LifeConsoleCategory.parse(request.category());
         List<String> mediaIds = normalizedDistinctMediaIds(request.mediaIds());
         String libraryId = currentUser.libraryId();
+        // 诊断日志: life addMedia 操作前的 photoFeedVersion
+        Long photoFeedVersionBefore = mediaRepository.findLatestUpdatedAtByLibraryIdAndDeletedAtIsNullAndDomainNotLife(libraryId)
+                .map(Instant::toEpochMilli).orElse(0L);
+        log.warn("addMedia: BEFORE photoFeedVersion={} libraryId={} category={} mediaIds={}", photoFeedVersionBefore, libraryId, category, mediaIds);
         List<MediaEntity> mediaItems = mediaRepository.findByLibraryIdAndIdInAndDeletedAtIsNull(libraryId, mediaIds);
         if (mediaItems.size() != mediaIds.size()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.MEDIA_NOT_FOUND, "One or more mediaIds do not exist in the shared library.");
         }
-        Map<String, MediaEntity> mediaById = mediaItems.stream().collect(Collectors.toMap(MediaEntity::getId, Function.identity()));
 
         ZoneId zone = parseZoneId(zoneId);
         LocalDate today = LocalDate.now(zone);
-        AlbumEntity album = ensureSystemAlbum(libraryId, category);
 
-        // Round 8 第十五轮: 按每张照片的 displayTimeMillis 分组到对应月份的 small_album.
-        // 用户需求: 今天上传一张昨天/上个月拍的照片, 应该归到对应月份的历史记录, 而不是今天.
-        // 之前: 全部归到 LocalDate.now(zone) 的当月 small_album, 用 relation.createdAt 过滤当日 slot.
-        // 现在: 按 media 的 displayTimeMillis (优先) / capturedAtMillis / importedAtMillis 计算归属月份.
-        Map<YearMonth, List<String>> mediaIdsByMonth = new LinkedHashMap<>();
-        for (String mediaId : mediaIds) {
-            MediaEntity media = mediaById.get(mediaId);
-            YearMonth month = resolveMediaYearMonth(media, zone, today);
-            mediaIdsByMonth.computeIfAbsent(month, k -> new ArrayList<>()).add(mediaId);
-        }
-
-        for (Map.Entry<YearMonth, List<String>> entry : mediaIdsByMonth.entrySet()) {
-            YearMonth month = entry.getKey();
-            List<String> monthMediaIds = entry.getValue();
-            PostEntity monthlySmallAlbum = ensureMonthlySmallAlbum(libraryId, album, month, zone);
-            List<PostMediaEntity> existingRelations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(
-                    libraryId,
-                    monthlySmallAlbum.getId()
-            );
-            Set<String> existingMediaIds = existingRelations.stream()
-                    .map(PostMediaEntity::getMediaId)
-                    .collect(Collectors.toCollection(HashSet::new));
-            int nextSortOrder = existingRelations.stream()
-                    .map(PostMediaEntity::getSortOrder)
-                    .filter(Objects::nonNull)
-                    .max(Integer::compareTo)
-                    .orElse(0) + 1;
-
-            List<PostMediaEntity> newRelations = new ArrayList<>();
-            for (String mediaId : monthMediaIds) {
-                MediaEntity media = mediaById.get(mediaId);
-                media.setRecordOwnerUserId(currentUser.userId());
-                if (media.getUploadedByUserId() == null || media.getUploadedByUserId().isBlank()) {
-                    media.setUploadedByUserId(currentUser.userId());
-                }
-                media.setDomain("life");
-                if (!existingMediaIds.contains(mediaId)) {
-                    PostMediaEntity relation = new PostMediaEntity();
-                    relation.setId(IdGenerator.newId("small_album_media"));
-                    relation.setLibraryId(libraryId);
-                    relation.setPostId(monthlySmallAlbum.getId());
-                    relation.setMediaId(mediaId);
-                    relation.setSortOrder(nextSortOrder++);
-                    newRelations.add(relation);
-                }
+        // P1-1 改造: life 媒体不再放进相册/小相册，直接在 MediaEntity 上设置 domain + lifeCategory.
+        // 之前: 通过 album + post(small_album) + post_media 三层结构关联，导致：
+        //   1) 自动建月度日期目录出现在相册模块；
+        //   2) 回收站也包含 life 媒体；
+        //   3) life 操作触发 photoFeedVersion 上涨（因为更新了 post/post_media）。
+        // 现在: 仅修改 media 的 domain + lifeCategory + ownership，不触碰 album/post/post_media。
+        // 今日页/历史页通过 mediaRepository.findLifeMediaByCategoryAndDisplayTimeRange 直接查询 media 表。
+        for (MediaEntity media : mediaItems) {
+            media.setRecordOwnerUserId(currentUser.userId());
+            if (media.getUploadedByUserId() == null || media.getUploadedByUserId().isBlank()) {
+                media.setUploadedByUserId(currentUser.userId());
             }
-            List<MediaEntity> monthMediaEntities = monthMediaIds.stream().map(mediaById::get).toList();
-            mediaRepository.saveAll(monthMediaEntities);
-            if (!newRelations.isEmpty()) {
-                postMediaRepository.saveAll(newRelations);
-                postMediaRepository.flush();
-            }
-
-            if (monthlySmallAlbum.getCoverMediaId() == null && !monthMediaIds.isEmpty()) {
-                monthlySmallAlbum.setCoverMediaId(monthMediaIds.get(0));
-                postRepository.save(monthlySmallAlbum);
-            }
+            media.setDomain("life");
+            media.setLifeCategory(category.name());
         }
+        mediaRepository.saveAll(mediaItems);
 
-        if (album.getCoverMediaId() == null && !mediaIds.isEmpty()) {
-            album.setCoverMediaId(mediaIds.get(0));
-            albumRepository.save(album);
-        }
-
+        // 推送通知携带最新上传的媒体 ID（用户传入列表的最后一个），客户端据此精准跳转
+        String latestMediaId = mediaIds.isEmpty() ? null : mediaIds.get(mediaIds.size() - 1);
         notifyLifeConsoleChanged(libraryId, currentUser.userId(),
-                category.name().toLowerCase() + "_media_added");
+                category.name().toLowerCase() + "_media_added", latestMediaId);
+        // 诊断日志: life addMedia 操作后的 photoFeedVersion
+        Long photoFeedVersionAfter = mediaRepository.findLatestUpdatedAtByLibraryIdAndDeletedAtIsNullAndDomainNotLife(libraryId)
+                .map(Instant::toEpochMilli).orElse(0L);
+        log.warn("addMedia: AFTER photoFeedVersion={} libraryId={} category={} changed={}",
+                photoFeedVersionAfter, libraryId, category, photoFeedVersionAfter > photoFeedVersionBefore);
         return getToday(today.toString(), zone.getId(), currentUser);
     }
 
     /**
-     * Round 8 第十五轮: 解析媒体归属的年月.
-     * 优先用 displayTimeMillis (用户偏好时间), 其次 capturedAtMillis (拍摄时间),
-     * 再次 importedAtMillis (导入时间), 最后兜底用当前日期.
+     * P1-1 改造: 解析媒体的展示时间 (毫秒)，用于 today/history 时间过滤。
+     * 优先级: displayTimeMillis > capturedAtMillis > importedAtMillis > 当前时间.
      */
-    private YearMonth resolveMediaYearMonth(MediaEntity media, ZoneId zone, LocalDate fallbackToday) {
-        Long timeMillis = media.getDisplayTimeMillis();
-        if (timeMillis == null || timeMillis <= 0L) {
-            timeMillis = media.getCapturedAtMillis();
-        }
-        if (timeMillis == null || timeMillis <= 0L) {
-            timeMillis = media.getImportedAtMillis();
-        }
-        if (timeMillis == null || timeMillis <= 0L) {
-            return YearMonth.from(fallbackToday);
-        }
-        return YearMonth.from(Instant.ofEpochMilli(timeMillis).atZone(zone).toLocalDate());
-    }
-
-    /**
-     * Round 8 第十五轮: 解析媒体的展示时间 (毫秒).
-     * 优先级: displayTimeMillis > capturedAtMillis > importedAtMillis > relation.createdAt > 当前时间.
-     */
-    private long resolveMediaDisplayTime(MediaEntity media, PostMediaEntity relation) {
+    private long resolveMediaDisplayTime(MediaEntity media) {
         if (media.getDisplayTimeMillis() != null && media.getDisplayTimeMillis() > 0L) {
             return media.getDisplayTimeMillis();
         }
@@ -245,9 +175,6 @@ public class LifeConsoleService {
         }
         if (media.getImportedAtMillis() != null && media.getImportedAtMillis() > 0L) {
             return media.getImportedAtMillis();
-        }
-        if (relation != null && relation.getCreatedAt() != null) {
-            return relation.getCreatedAt().toEpochMilli();
         }
         return System.currentTimeMillis();
     }
@@ -261,8 +188,12 @@ public class LifeConsoleService {
             throw new ApiException(HttpStatus.FORBIDDEN, ErrorCode.FORBIDDEN, "You can only delete media from your own frame.");
         }
         TrashItemDto trashItem = trashService.systemDeleteMedia(mediaId, currentUser);
-        notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(),
-                category.name().toLowerCase() + "_media_deleted");
+        // 删除操作不发送推送通知（用户需求）：
+        // 1. 删除时携带的 mediaId 已被软删除，客户端按 mediaId 反查 slot 会失败，
+        //    fallback 到 category match 返回最新一张，造成"跳转到错误媒体"的体验。
+        // 2. 删除是低频操作，对方刷新页面/widget 时自然会看到最新状态，无需即时通知。
+        // notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(),
+        //         category.name().toLowerCase() + "_media_deleted", mediaId);
         return trashItem;
     }
 
@@ -314,7 +245,8 @@ public class LifeConsoleService {
         LifeConsoleBowelEventDto eventDto = toBowelEventDto(event);
         event.setDeletedAt(Instant.now().toEpochMilli());
         bowelEventRepository.save(event);
-        notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "bowel_deleted");
+        // 删除操作不发送推送通知（同 deleteMedia 的理由）
+        // notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "bowel_deleted");
 
         LifeUsers users = resolveLifeUsers(currentUser);
         return new LifeConsoleBowelMutationResponse(
@@ -343,7 +275,11 @@ public class LifeConsoleService {
         media.setLongitude(lng);
         media.setLocationLabel(label);
         mediaRepository.save(media);
-        notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "media_location_updated");
+        // 位置更新不触发推送通知：
+        // 1. 位置更新通常是异步定位补全（先无位置提交，再补全），对用户无意义
+        // 2. 如果推送，会覆盖原来的"上传了人物/吃饭照片"通知（固定通知ID）
+        // 3. 对方刷新页面/widget 时自然会看到最新位置
+        // notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "media_location_updated");
         return getToday(null, DEFAULT_ZONE_ID, currentUser);
     }
 
@@ -370,7 +306,8 @@ public class LifeConsoleService {
         event.setLongitude(lng);
         event.setLocationLabel(label);
         bowelEventRepository.save(event);
-        notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "bowel_location_updated");
+        // 位置更新不触发推送通知（同 updateMediaLocation 的理由）
+        // notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "bowel_location_updated");
         ZoneId zone = parseZoneId(null);
         LocalDate today = LocalDate.now(zone);
         LifeUsers users = resolveLifeUsers(currentUser);
@@ -404,6 +341,10 @@ public class LifeConsoleService {
         PushDispatchSupport.afterCommitAsync(() -> pushNotificationService.notifyLifeConsoleChanged(libraryId, actorUserId, reason));
     }
 
+    private void notifyLifeConsoleChanged(String libraryId, String actorUserId, String reason, String mediaId) {
+        PushDispatchSupport.afterCommitAsync(() -> pushNotificationService.notifyLifeConsoleChanged(libraryId, actorUserId, reason, mediaId));
+    }
+
     private LifeConsoleMediaSlotDto buildMediaSlot(
             LifeConsoleCategory category,
             String ownerUserId,
@@ -415,120 +356,15 @@ public class LifeConsoleService {
         if (ownerUserId == null) {
             return new LifeConsoleMediaSlotDto(category.name(), null, false, List.of());
         }
-        // Round 8 Bug 修复: 优先查未删除的，查不到就查已软删除的 (可能被误删过)，
-        // 但 buildMediaSlot 只读不写，所以只查未删除的即可。如果 album 被软删除，
-        // ensureSystemAlbum 会在下次 addMedia 时复活它。
-        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKeyAndDomainAndDeletedAtIsNull(libraryId, category.albumSystemKey(), "life").orElse(null);
-        if (album == null) {
-            // buildMediaSlot 运行在只读事务中，不能执行写入（复活软删 album 不会落库）。
-            // 软删 album 的复活由 ensureSystemAlbum 在 addMedia（写事务）时处理。
-            // 这里直接回退查该用户当天所有 media。
-            return buildFallbackMediaSlot(category, ownerUserId, editable, dateRange, libraryId);
-        }
-        PostEntity monthlySmallAlbum = postRepository
-                .findByLibraryIdAndAlbumIdAndSystemKeyAndDomainAndDeletedAtIsNull(libraryId, album.getId(), yearMonth.toString(), "life")
-                .orElse(null);
-        if (monthlySmallAlbum == null) {
-            // Round 8: 月度 small_album 不存在, 回退查该用户当天所有 media
-            return buildFallbackMediaSlot(category, ownerUserId, editable, dateRange, libraryId);
-        }
-
-        // Round 8 第十五轮: 按 media 的 displayTimeMillis 过滤当日 slot, 而不是 relation.createdAt.
-        // 这样今天上传的昨天拍的照片会出现在昨天的历史记录里, 而不是今天.
-        List<PostMediaEntity> allRelations = postMediaRepository
-                .findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, monthlySmallAlbum.getId());
-        List<String> allMediaIds = allRelations.stream().map(PostMediaEntity::getMediaId).toList();
-        Map<String, MediaEntity> allMediaById = allMediaIds.isEmpty()
-                ? Map.of()
-                : mediaRepository.findByLibraryIdAndIdInAndDeletedAtIsNull(libraryId, allMediaIds)
-                        .stream()
-                        .collect(Collectors.toMap(MediaEntity::getId, Function.identity()));
-        List<PostMediaEntity> todayRelations = allRelations.stream()
-                .filter(relation -> {
-                    MediaEntity media = allMediaById.get(relation.getMediaId());
-                    if (media == null) return false;
-                    long mediaTime = resolveMediaDisplayTime(media, relation);
-                    return mediaTime >= dateRange.startMillis() && mediaTime < dateRange.endMillis();
-                })
-                .toList();
-        if (todayRelations.isEmpty()) {
-            // Round 8: life domain 当天没数据, 回退查该用户当天所有 media
-            return buildFallbackMediaSlot(category, ownerUserId, editable, dateRange, libraryId);
-        }
-
-        Map<String, MediaEntity> mediaById = allMediaById.values().stream()
+        // P1-1 改造: 直接从 media 表查询 life domain + lifeCategory + displayTime 范围内的媒体,
+        // 不再依赖 album/post/post_media 三层关联.
+        // 注意: smallAlbumIds 这里传 List.of() 即可, 因为 life 媒体不再属于任何 small_album.
+        List<MediaEntity> allInDay = mediaRepository.findLifeMediaByCategoryAndDisplayTimeRange(
+                libraryId, category.name(), dateRange.startMillis(), dateRange.endMillis());
+        List<MediaDto> mediaDtos = allInDay.stream()
                 .filter(media -> mediaBelongsToUser(media, ownerUserId))
-                .collect(Collectors.toMap(MediaEntity::getId, Function.identity()));
-
-        List<MediaDto> mediaDtos = new ArrayList<>();
-        for (PostMediaEntity relation : todayRelations) {
-            MediaEntity media = mediaById.get(relation.getMediaId());
-            if (media != null && mediaBelongsToUser(media, ownerUserId)) {
-                mediaDtos.add(contentMapper.toMediaDto(media, List.of(monthlySmallAlbum.getId())));
-            }
-        }
-        // Round 8: 如果 life domain 当天该用户没数据, 回退查该用户当天所有 media (含 photo domain)
-        if (mediaDtos.isEmpty()) {
-            return buildFallbackMediaSlot(category, ownerUserId, editable, dateRange, libraryId);
-        }
-        return new LifeConsoleMediaSlotDto(category.name(), ownerUserId, editable, mediaDtos);
-    }
-
-    /**
-     * Round 8 第十八轮: 修复 PERSON/MEAL 串类 bug.
-     *
-     * 之前实现: 调 findByLibraryIdAndUserIdAndDisplayTimeRange 不带 category 过滤,
-     *   该查询按 MediaEntity.recordOwnerUserId + displayTimeMillis 过滤,
-     *   但 MediaEntity 本身不带 category (PERSON/MEAL), 导致 PERSON slot 的 fallback
-     *   会查出 MEAL 的 media, 反之亦然. 用户反馈"在吃饭里上传一张, 今日页人物和吃饭都有了".
-     *
-     * 现在实现: 严格按 category 查 life domain 的 small_album 关联.
-     *   1. 查 life domain 该 category 的 system album (album.systemKey = "PERSON" / "MEAL")
-     *   2. 查该 album 下所有 small_album (post) 的 post_media 关联
-     *   3. filter 当天 dateRange (按 displayTimeMillis) + 该用户
-     *   4. 不再回退查 photo domain, 避免串类
-     *
-     * 代价: partner 没主动上传到 life 模块时, 看不到 photo domain 的照片.
-     * 但用户明确要求 PERSON/MEAL 不串, 这是更重要的诉求.
-     */
-    private LifeConsoleMediaSlotDto buildFallbackMediaSlot(
-            LifeConsoleCategory category,
-            String ownerUserId,
-            boolean editable,
-            DateRange dateRange,
-            String libraryId
-    ) {
-        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKeyAndDomainAndDeletedAtIsNull(
-                libraryId, category.albumSystemKey(), "life").orElse(null);
-        if (album == null) {
-            return new LifeConsoleMediaSlotDto(category.name(), ownerUserId, editable, List.of());
-        }
-        List<PostEntity> posts = postRepository.findByLibraryIdAndAlbumIdAndDomainAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(
-                libraryId, album.getId(), "life");
-        if (posts.isEmpty()) {
-            return new LifeConsoleMediaSlotDto(category.name(), ownerUserId, editable, List.of());
-        }
-        List<String> postIds = posts.stream().map(PostEntity::getId).toList();
-        List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdIn(libraryId, postIds);
-        if (relations.isEmpty()) {
-            return new LifeConsoleMediaSlotDto(category.name(), ownerUserId, editable, List.of());
-        }
-        List<String> mediaIds = relations.stream().map(PostMediaEntity::getMediaId).distinct().toList();
-        Map<String, MediaEntity> mediaById = mediaRepository.findByLibraryIdAndIdInAndDeletedAtIsNull(libraryId, mediaIds)
-                .stream()
-                .collect(Collectors.toMap(MediaEntity::getId, Function.identity()));
-        List<MediaDto> mediaDtos = relations.stream()
-                .filter(relation -> {
-                    MediaEntity media = mediaById.get(relation.getMediaId());
-                    if (media == null) return false;
-                    if (!mediaBelongsToUser(media, ownerUserId)) return false;
-                    long mediaTime = resolveMediaDisplayTime(media, relation);
-                    return mediaTime >= dateRange.startMillis() && mediaTime < dateRange.endMillis();
-                })
-                .map(relation -> {
-                    MediaEntity media = mediaById.get(relation.getMediaId());
-                    return contentMapper.toMediaDto(media, List.of());
-                })
+                .sorted(Comparator.comparingLong(this::resolveMediaDisplayTime).reversed())
+                .map(media -> contentMapper.toMediaDto(media, List.of()))
                 .toList();
         return new LifeConsoleMediaSlotDto(category.name(), ownerUserId, editable, mediaDtos);
     }
@@ -588,79 +424,32 @@ public class LifeConsoleService {
             int limitDays
     ) {
         LocalDate today = LocalDate.now(zone);
-        // Round 8 第十九轮: 恢复历史页包含今天.
-        // 用户反馈: "今日痕迹里的历史记录, 又没有同步最新的记录了, 之前都有的, 就是我今天上传了的也要在历史记录里出现."
-        // 第十八轮 u4 排除了今天导致历史页看不到今天上传的媒体, 与用户期望相悖.
-        // 现在恢复 earliestDate..today (含 today), displayTimeMillis=今天的媒体同时进今日页和历史页的今天.
-        // 双计是用户可接受的 (今日页是当日入口, 历史页是历史入口, 两个入口都该能看到今天的媒体).
+        // P1-1 改造: 直接查 media 表所有 life domain + lifeCategory 的媒体，按 displayTimeMillis 分组到对应日期.
+        // 不再依赖 album/post/post_media 关联，也不再有 "fallback fill" 两段逻辑。
         LocalDate earliestDate = LocalDate.now(zone).minusDays(limitDays - 1L);
-        long earliestMillis = earliestDate.atStartOfDay(zone).toInstant().toEpochMilli();
-        long endMillis = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli();
+
+        // 一次性查出该 library + 该 category 的全部 life media（未删除），按 displayTimeMillis DESC 排序
+        List<MediaEntity> allMedia = mediaRepository.findLifeMediaByCategory(libraryId, category.name());
 
         Map<LocalDate, List<HistoryMediaEntry>> selfByDay = new LinkedHashMap<>();
         Map<LocalDate, List<HistoryMediaEntry>> partnerByDay = new LinkedHashMap<>();
 
-        // buildHistoryDays 运行在只读事务中，不能执行写入（复活软删 album 不会落库）。
-        // 软删 album 的复活由 ensureSystemAlbum 在 addMedia（写事务）时处理。
-        // 这里即使 album 被软删除，其下的 posts/media 关联仍可读取，直接用于展示历史。
-        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKeyAndDomainAndDeletedAtIsNull(libraryId, category.albumSystemKey(), "life")
-                .or(() -> albumRepository.findByLibraryIdAndSystemKeyAndDomain(libraryId, category.albumSystemKey(), "life"))
-                .orElse(null);
-        // life domain 有 album 时, 查 small_album_media 关联
-        if (album != null) {
-            List<PostEntity> posts = postRepository.findByLibraryIdAndAlbumIdAndDomainAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(
-                    libraryId,
-                    album.getId(),
-                    "life"
-            );
-            if (!posts.isEmpty()) {
-                List<String> postIds = posts.stream().map(PostEntity::getId).toList();
-                Map<String, PostEntity> postsById = posts.stream().collect(Collectors.toMap(PostEntity::getId, Function.identity()));
-                List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdIn(libraryId, postIds);
-                if (!relations.isEmpty()) {
-                    List<String> mediaIds = relations.stream().map(PostMediaEntity::getMediaId).distinct().toList();
-                    Map<String, MediaEntity> mediaById = mediaRepository.findByLibraryIdAndIdInAndDeletedAtIsNull(libraryId, mediaIds)
-                            .stream()
-                            .collect(Collectors.toMap(MediaEntity::getId, Function.identity()));
-
-                    relations.stream()
-                            .sorted(Comparator.comparing((PostMediaEntity relation) -> {
-                                MediaEntity media = mediaById.get(relation.getMediaId());
-                                return media == null ? Long.MIN_VALUE : resolveHistoryTimeMillis(relation, media);
-                            }).reversed())
-                            .forEach(relation -> {
-                                MediaEntity media = mediaById.get(relation.getMediaId());
-                                PostEntity post = postsById.get(relation.getPostId());
-                                if (media == null || post == null) {
-                                    return;
-                                }
-                                long effectiveTimeMillis = resolveHistoryTimeMillis(relation, media);
-                                LocalDate mediaDate = Instant.ofEpochMilli(effectiveTimeMillis).atZone(zone).toLocalDate();
-                                if (mediaDate.isBefore(earliestDate)) {
-                                    return;
-                                }
-                                // Round 8 第十九轮: 恢复包含今天, 排除未来日期.
-                                // mediaDate > today 才跳过 (未来时间戳异常数据), == today 保留.
-                                if (mediaDate.isAfter(today)) {
-                                    return;
-                                }
-                                HistoryMediaEntry entry = new HistoryMediaEntry(media, effectiveTimeMillis);
-                                if (mediaBelongsToUser(media, users.currentUser().getId())) {
-                                    selfByDay.computeIfAbsent(mediaDate, ignored -> new ArrayList<>()).add(entry);
-                                } else if (mediaBelongsToUser(media, users.partnerUserId())) {
-                                    partnerByDay.computeIfAbsent(mediaDate, ignored -> new ArrayList<>()).add(entry);
-                                }
-                            });
-                }
+        for (MediaEntity media : allMedia) {
+            long effectiveTimeMillis = resolveMediaDisplayTime(media);
+            if (effectiveTimeMillis <= 0L) {
+                continue;
             }
-        }
-
-        // Round 8 第十八轮: 修复 PERSON/MEAL 串类 bug.
-        // 之前: fillMissingDaysFromAllMedia 不带 category 过滤, 会把 MEAL 的 media 填到 PERSON 的历史日期, 反之亦然.
-        // 现在: 严格按 category 查 life domain small_album 关联, 不再回退查 photo domain.
-        fillMissingDaysFromAllMedia(selfByDay, category, users.currentUser().getId(), libraryId, earliestDate, today, earliestMillis, endMillis, zone);
-        if (users.partnerUserId() != null) {
-            fillMissingDaysFromAllMedia(partnerByDay, category, users.partnerUserId(), libraryId, earliestDate, today, earliestMillis, endMillis, zone);
+            LocalDate mediaDate = Instant.ofEpochMilli(effectiveTimeMillis).atZone(zone).toLocalDate();
+            // 包含今天, 排除未来日期和早于 earliestDate 的日期
+            if (mediaDate.isBefore(earliestDate) || mediaDate.isAfter(today)) {
+                continue;
+            }
+            HistoryMediaEntry entry = new HistoryMediaEntry(media, effectiveTimeMillis);
+            if (mediaBelongsToUser(media, users.currentUser().getId())) {
+                selfByDay.computeIfAbsent(mediaDate, ignored -> new ArrayList<>()).add(entry);
+            } else if (mediaBelongsToUser(media, users.partnerUserId())) {
+                partnerByDay.computeIfAbsent(mediaDate, ignored -> new ArrayList<>()).add(entry);
+            }
         }
 
         List<LocalDate> orderedDates = new ArrayList<>();
@@ -698,76 +487,6 @@ public class LifeConsoleService {
     }
 
     /**
-     * Round 8 第十八轮: 用 life domain 该 category 的 media 填补没数据的日期.
-     *
-     * 之前: 调 findByLibraryIdAndUserIdAndDisplayTimeRange 不带 category 过滤,
-     *   会把 MEAL 的 media 填到 PERSON 的历史日期, 反之亦然.
-     * 现在: 严格按 category 查 life domain 的 small_album 关联, 不再回退查 photo domain.
-     *
-     * 不覆盖已有 life domain 数据, 仅在缺失日期补充.
-     */
-    private void fillMissingDaysFromAllMedia(
-            Map<LocalDate, List<HistoryMediaEntry>> byDay,
-            LifeConsoleCategory category,
-            String userId,
-            String libraryId,
-            LocalDate earliestDate,
-            LocalDate today,
-            long earliestMillis,
-            long endMillis,
-            ZoneId zone
-    ) {
-        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKeyAndDomainAndDeletedAtIsNull(
-                libraryId, category.albumSystemKey(), "life").orElse(null);
-        if (album == null) {
-            return;
-        }
-        List<PostEntity> posts = postRepository.findByLibraryIdAndAlbumIdAndDomainAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(
-                libraryId, album.getId(), "life");
-        if (posts.isEmpty()) {
-            return;
-        }
-        List<String> postIds = posts.stream().map(PostEntity::getId).toList();
-        List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdIn(libraryId, postIds);
-        if (relations.isEmpty()) {
-            return;
-        }
-        List<String> mediaIds = relations.stream().map(PostMediaEntity::getMediaId).distinct().toList();
-        Map<String, MediaEntity> mediaById = mediaRepository.findByLibraryIdAndIdInAndDeletedAtIsNull(libraryId, mediaIds)
-                .stream()
-                .collect(Collectors.toMap(MediaEntity::getId, Function.identity()));
-        // filter 该用户的 media, 按有效时间 (displayTimeMillis 优先) 分组到对应日期
-        List<Map.Entry<PostMediaEntity, MediaEntity>> userOwnedEntries = relations.stream()
-                .map(relation -> {
-                    MediaEntity media = mediaById.get(relation.getMediaId());
-                    return media != null && mediaBelongsToUser(media, userId)
-                            ? Map.entry(relation, media)
-                            : null;
-                })
-                .filter(Objects::nonNull)
-                .toList();
-        for (Map.Entry<PostMediaEntity, MediaEntity> entry : userOwnedEntries) {
-            PostMediaEntity relation = entry.getKey();
-            MediaEntity media = entry.getValue();
-            long effectiveTimeMillis = resolveHistoryTimeMillis(relation, media);
-            if (effectiveTimeMillis <= 0L) {
-                continue;
-            }
-            LocalDate mediaDate = Instant.ofEpochMilli(effectiveTimeMillis).atZone(zone).toLocalDate();
-            // Round 8 第十九轮: 恢复包含今天, 排除未来日期.
-            if (mediaDate.isBefore(earliestDate) || mediaDate.isAfter(today)) {
-                continue;
-            }
-            // 该日期 life domain 已有数据, 不覆盖
-            if (byDay.containsKey(mediaDate) && !byDay.get(mediaDate).isEmpty()) {
-                continue;
-            }
-            byDay.computeIfAbsent(mediaDate, ignored -> new ArrayList<>())
-                    .add(new HistoryMediaEntry(media, effectiveTimeMillis));
-        }
-    }
-
-    /**
      * FR-18: pick the representative location label for a day.
      * Strategy: among all media of the day (self + partner), take the latest one (by effectiveTimeMillis)
      * that has a non-blank locationLabel. Self entries take priority when timestamps tie.
@@ -791,24 +510,6 @@ public class LifeConsoleService {
             }
         }
         return latest == null ? null : latest.media().getLocationLabel();
-    }
-
-    private long resolveHistoryTimeMillis(PostMediaEntity relation, MediaEntity media) {
-        // Round 8 第十五轮: 优先用 media 的 displayTimeMillis, 这样历史页按拍摄时间归组.
-        // 之前优先用 relation.createdAt, 导致今天上传的昨天照片归到今天.
-        if (media.getDisplayTimeMillis() != null && media.getDisplayTimeMillis() > 0L) {
-            return media.getDisplayTimeMillis();
-        }
-        if (media.getCapturedAtMillis() != null && media.getCapturedAtMillis() > 0L) {
-            return media.getCapturedAtMillis();
-        }
-        if (media.getImportedAtMillis() != null && media.getImportedAtMillis() > 0L) {
-            return media.getImportedAtMillis();
-        }
-        if (relation.getCreatedAt() != null) {
-            return relation.getCreatedAt().toEpochMilli();
-        }
-        return 0L;
     }
 
     private boolean mediaBelongsToUser(MediaEntity media, String userId) {
@@ -945,72 +646,6 @@ public class LifeConsoleService {
                 .toList();
     }
 
-    private AlbumEntity ensureSystemAlbum(String libraryId, LifeConsoleCategory category) {
-        // Round 8 Bug 修复: 优先查未删除的，查不到就查已软删除的并复活它。
-        // 原因: uk_albums_library_system_key 唯一约束不包含 deleted_at，
-        // 软删除的 album 仍占着 (library_id, system_key, domain) 这个 key，
-        // 直接 INSERT 新的会撞约束报 "Unexpected server error"。
-        AlbumEntity album = albumRepository.findByLibraryIdAndSystemKeyAndDomainAndDeletedAtIsNull(libraryId, category.albumSystemKey(), "life").orElse(null);
-        if (album == null) {
-            // 查已软删除的，复活它
-            album = albumRepository.findByLibraryIdAndSystemKeyAndDomain(libraryId, category.albumSystemKey(), "life").orElse(null);
-            if (album != null) {
-                album.setDeletedAt(null);
-            }
-        }
-        if (album == null) {
-            album = new AlbumEntity();
-            album.setId(IdGenerator.newId("album"));
-            album.setLibraryId(libraryId);
-            album.setSystemKey(category.albumSystemKey());
-            album.setTitle(category.albumTitle());
-            album.setSubtitle("");
-            album.setCoverMediaId(null);
-        }
-        album.setDomain("life");
-        album.setIncludeInPhotoFeed(category.includeInPhotoFeed());
-        if (album.getTitle() == null || album.getTitle().isBlank()) {
-            album.setTitle(category.albumTitle());
-        }
-        return albumRepository.save(album);
-    }
-
-    private PostEntity ensureMonthlySmallAlbum(String libraryId, AlbumEntity album, YearMonth yearMonth, ZoneId zone) {
-        String systemKey = yearMonth.toString();
-        PostEntity post = postRepository
-                .findByLibraryIdAndAlbumIdAndSystemKeyAndDomainAndDeletedAtIsNull(libraryId, album.getId(), systemKey, "life")
-                .orElse(null);
-        if (post != null) {
-            return post;
-        }
-        // Round 8 Bug 修复: 月度 post 可能被系统相册删除时级联软删了，
-        // 但 uk_small_albums_library_album_system_key 唯一约束不含 deleted_at，
-        // 直接 INSERT 新的会撞约束。这里复活软删的 post。
-        PostEntity softDeleted = postRepository
-                .findByLibraryIdAndAlbumIdAndSystemKeyAndDomain(libraryId, album.getId(), systemKey, "life")
-                .orElse(null);
-        if (softDeleted != null && softDeleted.getDeletedAt() != null) {
-            softDeleted.setDeletedAt(null);
-            return postRepository.save(softDeleted);
-        }
-        LocalDate firstDay = yearMonth.atDay(1);
-        PostEntity created = new PostEntity();
-        created.setId(IdGenerator.newId("small_album"));
-        created.setLibraryId(libraryId);
-        created.setAlbumId(album.getId());
-        created.setSystemKey(systemKey);
-        created.setTitle(monthTitle(yearMonth));
-        created.setSummary("");
-        created.setContributorLabel("Life Console");
-        created.setDisplayTimeMillis(firstDay.atStartOfDay(zone).toInstant().toEpochMilli());
-        created.setEventStartedAtMillis(firstDay.atStartOfDay(zone).toInstant().toEpochMilli());
-        created.setEventEndedAtMillis(yearMonth.atEndOfMonth().plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1);
-        created.setDisplayTimeSource("MANUAL");
-        created.setDomain("life");
-        created.setCoverMediaId(null);
-        return postRepository.save(created);
-    }
-
     private LifeUsers resolveLifeUsers(AuthenticatedUser currentUser) {
         UserEntity user = userRepository.findById(currentUser.userId())
                 .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, ErrorCode.AUTH_UNAUTHORIZED, "Current user does not exist."));
@@ -1086,10 +721,6 @@ public class LifeConsoleService {
         long startMillis = date.atStartOfDay(zone).toInstant().toEpochMilli();
         long endMillis = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli();
         return new DateRange(startMillis, endMillis);
-    }
-
-    private String monthTitle(YearMonth yearMonth) {
-        return String.format(Locale.ROOT, "%04d年%02d月", yearMonth.getYear(), yearMonth.getMonthValue());
     }
 
     private String formatHistoryDate(LocalDate date) {

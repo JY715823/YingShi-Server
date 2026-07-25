@@ -6,6 +6,7 @@ import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.domain.CommentEntity;
 import com.yingshi.server.domain.CommentTargetType;
+import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.domain.UserEntity;
 import com.yingshi.server.dto.comment.CommentDto;
 import com.yingshi.server.dto.comment.CommentPageResponse;
@@ -99,7 +100,7 @@ public class CommentService {
                 currentUser.libraryId(),
                 currentUser.userId(),
                 PushNotificationService.CATEGORY_PHOTOS_COMMENT,
-                "照片有新评论",
+                "小相册",
                 "对方评论了一个小相册。",
                 "photos:small-album:" + postId,
                 "comment:" + dto.commentId(),
@@ -123,7 +124,7 @@ public class CommentService {
                 currentUser.libraryId(),
                 currentUser.userId(),
                 PushNotificationService.CATEGORY_PHOTOS_COMMENT,
-                "照片有新评论",
+                "照片",
                 "对方评论了一项媒体。",
                 "photos:media:" + mediaId,
                 "comment:" + dto.commentId(),
@@ -211,7 +212,10 @@ public class CommentService {
     }
 
     private void requireMedia(String mediaId, String libraryId) {
-        if (mediaRepository.findByIdAndLibraryIdAndDeletedAtIsNull(mediaId, libraryId).isEmpty()) {
+        // P1-3 隔离修复 S3: photo 评论端点拒绝 life domain 媒体, 避免照片评论对 life 媒体操作
+        MediaEntity media = mediaRepository.findByIdAndLibraryIdAndDeletedAtIsNull(mediaId, libraryId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Media target was not found."));
+        if (isLifeDomainMedia(media)) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Media target was not found.");
         }
     }
@@ -223,8 +227,16 @@ public class CommentService {
     }
 
     private void requireReadableMedia(String mediaId, String libraryId) {
-        if (mediaRepository.findByIdAndLibraryId(mediaId, libraryId).isEmpty()) {
+        // P1-3 隔离修复 S3: photo 评论端点拒绝 life domain 媒体, 避免照片评论对 life 媒体操作
+        MediaEntity media = mediaRepository.findByIdAndLibraryId(mediaId, libraryId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Media target was not found."));
+        if (isLifeDomainMedia(media)) {
             throw new ApiException(HttpStatus.NOT_FOUND, ErrorCode.COMMENT_TARGET_NOT_FOUND, "Media target was not found.");
         }
+    }
+
+    private boolean isLifeDomainMedia(MediaEntity media) {
+        String domain = media.getDomain();
+        return domain != null && "life".equalsIgnoreCase(domain);
     }
 }

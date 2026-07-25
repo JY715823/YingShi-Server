@@ -8,7 +8,6 @@ import com.yingshi.server.domain.AlbumEntity;
 import com.yingshi.server.domain.BowelEventEntity;
 import com.yingshi.server.domain.CommentEntity;
 import com.yingshi.server.domain.CommentTargetType;
-import com.yingshi.server.domain.LedgerSnapshotEntity;
 import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.domain.MediaType;
 import com.yingshi.server.domain.NotificationReadEntity;
@@ -24,13 +23,14 @@ import com.yingshi.server.dto.notification.NotificationMediaItemDto;
 import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.BowelEventRepository;
 import com.yingshi.server.repository.CommentRepository;
-import com.yingshi.server.repository.LedgerSnapshotRepository;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.NotificationReadRepository;
+import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.TrashItemRepository;
 import com.yingshi.server.repository.UploadTaskRepository;
 import com.yingshi.server.repository.UserRepository;
+import com.yingshi.server.domain.PostMediaEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,8 +59,8 @@ public class NotificationService {
     private final UserRepository userRepository;
     private final MediaRepository mediaRepository;
     private final BowelEventRepository bowelEventRepository;
-    private final LedgerSnapshotRepository ledgerSnapshotRepository;
     private final AlbumRepository albumRepository;
+    private final PostMediaRepository postMediaRepository;
 
     public NotificationService(
             CommentRepository commentRepository,
@@ -71,8 +71,8 @@ public class NotificationService {
             UserRepository userRepository,
             MediaRepository mediaRepository,
             BowelEventRepository bowelEventRepository,
-            LedgerSnapshotRepository ledgerSnapshotRepository,
-            AlbumRepository albumRepository
+            AlbumRepository albumRepository,
+            PostMediaRepository postMediaRepository
     ) {
         this.commentRepository = commentRepository;
         this.postRepository = postRepository;
@@ -82,8 +82,8 @@ public class NotificationService {
         this.userRepository = userRepository;
         this.mediaRepository = mediaRepository;
         this.bowelEventRepository = bowelEventRepository;
-        this.ledgerSnapshotRepository = ledgerSnapshotRepository;
         this.albumRepository = albumRepository;
+        this.postMediaRepository = postMediaRepository;
     }
 
     @Transactional(readOnly = true)
@@ -156,7 +156,6 @@ public class NotificationService {
                 .filter(task -> task.getState() == UploadState.SUCCESS || task.getState() == UploadState.CANCELLED)
                 .toList();
         List<BowelEventEntity> bowelEvents = bowelEventRepository.findTop50ByLibraryIdAndDeletedAtIsNullOrderByOccurredAtMillisDesc(libraryId);
-        LedgerSnapshotEntity ledgerSnapshot = ledgerSnapshotRepository.findByLibraryId(libraryId).orElse(null);
 
         // Filter out posts belonging to life-console albums (人物痕迹, 吃饭, etc.).
         // These albums have includeInPhotoFeed=false and their own FCM push flow
@@ -189,8 +188,30 @@ public class NotificationService {
         trashItems.forEach(item -> events.add(toTrashEvent(item, currentUser, context)));
         toUploadEvents(uploadTasks, currentUser, context).forEach(events::add);
         bowelEvents.forEach(event -> events.add(toBowelEventNotification(event, currentUser, context)));
-        if (ledgerSnapshot != null && !currentUser.userId().equals(ledgerSnapshot.getLastModifiedByUserId())) {
-            events.add(toLedgerNotification(ledgerSnapshot, currentUser));
+
+        // Generate notification events for person/meal media uploads in life-console
+        // albums.  These are essential for the SyncVersionTracker polling fallback
+        // on devices where FCM is unreachable (e.g. no Google Play Services).
+        if (!lifeConsoleAlbumIds.isEmpty()) {
+            List<PostEntity> lifeConsolePosts = posts.stream()
+                    .filter(post -> {
+                        String albumId = post.getAlbumId();
+                        return albumId != null && !albumId.isBlank() && lifeConsoleAlbumIds.contains(albumId);
+                    })
+                    .toList();
+            if (!lifeConsolePosts.isEmpty()) {
+                Map<String, AlbumEntity> lifeConsoleAlbums = albumRepository
+                        .findByLibraryIdAndIdIn(libraryId, lifeConsoleAlbumIds).stream()
+                        .collect(Collectors.toMap(AlbumEntity::getId, album -> album));
+                for (PostEntity post : lifeConsolePosts) {
+                    AlbumEntity album = lifeConsoleAlbums.get(post.getAlbumId());
+                    if (album == null) continue;
+                    String systemKey = album.getSystemKey();
+                    if ("person".equals(systemKey) || "meal".equals(systemKey)) {
+                        events.add(toLifeConsoleMediaEvent(post, systemKey, currentUser, context));
+                    }
+                }
+            }
         }
 
         return events.stream()
@@ -499,6 +520,9 @@ public class NotificationService {
     private NotificationEvent toTrashEvent(TrashItemEntity item, AuthenticatedUser currentUser, NotificationSupportContext context) {
         long createdAtMillis = toEpochMillis(item.getUpdatedAt());
         String itemName = safeTitle(item.getTitle());
+        // P1-3 隔离修复 S7: 按 lifeCategory 区分 module, life trash 通知不进入照片通知中心
+        boolean isLifeTrash = item.getLifeCategory() != null;
+        String module = isLifeTrash ? "life" : "photos";
         String title = switch (item.getState()) {
             case IN_TRASH -> "「" + itemName + "」已移入回收站";
             case PENDING_CLEANUP -> "「" + itemName + "」等待彻底清理";
@@ -513,7 +537,7 @@ public class NotificationService {
         return new NotificationEvent(
                 "trash:" + item.getId() + ":" + createdAtMillis,
                 "delete_restore",
-                "photos",
+                module,
                 "delete",
                 title,
                 body,
@@ -538,6 +562,17 @@ public class NotificationService {
             NotificationSupportContext context
     ) {
         Map<String, List<UploadTaskEntity>> tasksByOperation = uploadTasks.stream()
+                // 过滤掉 life domain 的 upload task — 这些由 lifeConsoleMediaEvent 处理，
+                // 避免同一操作生成两条通知（upload event + life_media event）
+                .filter(task -> {
+                    String mediaId = task.getMediaId();
+                    if (mediaId == null || mediaId.isBlank()) return true;
+                    MediaEntity media = context.mediaById().get(mediaId);
+                    if (media != null && "life".equals(media.getDomain())) {
+                        return false;
+                    }
+                    return true;
+                })
                 .collect(Collectors.groupingBy(task -> {
                     String operationId = emptyToNull(task.getOperationId());
                     return operationId == null ? task.getId() : operationId;
@@ -776,7 +811,7 @@ public class NotificationService {
                 "life",
                 "trace",
                 actorDesc.displayName() + "记录了今日痕迹",
-                timeLabel + " 记录了一次排便",
+                timeLabel + " 记录了一次💩",
                 createdAtMillis,
                 actorDesc,
                 "bowel:" + event.getId(),
@@ -802,34 +837,66 @@ public class NotificationService {
         return localDateTime.format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm"));
     }
 
-    private NotificationEvent toLedgerNotification(
-            LedgerSnapshotEntity snapshot,
-            AuthenticatedUser currentUser
+    /**
+     * Generates a notification event for a person/meal media upload in a
+     * life-console album.  This ensures the SyncVersionTracker polling
+     * fallback can deliver a notification when FCM is unreachable.
+     */
+    private NotificationEvent toLifeConsoleMediaEvent(
+            PostEntity post,
+            String systemKey,
+            AuthenticatedUser currentUser,
+            NotificationSupportContext context
     ) {
-        String modifierUserId = snapshot.getLastModifiedByUserId();
-        UserEntity modifier = modifierUserId != null ? userRepository.findById(modifierUserId).orElse(null) : null;
-        ActorDescriptor actor = actorDescriptor(modifierUserId, modifier, null);
-        long updatedAtMillis = toEpochMillis(snapshot.getUpdatedAt());
+        String actorUserId = post.getLastModifiedByUserId();
+        if (actorUserId == null) {
+            actorUserId = post.getCreatorUserId();
+        }
+        UserEntity actor = actorUserId != null
+                ? userRepository.findById(actorUserId).orElse(null)
+                : null;
+        ActorDescriptor actorDesc = actorDescriptor(actorUserId, actor, null);
+        long createdAtMillis = toEpochMillis(post.getUpdatedAt());
+
+        String categoryLabel = "person".equals(systemKey) ? "人物痕迹" : "吃饭痕迹";
+        String actionLabel = "person".equals(systemKey) ? "人物照片" : "吃饭照片";
+
+        // 查询 post 最新的 mediaId，用于回退通知精准跳转
+        // 之前 BUG: 不包含 mediaId，导致回退通知无法精准跳转，总是跳到第一张
+        String latestMediaId = findLatestMediaIdForPost(post.getLibraryId(), post.getId());
+
         return new NotificationEvent(
-                "ledger:" + snapshot.getLibraryId() + ":" + updatedAtMillis,
-                "ledger_update",
+                "life_media:" + post.getId() + ":" + createdAtMillis,
+                "content_update",
                 "life",
-                "ledger",
-                actor.displayName() + "更新了记账数据",
-                "记账本有新的收支变动，点开可查看。",
-                updatedAtMillis,
-                actor,
-                null,
+                "trace",
+                actorDesc.displayName() + "更新了" + categoryLabel,
+                "对方上传了" + actionLabel,
+                createdAtMillis,
+                actorDesc,
+                "life_media:" + post.getId(),
                 null,
                 1,
                 List.of(),
-                "life:ledger",
-                "记账",
-                "LIFE_LEDGER",
+                "life:trace",
+                "今日痕迹",
+                "LIFE_TRACE",
                 null,
-                null,
+                latestMediaId,
                 null
         );
+    }
+
+    /**
+     * 查询 post 最新的 mediaId（按 sortOrder 降序取第一个）。
+     * 用于回退通知精准跳转到对应媒体的查看态。
+     */
+    private String findLatestMediaIdForPost(String libraryId, String postId) {
+        if (postId == null || postId.isBlank()) return null;
+        List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, postId);
+        if (relations.isEmpty()) return null;
+        // sortOrder 升序排列，最新的在最后
+        return relations.get(relations.size() - 1).getMediaId();
     }
 
     private long toEpochMillis(Instant instant) {

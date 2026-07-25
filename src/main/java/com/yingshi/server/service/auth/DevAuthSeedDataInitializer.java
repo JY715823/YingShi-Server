@@ -8,6 +8,7 @@ import com.yingshi.server.repository.SharedLibraryMemberRepository;
 import com.yingshi.server.repository.SharedLibraryRepository;
 import com.yingshi.server.repository.UserRepository;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -15,7 +16,8 @@ import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 @Configuration
-@Profile({"dev", "docker", "docker-local"})
+@Profile({"dev", "docker-local"})
+@ConditionalOnProperty(name = "app.dev-seed.enabled", havingValue = "true", matchIfMissing = true)
 public class DevAuthSeedDataInitializer {
 
     public static final String DEMO_LIBRARY_ID = "library_shared";

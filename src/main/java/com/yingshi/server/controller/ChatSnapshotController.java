@@ -3,6 +3,8 @@ package com.yingshi.server.controller;
 import com.yingshi.server.common.auth.AuthRequired;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.auth.CurrentUser;
+import com.yingshi.server.common.exception.ApiException;
+import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.chat.ChatImportedSyncRequest;
@@ -17,6 +19,9 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -34,6 +39,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/chat/imported")
 public class ChatSnapshotController {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatSnapshotController.class);
 
     private final ChatSnapshotService chatSnapshotService;
     private final ChatImportedSyncService chatImportedSyncService;
@@ -76,6 +83,9 @@ public class ChatSnapshotController {
         return ApiResponse.success(requestId(request), chatImportedSyncService.sync(requestBody, currentUser.libraryId()));
     }
 
+    /** R3-CHAT-002: Maximum upload size for ZIP import (50MB at controller level, service allows up to 500MB unzipped). */
+    private static final long MAX_ZIP_UPLOAD_BYTES = 50L * 1024 * 1024;
+
     @Operation(summary = "Upload and import a QCE ZIP archive", security = @SecurityRequirement(name = "bearerAuth"))
     @PostMapping("/upload-zip")
     public ApiResponse<Map<String, Object>> uploadZip(
@@ -83,15 +93,21 @@ public class ChatSnapshotController {
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
+        // R3-CHAT-002: Pre-check file size at controller level
+        if (file.getSize() > MAX_ZIP_UPLOAD_BYTES) {
+            throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE, ErrorCode.CHAT_IMPORT_SIZE_EXCEEDED,
+                    "ZIP file exceeds maximum upload size of " + (MAX_ZIP_UPLOAD_BYTES / 1024 / 1024) + "MB");
+        }
+
         if (file.isEmpty()) {
-            return ApiResponse.error(requestId(request),
-                    new com.yingshi.server.common.response.ApiError("EMPTY_FILE", "Uploaded file is empty", null));
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.CHAT_IMPORT_EMPTY_FILE,
+                    "Uploaded file is empty");
         }
 
         String originalFilename = file.getOriginalFilename();
         if (originalFilename == null || !originalFilename.toLowerCase().endsWith(".zip")) {
-            return ApiResponse.error(requestId(request),
-                    new com.yingshi.server.common.response.ApiError("INVALID_FORMAT", "Only .zip files are accepted", null));
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.CHAT_IMPORT_INVALID_FORMAT,
+                    "Only .zip files are accepted");
         }
 
         try {
@@ -99,14 +115,17 @@ public class ChatSnapshotController {
             Map<String, Object> stats = chatImportedZipService.importZip(zipBytes, currentUser.libraryId());
             return ApiResponse.success(requestId(request), stats);
         } catch (IOException e) {
-            return ApiResponse.error(requestId(request),
-                    new com.yingshi.server.common.response.ApiError("READ_ERROR", "Failed to read uploaded file: " + e.getMessage(), null));
+            log.warn("Failed to read uploaded ZIP file for library={}: {}", currentUser.libraryId(), e.getMessage());
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.CHAT_IMPORT_READ_ERROR,
+                    "Failed to read uploaded file");
         } catch (IllegalArgumentException e) {
-            return ApiResponse.error(requestId(request),
-                    new com.yingshi.server.common.response.ApiError("INVALID_ARCHIVE", e.getMessage(), null));
+            log.warn("Invalid ZIP archive for library={}: {}", currentUser.libraryId(), e.getMessage());
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.CHAT_IMPORT_INVALID_ARCHIVE,
+                    "Invalid archive format");
         } catch (Exception e) {
-            return ApiResponse.error(requestId(request),
-                    new com.yingshi.server.common.response.ApiError("IMPORT_FAILED", "Import failed: " + e.getMessage(), null));
+            log.error("Unexpected error during ZIP import for library={}", currentUser.libraryId(), e);
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.CHAT_IMPORT_FAILED,
+                    "Import failed due to an unexpected error");
         }
     }
 

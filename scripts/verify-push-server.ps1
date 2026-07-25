@@ -23,7 +23,7 @@ Require-Command "docker" "Install Docker Desktop and enable WSL integration."
 Require-Command "java" "Install JDK 17, for example: winget install EclipseAdoptium.Temurin.17.JDK"
 
 Invoke-Step "FCM and local fallback env" {
-    Select-String -Path ".env" -Pattern "FCM_ENABLED|FCM_DRY_RUN|FCM_PROJECT_ID|FCM_SERVICE_ACCOUNT|PUSH_SELF_FALLBACK_ENABLED" |
+    Select-String -Path ".env" -Pattern "FCM_ENABLED|FCM_DRY_RUN|FCM_PROJECT_ID|FCM_SERVICE_ACCOUNT" |
         ForEach-Object { $_.Line }
     $secretLine = Select-String -Path ".env" -Pattern "^FCM_SERVICE_ACCOUNT_HOST_PATH=(.+)$" | Select-Object -First 1
     if ($secretLine -and $secretLine.Matches[0].Groups[1].Value) {

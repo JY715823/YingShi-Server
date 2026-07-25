@@ -18,6 +18,15 @@ import com.yingshi.server.domain.ledger.LedgerRecurringRuleEntity;
 import com.yingshi.server.domain.ledger.LedgerTransactionEntity;
 import com.yingshi.server.domain.ledger.LedgerTransactionType;
 import com.yingshi.server.dto.ledger.DeletedRowRef;
+import com.yingshi.server.dto.ledger.LedgerChangeRows.AccountChangeRow;
+import com.yingshi.server.dto.ledger.LedgerChangeRows.BookChangeRow;
+import com.yingshi.server.dto.ledger.LedgerChangeRows.BudgetChangeRow;
+import com.yingshi.server.dto.ledger.LedgerChangeRows.CategoryBudgetChangeRow;
+import com.yingshi.server.dto.ledger.LedgerChangeRows.CategoryChangeRow;
+import com.yingshi.server.dto.ledger.LedgerChangeRows.DeletedItemChangeRow;
+import com.yingshi.server.dto.ledger.LedgerChangeRows.RecurringOccurrenceChangeRow;
+import com.yingshi.server.dto.ledger.LedgerChangeRows.RecurringRuleChangeRow;
+import com.yingshi.server.dto.ledger.LedgerChangeRows.TransactionChangeRow;
 import com.yingshi.server.dto.ledger.LedgerChangesDto;
 import com.yingshi.server.dto.ledger.LedgerClientChangesDto;
 import com.yingshi.server.dto.ledger.LedgerSyncRequest;
@@ -50,6 +59,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 @Service
 public class LedgerSyncService {
@@ -61,10 +74,10 @@ public class LedgerSyncService {
     private static final String TABLE_ACCOUNTS = "accounts";
     private static final String TABLE_TRANSACTIONS = "transactions";
     private static final String TABLE_BUDGETS = "budgets";
-    private static final String TABLE_CATEGORY_BUDGETS = "categoryBudgets";
-    private static final String TABLE_DELETED_ITEMS = "deletedItems";
-    private static final String TABLE_RECURRING_RULES = "recurringRules";
-    private static final String TABLE_RECURRING_OCCURRENCES = "recurringOccurrences";
+    private static final String TABLE_CATEGORY_BUDGETS = "category_budgets";
+    private static final String TABLE_DELETED_ITEMS = "deleted_items";
+    private static final String TABLE_RECURRING_RULES = "recurring_rules";
+    private static final String TABLE_RECURRING_OCCURRENCES = "recurring_occurrences";
 
     private final LedgerBookRepository bookRepository;
     private final LedgerCategoryRepository categoryRepository;
@@ -101,174 +114,678 @@ public class LedgerSyncService {
     @Transactional
     public LedgerSyncResponse sync(LedgerSyncRequest request, AuthenticatedUser user) {
         String libraryId = user.libraryId();
-        Instant syncStart = Instant.now();
 
         LedgerClientChangesDto clientChanges = request.changes();
         if (clientChanges == null) {
             clientChanges = LedgerClientChangesDto.empty();
         }
 
-        applyChanges(libraryId, clientChanges);
+        // 诊断日志：记录入参概要，便于定位 500 根因
+        log.info("Ledger sync start: libraryId={}, lastSyncVersionMillis={}, "
+                        + "books={}, categories={}, accounts={}, transactions={}, budgets={}, "
+                        + "categoryBudgets={}, deletedItems={}, recurringRules={}, recurringOccurrences={}, deletedRowIds={}",
+                libraryId, request.lastSyncVersionMillis(),
+                size(clientChanges.books()), size(clientChanges.categories()),
+                size(clientChanges.accounts()), size(clientChanges.transactions()),
+                size(clientChanges.budgets()), size(clientChanges.categoryBudgets()),
+                size(clientChanges.deletedItems()), size(clientChanges.recurringRules()),
+                size(clientChanges.recurringOccurrences()),
+                clientChanges.deletedRowIds() == null ? 0 : clientChanges.deletedRowIds().size());
+
+        List<LedgerSyncResponse.RejectedRowRef> rejected;
+        try {
+            rejected = applyChanges(libraryId, clientChanges);
+        } catch (RuntimeException e) {
+            // 记录具体哪张表、哪条 row 触发了异常，便于客户端定位
+            log.error("applyChanges failed for libraryId={}: {} - {}. "
+                            + "Pending: books={}, categories={}, accounts={}, transactions={}, budgets={}, "
+                            + "categoryBudgets={}, deletedItems={}, recurringRules={}, recurringOccurrences={}",
+                    libraryId, e.getClass().getSimpleName(), e.getMessage(),
+                    size(clientChanges.books()), size(clientChanges.categories()),
+                    size(clientChanges.accounts()), size(clientChanges.transactions()),
+                    size(clientChanges.budgets()), size(clientChanges.categoryBudgets()),
+                    size(clientChanges.deletedItems()), size(clientChanges.recurringRules()),
+                    size(clientChanges.recurringOccurrences()), e);
+            throw e;
+        }
 
         if (clientChanges.deletedRowIds() != null) {
-            applyDeletions(libraryId, clientChanges.deletedRowIds());
+            try {
+                applyDeletions(libraryId, clientChanges.deletedRowIds());
+            } catch (RuntimeException e) {
+                log.error("applyDeletions failed for libraryId={}: {} - {}. deletedRowIds={}",
+                        libraryId, e.getClass().getSimpleName(), e.getMessage(),
+                        clientChanges.deletedRowIds(), e);
+                throw e;
+            }
         }
 
         Instant since = Instant.ofEpochMilli(request.lastSyncVersionMillis());
-        LedgerChangesDto serverChanges = queryChangesSince(libraryId, since);
+        LedgerChangesDto serverChanges;
+        try {
+            serverChanges = queryChangesSince(libraryId, since);
+        } catch (RuntimeException e) {
+            log.error("queryChangesSince failed for libraryId={}, since={}: {} - {}",
+                    libraryId, since, e.getClass().getSimpleName(), e.getMessage(), e);
+            throw e;
+        }
 
-        return new LedgerSyncResponse(syncStart.toEpochMilli(), serverChanges);
+        // FR-19: take syncEnd AFTER queryChangesSince so next sync's since = syncEnd
+        // won't re-hit rows written/updated in this request (their updatedAt <= syncEnd).
+        // JPA @PreUpdate sets updatedAt during flush, which happens before queryChangesSince.
+        Instant syncEnd = Instant.now();
+        log.info("Ledger sync done: libraryId={}, syncEnd={}, serverChanges: books={}, transactions={}",
+                libraryId, syncEnd,
+                serverChanges.books() == null ? 0 : serverChanges.books().size(),
+                serverChanges.transactions() == null ? 0 : serverChanges.transactions().size());
+        log.info("Ledger sync rejected: count={}, details={}", rejected.size(), rejected.stream().limit(20).toList());
+        return new LedgerSyncResponse(syncEnd.toEpochMilli(), serverChanges, rejected.isEmpty() ? null : rejected);
+    }
+
+    private int size(List<?> list) {
+        return list == null ? 0 : list.size();
     }
 
     // -----------------------------------------------------------------------
     // Apply client changes (upsert typed rows)
     // -----------------------------------------------------------------------
 
-    private void applyChanges(String libraryId, LedgerClientChangesDto changes) {
-        upsertBooks(libraryId, changes.books());
-        upsertCategories(libraryId, changes.categories());
-        upsertAccounts(libraryId, changes.accounts());
-        upsertTransactions(libraryId, changes.transactions());
-        upsertBudgets(libraryId, changes.budgets());
-        upsertCategoryBudgets(libraryId, changes.categoryBudgets());
-        upsertDeletedItems(libraryId, changes.deletedItems());
-        upsertRecurringRules(libraryId, changes.recurringRules());
-        upsertRecurringOccurrences(libraryId, changes.recurringOccurrences());
+    private java.util.List<LedgerSyncResponse.RejectedRowRef> applyChanges(
+            String libraryId, LedgerClientChangesDto changes) {
+        java.util.List<LedgerSyncResponse.RejectedRowRef> rejected = new java.util.ArrayList<>();
+        // 显式 flush 父表，保证 FK 父子顺序，避免 Hibernate 批量重排序导致的偶发 FK 违反
+        rejected.addAll(upsertBooks(libraryId, changes.books()));
+        bookRepository.flush();
+        rejected.addAll(upsertCategories(libraryId, changes.categories()));
+        categoryRepository.flush();
+        rejected.addAll(upsertAccounts(libraryId, changes.accounts()));
+        accountRepository.flush();
+        rejected.addAll(upsertTransactions(libraryId, changes.transactions()));
+        transactionRepository.flush();
+        rejected.addAll(upsertBudgets(libraryId, changes.budgets()));
+        budgetRepository.flush();
+        rejected.addAll(upsertCategoryBudgets(libraryId, changes.categoryBudgets()));
+        categoryBudgetRepository.flush();
+        rejected.addAll(upsertDeletedItems(libraryId, changes.deletedItems()));
+        deletedItemRepository.flush();
+        rejected.addAll(upsertRecurringRules(libraryId, changes.recurringRules()));
+        recurringRuleRepository.flush();
+        rejected.addAll(upsertRecurringOccurrences(libraryId, changes.recurringOccurrences()));
+        return rejected;
     }
 
-    private void upsertBooks(String libraryId, List<BookRow> rows) {
-        if (rows == null || rows.isEmpty()) return;
+    private java.util.List<LedgerSyncResponse.RejectedRowRef> upsertBooks(String libraryId, List<BookRow> rows) {
+        java.util.List<LedgerSyncResponse.RejectedRowRef> rejected = new java.util.ArrayList<>();
+        if (rows == null || rows.isEmpty()) return rejected;
+        List<String> ids = rows.stream().map(BookRow::id).filter(Objects::nonNull).toList();
+        if (ids.isEmpty()) return rejected;
+        Map<String, LedgerBookEntity> existing = bookRepository
+                .findByLibraryIdAndIdIn(libraryId, ids)
+                .stream().collect(Collectors.toMap(LedgerBookEntity::getId, e -> e));
+        List<LedgerBookEntity> toSave = new ArrayList<>(rows.size());
         for (BookRow row : rows) {
-            LedgerBookEntity entity = bookRepository.findByIdAndLibraryId(row.id(), libraryId)
-                    .orElseGet(() -> {
-                        LedgerBookEntity e = new LedgerBookEntity();
-                        e.setId(row.id() != null ? row.id() : IdGenerator.newId("lbook"));
-                        e.setLibraryId(libraryId);
-                        return e;
-                    });
+            LedgerBookEntity entity = existing.get(row.id());
+            if (entity == null) {
+                entity = new LedgerBookEntity();
+                entity.setId(row.id() != null ? row.id() : IdGenerator.newId("lbook"));
+                entity.setLibraryId(libraryId);
+            }
             mapToBook(row, entity);
-            bookRepository.save(entity);
+            toSave.add(entity);
         }
+        bookRepository.saveAll(toSave);
+        return rejected;
     }
 
-    private void upsertCategories(String libraryId, List<CategoryRow> rows) {
-        if (rows == null || rows.isEmpty()) return;
+    private java.util.List<LedgerSyncResponse.RejectedRowRef> upsertCategories(String libraryId, List<CategoryRow> rows) {
+        java.util.List<LedgerSyncResponse.RejectedRowRef> rejected = new java.util.ArrayList<>();
+        if (rows == null || rows.isEmpty()) return rejected;
+        List<String> ids = rows.stream().map(CategoryRow::id).filter(Objects::nonNull).toList();
+        if (ids.isEmpty()) return rejected;
+
+        // FK 预检：ledger_categories.book_id NOT NULL + FK ON DELETE CASCADE
+        // 防御客户端发送未同步 bookId 或空 bookId 导致的 500 死循环
+        java.util.Set<String> bookIdsToCheck = rows.stream()
+                .map(CategoryRow::bookId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> existingBookIds = bookIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : bookRepository.findByLibraryIdAndIdIn(libraryId, bookIdsToCheck)
+                        .stream().map(LedgerBookEntity::getId).collect(Collectors.toSet());
+
+        Map<String, LedgerCategoryEntity> existing = categoryRepository
+                .findByLibraryIdAndIdIn(libraryId, ids)
+                .stream().collect(Collectors.toMap(LedgerCategoryEntity::getId, e -> e));
+        List<LedgerCategoryEntity> toSave = new ArrayList<>(rows.size());
         for (CategoryRow row : rows) {
-            LedgerCategoryEntity entity = categoryRepository.findByIdAndLibraryId(row.id(), libraryId)
-                    .orElseGet(() -> {
-                        LedgerCategoryEntity e = new LedgerCategoryEntity();
-                        e.setId(row.id() != null ? row.id() : IdGenerator.newId("lcat"));
-                        e.setLibraryId(libraryId);
-                        return e;
-                    });
+            if (row.id() == null) {
+                log.warn("upsertCategory skipped: row.id() is null");
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("categories", null, "null_id"));
+                continue;
+            }
+            if (row.bookId() == null || row.bookId().isBlank()) {
+                log.warn("upsertCategory skipped: id={} has blank bookId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("categories", row.id(), "blank_book_id"));
+                continue;
+            }
+            if (!existingBookIds.contains(row.bookId())) {
+                log.warn("upsertCategory skipped: id={} references non-existent bookId={}", row.id(), row.bookId());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("categories", row.id(), "book_not_found:" + row.bookId()));
+                continue;
+            }
+            LedgerCategoryEntity entity = existing.get(row.id());
+            if (entity == null) {
+                entity = new LedgerCategoryEntity();
+                entity.setId(row.id() != null ? row.id() : IdGenerator.newId("lcat"));
+                entity.setLibraryId(libraryId);
+            }
             mapToCategory(row, entity);
-            categoryRepository.save(entity);
+            toSave.add(entity);
         }
+        if (!toSave.isEmpty()) {
+            categoryRepository.saveAll(toSave);
+        }
+        return rejected;
     }
 
-    private void upsertAccounts(String libraryId, List<AccountRow> rows) {
-        if (rows == null || rows.isEmpty()) return;
+    private java.util.List<LedgerSyncResponse.RejectedRowRef> upsertAccounts(String libraryId, List<AccountRow> rows) {
+        java.util.List<LedgerSyncResponse.RejectedRowRef> rejected = new java.util.ArrayList<>();
+        if (rows == null || rows.isEmpty()) return rejected;
+        List<String> ids = rows.stream().map(AccountRow::id).filter(Objects::nonNull).toList();
+        if (ids.isEmpty()) return rejected;
+
+        // FK 预检：聚合所有 account 引用的 bookId，查询其在当前 library 下是否真实存在。
+        // 防御旧版客户端 saveAccount 写入 bookId="" 导致的 FK 违反 500 死循环。
+        java.util.Set<String> bookIdsToCheck = rows.stream()
+                .map(AccountRow::bookId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> existingBookIds = bookIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : bookRepository.findByLibraryIdAndIdIn(libraryId, bookIdsToCheck)
+                        .stream().map(LedgerBookEntity::getId).collect(Collectors.toSet());
+
+        Map<String, LedgerAccountEntity> existing = accountRepository
+                .findByLibraryIdAndIdIn(libraryId, ids)
+                .stream().collect(Collectors.toMap(LedgerAccountEntity::getId, e -> e));
+        List<LedgerAccountEntity> toSave = new ArrayList<>(rows.size());
         for (AccountRow row : rows) {
-            LedgerAccountEntity entity = accountRepository.findByIdAndLibraryId(row.id(), libraryId)
-                    .orElseGet(() -> {
-                        LedgerAccountEntity e = new LedgerAccountEntity();
-                        e.setId(row.id() != null ? row.id() : IdGenerator.newId("lacc"));
-                        e.setLibraryId(libraryId);
-                        return e;
-                    });
+            if (row.id() == null) {
+                log.warn("upsertAccount skipped: row.id() is null");
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("accounts", null, "null_id"));
+                continue;
+            }
+            // FK 预检：跳过 bookId 为空或引用了不存在 book 的 account
+            if (row.bookId() == null || row.bookId().isBlank()) {
+                log.warn("upsertAccount skipped: id={} has blank bookId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("accounts", row.id(), "blank_book_id"));
+                continue;
+            }
+            if (!existingBookIds.contains(row.bookId())) {
+                log.warn("upsertAccount skipped: id={} references non-existent bookId={}", row.id(), row.bookId());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("accounts", row.id(), "book_not_found:" + row.bookId()));
+                continue;
+            }
+            LedgerAccountEntity entity = existing.get(row.id());
+            if (entity == null) {
+                entity = new LedgerAccountEntity();
+                entity.setId(row.id());
+                entity.setLibraryId(libraryId);
+            }
             mapToAccount(row, entity);
-            accountRepository.save(entity);
+            toSave.add(entity);
         }
+        if (!toSave.isEmpty()) {
+            accountRepository.saveAll(toSave);
+        }
+        return rejected;
     }
 
-    private void upsertTransactions(String libraryId, List<TransactionRow> rows) {
-        if (rows == null || rows.isEmpty()) return;
+    private java.util.List<LedgerSyncResponse.RejectedRowRef> upsertTransactions(String libraryId, List<TransactionRow> rows) {
+        java.util.List<LedgerSyncResponse.RejectedRowRef> rejected = new java.util.ArrayList<>();
+        if (rows == null || rows.isEmpty()) return rejected;
+        List<String> ids = rows.stream().map(TransactionRow::id).filter(Objects::nonNull).toList();
+        if (ids.isEmpty()) return rejected;
+
+        // FK 预检：聚合所有 transaction 引用的 bookId / accountId / categoryId，
+        // 一次性查询其在当前 library 下是否真实存在；对不存在的引用，
+        // 直接跳过对应 row 而非让 flush/commit 阶段抛 ConstraintViolationException。
+        // 这是 500 死循环的兜底防御：即使客户端 changelog 顺序异常或种子数据未同步，
+        // 也不会因单条违规 row 让整批 sync 失败。
+        java.util.Set<String> bookIdsToCheck = rows.stream()
+                .map(TransactionRow::bookId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> accountIdsToCheck = rows.stream()
+                .map(TransactionRow::accountId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> categoryIdsToCheck = rows.stream()
+                .map(TransactionRow::categoryId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+
+        java.util.Set<String> existingBookIds = bookIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : bookRepository.findByLibraryIdAndIdIn(libraryId, bookIdsToCheck)
+                        .stream().map(LedgerBookEntity::getId).collect(Collectors.toSet());
+        java.util.Set<String> existingAccountIds = accountIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : accountRepository.findByLibraryIdAndIdIn(libraryId, accountIdsToCheck)
+                        .stream().map(LedgerAccountEntity::getId).collect(Collectors.toSet());
+        java.util.Set<String> existingCategoryIds = categoryIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : categoryRepository.findByLibraryIdAndIdIn(libraryId, categoryIdsToCheck)
+                        .stream().map(LedgerCategoryEntity::getId).collect(Collectors.toSet());
+
+        Map<String, LedgerTransactionEntity> existing = transactionRepository
+                .findByLibraryIdAndIdIn(libraryId, ids)
+                .stream().collect(Collectors.toMap(LedgerTransactionEntity::getId, e -> e));
+        List<LedgerTransactionEntity> toSave = new ArrayList<>(rows.size());
         for (TransactionRow row : rows) {
-            LedgerTransactionEntity entity = transactionRepository.findByIdAndLibraryId(row.id(), libraryId)
-                    .orElseGet(() -> {
-                        LedgerTransactionEntity e = new LedgerTransactionEntity();
-                        e.setId(row.id() != null ? row.id() : IdGenerator.newId("ltx"));
-                        e.setLibraryId(libraryId);
-                        return e;
-                    });
+            // 诊断日志：逐条记录，便于在 500 时定位是哪条 row 出问题
+            log.info("upsertTransaction: id={}, bookId={}, categoryId={}, accountId={}, toAccountId={}, "
+                            + "amountCents={}, type={}, occurredAtMillis={}, method={}, deletedAtMillis={}",
+                    row.id(), row.bookId(), row.categoryId(), row.accountId(), row.toAccountId(),
+                    row.amountCents(), row.type(), row.occurredAtMillis(), row.method(), row.deletedAtMillis());
+            if (row.id() == null) {
+                log.warn("upsertTransaction skipped: row.id() is null");
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("transactions", null, "null_id"));
+                continue;
+            }
+            // book_id / account_id 是 NOT NULL → 直接拒绝
+            if (row.bookId() == null || row.bookId().isBlank()) {
+                log.warn("upsertTransaction skipped: id={} has blank bookId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("transactions", row.id(), "blank_book_id"));
+                continue;
+            }
+            if (!existingBookIds.contains(row.bookId())) {
+                log.warn("upsertTransaction skipped: bookId={} not found in library {}", row.bookId(), libraryId);
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("transactions", row.id(), "book_not_found:" + row.bookId()));
+                continue;
+            }
+            if (row.accountId() == null || row.accountId().isBlank()) {
+                log.warn("upsertTransaction skipped: id={} has blank accountId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("transactions", row.id(), "blank_account_id"));
+                continue;
+            }
+            if (!existingAccountIds.contains(row.accountId())) {
+                log.warn("upsertTransaction skipped: accountId={} not found in library {}", row.accountId(), libraryId);
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("transactions", row.id(), "account_not_found:" + row.accountId()));
+                continue;
+            }
+            // categoryId / toAccountId 是 NULLABLE + FK ON DELETE SET NULL
+            // → 若引用不存在则置空，而非拒绝 row（与 DB FK ON DELETE SET NULL 语义一致）
+            String resolvedCategoryId = (row.categoryId() != null && !row.categoryId().isBlank()
+                    && existingCategoryIds.contains(row.categoryId()))
+                    ? row.categoryId() : null;
+            String resolvedToAccountId = (row.toAccountId() != null && !row.toAccountId().isBlank()
+                    && existingAccountIds.contains(row.toAccountId()))
+                    ? row.toAccountId() : null;
+            LedgerTransactionEntity entity = existing.get(row.id());
+            if (entity == null) {
+                entity = new LedgerTransactionEntity();
+                entity.setId(row.id());
+                entity.setLibraryId(libraryId);
+            }
             mapToTransaction(row, entity);
-            transactionRepository.save(entity);
+            // 用预检结果覆盖 mapToTransaction 写入的可疑 nullable FK 值，避免 commit 时 FK 违反
+            entity.setCategoryId(resolvedCategoryId);
+            entity.setToAccountId(resolvedToAccountId);
+            toSave.add(entity);
         }
+        if (!toSave.isEmpty()) {
+            transactionRepository.saveAll(toSave);
+            transactionRepository.flush();
+        }
+        return rejected;
     }
 
-    private void upsertBudgets(String libraryId, List<BudgetRow> rows) {
-        if (rows == null || rows.isEmpty()) return;
+    private java.util.List<LedgerSyncResponse.RejectedRowRef> upsertBudgets(String libraryId, List<BudgetRow> rows) {
+        java.util.List<LedgerSyncResponse.RejectedRowRef> rejected = new java.util.ArrayList<>();
+        if (rows == null || rows.isEmpty()) return rejected;
+        List<String> ids = rows.stream().map(BudgetRow::id).filter(Objects::nonNull).toList();
+        if (ids.isEmpty()) return rejected;
+
+        // FK 预检：ledger_budgets.book_id NOT NULL + FK ON DELETE CASCADE
+        java.util.Set<String> bookIdsToCheck = rows.stream()
+                .map(BudgetRow::bookId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> existingBookIds = bookIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : bookRepository.findByLibraryIdAndIdIn(libraryId, bookIdsToCheck)
+                        .stream().map(LedgerBookEntity::getId).collect(Collectors.toSet());
+
+        Map<String, LedgerBudgetEntity> existing = budgetRepository
+                .findByLibraryIdAndIdIn(libraryId, ids)
+                .stream().collect(Collectors.toMap(LedgerBudgetEntity::getId, e -> e));
+        List<LedgerBudgetEntity> toSave = new ArrayList<>(rows.size());
         for (BudgetRow row : rows) {
-            LedgerBudgetEntity entity = budgetRepository.findByIdAndLibraryId(row.id(), libraryId)
-                    .orElseGet(() -> {
-                        LedgerBudgetEntity e = new LedgerBudgetEntity();
-                        e.setId(row.id() != null ? row.id() : IdGenerator.newId("lbgt"));
-                        e.setLibraryId(libraryId);
-                        return e;
-                    });
+            if (row.id() == null) {
+                log.warn("upsertBudget skipped: row.id() is null");
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("budgets", null, "null_id"));
+                continue;
+            }
+            if (row.bookId() == null || row.bookId().isBlank()) {
+                log.warn("upsertBudget skipped: id={} has blank bookId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("budgets", row.id(), "blank_book_id"));
+                continue;
+            }
+            if (!existingBookIds.contains(row.bookId())) {
+                log.warn("upsertBudget skipped: id={} references non-existent bookId={}", row.id(), row.bookId());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("budgets", row.id(), "book_not_found:" + row.bookId()));
+                continue;
+            }
+            LedgerBudgetEntity entity = existing.get(row.id());
+            if (entity == null) {
+                entity = new LedgerBudgetEntity();
+                entity.setId(row.id() != null ? row.id() : IdGenerator.newId("lbgt"));
+                entity.setLibraryId(libraryId);
+            }
             mapToBudget(row, entity);
-            budgetRepository.save(entity);
+            toSave.add(entity);
         }
+        if (!toSave.isEmpty()) {
+            budgetRepository.saveAll(toSave);
+        }
+        return rejected;
     }
 
-    private void upsertCategoryBudgets(String libraryId, List<CategoryBudgetRow> rows) {
-        if (rows == null || rows.isEmpty()) return;
+    private java.util.List<LedgerSyncResponse.RejectedRowRef> upsertCategoryBudgets(String libraryId, List<CategoryBudgetRow> rows) {
+        java.util.List<LedgerSyncResponse.RejectedRowRef> rejected = new java.util.ArrayList<>();
+        if (rows == null || rows.isEmpty()) return rejected;
+        List<String> ids = rows.stream().map(CategoryBudgetRow::id).filter(Objects::nonNull).toList();
+        if (ids.isEmpty()) return rejected;
+
+        // FK 预检：budget_id / category_id 均 NOT NULL + FK ON DELETE CASCADE
+        java.util.Set<String> budgetIdsToCheck = rows.stream()
+                .map(CategoryBudgetRow::budgetId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> categoryIdsToCheck = rows.stream()
+                .map(CategoryBudgetRow::categoryId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> existingBudgetIds = budgetIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : budgetRepository.findByLibraryIdAndIdIn(libraryId, budgetIdsToCheck)
+                        .stream().map(LedgerBudgetEntity::getId).collect(Collectors.toSet());
+        java.util.Set<String> existingCategoryIds = categoryIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : categoryRepository.findByLibraryIdAndIdIn(libraryId, categoryIdsToCheck)
+                        .stream().map(LedgerCategoryEntity::getId).collect(Collectors.toSet());
+
+        Map<String, LedgerCategoryBudgetEntity> existing = categoryBudgetRepository
+                .findByLibraryIdAndIdIn(libraryId, ids)
+                .stream().collect(Collectors.toMap(LedgerCategoryBudgetEntity::getId, e -> e));
+        List<LedgerCategoryBudgetEntity> toSave = new ArrayList<>(rows.size());
         for (CategoryBudgetRow row : rows) {
-            LedgerCategoryBudgetEntity entity = categoryBudgetRepository.findByIdAndLibraryId(row.id(), libraryId)
-                    .orElseGet(() -> {
-                        LedgerCategoryBudgetEntity e = new LedgerCategoryBudgetEntity();
-                        e.setId(row.id() != null ? row.id() : IdGenerator.newId("lcbgt"));
-                        e.setLibraryId(libraryId);
-                        return e;
-                    });
+            if (row.id() == null) {
+                log.warn("upsertCategoryBudget skipped: row.id() is null");
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("category_budgets", null, "null_id"));
+                continue;
+            }
+            if (row.budgetId() == null || row.budgetId().isBlank()) {
+                log.warn("upsertCategoryBudget skipped: id={} has blank budgetId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("category_budgets", row.id(), "blank_budget_id"));
+                continue;
+            }
+            if (!existingBudgetIds.contains(row.budgetId())) {
+                log.warn("upsertCategoryBudget skipped: id={} references non-existent budgetId={}", row.id(), row.budgetId());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("category_budgets", row.id(), "budget_not_found:" + row.budgetId()));
+                continue;
+            }
+            if (row.categoryId() == null || row.categoryId().isBlank()) {
+                log.warn("upsertCategoryBudget skipped: id={} has blank categoryId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("category_budgets", row.id(), "blank_category_id"));
+                continue;
+            }
+            if (!existingCategoryIds.contains(row.categoryId())) {
+                log.warn("upsertCategoryBudget skipped: id={} references non-existent categoryId={}", row.id(), row.categoryId());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("category_budgets", row.id(), "category_not_found:" + row.categoryId()));
+                continue;
+            }
+            LedgerCategoryBudgetEntity entity = existing.get(row.id());
+            if (entity == null) {
+                entity = new LedgerCategoryBudgetEntity();
+                entity.setId(row.id() != null ? row.id() : IdGenerator.newId("lcbgt"));
+                entity.setLibraryId(libraryId);
+            }
             mapToCategoryBudget(row, entity);
-            categoryBudgetRepository.save(entity);
+            toSave.add(entity);
         }
+        if (!toSave.isEmpty()) {
+            categoryBudgetRepository.saveAll(toSave);
+        }
+        return rejected;
     }
 
-    private void upsertDeletedItems(String libraryId, List<DeletedItemRow> rows) {
-        if (rows == null || rows.isEmpty()) return;
+    private java.util.List<LedgerSyncResponse.RejectedRowRef> upsertDeletedItems(String libraryId, List<DeletedItemRow> rows) {
+        java.util.List<LedgerSyncResponse.RejectedRowRef> rejected = new java.util.ArrayList<>();
+        if (rows == null || rows.isEmpty()) return rejected;
+        List<String> ids = rows.stream().map(DeletedItemRow::id).filter(Objects::nonNull).toList();
+        if (ids.isEmpty()) return rejected;
+
+        // FK 预检：ledger_deleted_items.book_id NOT NULL（entity 声明） + FK ON DELETE SET NULL
+        // 由于 entity 标注 nullable=false，按 NOT NULL 处理：拒绝空值/未找到的 bookId
+        java.util.Set<String> bookIdsToCheck = rows.stream()
+                .map(DeletedItemRow::bookId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> existingBookIds = bookIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : bookRepository.findByLibraryIdAndIdIn(libraryId, bookIdsToCheck)
+                        .stream().map(LedgerBookEntity::getId).collect(Collectors.toSet());
+
+        Map<String, LedgerDeletedItemEntity> existing = deletedItemRepository
+                .findByLibraryIdAndIdIn(libraryId, ids)
+                .stream().collect(Collectors.toMap(LedgerDeletedItemEntity::getId, e -> e));
+        List<LedgerDeletedItemEntity> toSave = new ArrayList<>(rows.size());
         for (DeletedItemRow row : rows) {
-            LedgerDeletedItemEntity entity = deletedItemRepository.findByIdAndLibraryId(row.id(), libraryId)
-                    .orElseGet(() -> {
-                        LedgerDeletedItemEntity e = new LedgerDeletedItemEntity();
-                        e.setId(row.id() != null ? row.id() : IdGenerator.newId("ldel"));
-                        e.setLibraryId(libraryId);
-                        return e;
-                    });
+            if (row.id() == null) {
+                log.warn("upsertDeletedItem skipped: row.id() is null");
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("deleted_items", null, "null_id"));
+                continue;
+            }
+            if (row.bookId() == null || row.bookId().isBlank()) {
+                log.warn("upsertDeletedItem skipped: id={} has blank bookId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("deleted_items", row.id(), "blank_book_id"));
+                continue;
+            }
+            if (!existingBookIds.contains(row.bookId())) {
+                log.warn("upsertDeletedItem skipped: id={} references non-existent bookId={}", row.id(), row.bookId());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("deleted_items", row.id(), "book_not_found:" + row.bookId()));
+                continue;
+            }
+            LedgerDeletedItemEntity entity = existing.get(row.id());
+            if (entity == null) {
+                entity = new LedgerDeletedItemEntity();
+                entity.setId(row.id() != null ? row.id() : IdGenerator.newId("ldel"));
+                entity.setLibraryId(libraryId);
+            }
             mapToDeletedItem(row, entity);
-            deletedItemRepository.save(entity);
+            toSave.add(entity);
         }
+        if (!toSave.isEmpty()) {
+            deletedItemRepository.saveAll(toSave);
+        }
+        return rejected;
     }
 
-    private void upsertRecurringRules(String libraryId, List<RecurringRuleRow> rows) {
-        if (rows == null || rows.isEmpty()) return;
+    private java.util.List<LedgerSyncResponse.RejectedRowRef> upsertRecurringRules(String libraryId, List<RecurringRuleRow> rows) {
+        java.util.List<LedgerSyncResponse.RejectedRowRef> rejected = new java.util.ArrayList<>();
+        if (rows == null || rows.isEmpty()) return rejected;
+        List<String> ids = rows.stream().map(RecurringRuleRow::id).filter(Objects::nonNull).toList();
+        if (ids.isEmpty()) return rejected;
+
+        // FK 预检：
+        // - book_id NOT NULL + FK ON DELETE CASCADE → 拒绝
+        // - account_id NOT NULL + FK ON DELETE SET NULL → 拒绝（entity 标注 nullable=false）
+        // - category_id NULLABLE + FK ON DELETE SET NULL → 置空
+        // - to_account_id NULLABLE + FK ON DELETE SET NULL → 置空
+        java.util.Set<String> bookIdsToCheck = rows.stream()
+                .map(RecurringRuleRow::bookId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> accountIdsToCheck = rows.stream()
+                .map(RecurringRuleRow::accountId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> categoryIdsToCheck = rows.stream()
+                .map(RecurringRuleRow::categoryId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+
+        java.util.Set<String> existingBookIds = bookIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : bookRepository.findByLibraryIdAndIdIn(libraryId, bookIdsToCheck)
+                        .stream().map(LedgerBookEntity::getId).collect(Collectors.toSet());
+        java.util.Set<String> existingAccountIds = accountIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : accountRepository.findByLibraryIdAndIdIn(libraryId, accountIdsToCheck)
+                        .stream().map(LedgerAccountEntity::getId).collect(Collectors.toSet());
+        java.util.Set<String> existingCategoryIds = categoryIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : categoryRepository.findByLibraryIdAndIdIn(libraryId, categoryIdsToCheck)
+                        .stream().map(LedgerCategoryEntity::getId).collect(Collectors.toSet());
+
+        Map<String, LedgerRecurringRuleEntity> existing = recurringRuleRepository
+                .findByLibraryIdAndIdIn(libraryId, ids)
+                .stream().collect(Collectors.toMap(LedgerRecurringRuleEntity::getId, e -> e));
+        List<LedgerRecurringRuleEntity> toSave = new ArrayList<>(rows.size());
         for (RecurringRuleRow row : rows) {
-            LedgerRecurringRuleEntity entity = recurringRuleRepository.findByIdAndLibraryId(row.id(), libraryId)
-                    .orElseGet(() -> {
-                        LedgerRecurringRuleEntity e = new LedgerRecurringRuleEntity();
-                        e.setId(row.id() != null ? row.id() : IdGenerator.newId("lrr"));
-                        e.setLibraryId(libraryId);
-                        return e;
-                    });
+            if (row.id() == null) {
+                log.warn("upsertRecurringRule skipped: row.id() is null");
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("recurring_rules", null, "null_id"));
+                continue;
+            }
+            if (row.bookId() == null || row.bookId().isBlank()) {
+                log.warn("upsertRecurringRule skipped: id={} has blank bookId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("recurring_rules", row.id(), "blank_book_id"));
+                continue;
+            }
+            if (!existingBookIds.contains(row.bookId())) {
+                log.warn("upsertRecurringRule skipped: id={} references non-existent bookId={}", row.id(), row.bookId());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("recurring_rules", row.id(), "book_not_found:" + row.bookId()));
+                continue;
+            }
+            if (row.accountId() == null || row.accountId().isBlank()) {
+                log.warn("upsertRecurringRule skipped: id={} has blank accountId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("recurring_rules", row.id(), "blank_account_id"));
+                continue;
+            }
+            if (!existingAccountIds.contains(row.accountId())) {
+                log.warn("upsertRecurringRule skipped: id={} references non-existent accountId={}", row.id(), row.accountId());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("recurring_rules", row.id(), "account_not_found:" + row.accountId()));
+                continue;
+            }
+            // nullable FK: categoryId / toAccountId → 置空而非拒绝
+            String resolvedCategoryId = (row.categoryId() != null && !row.categoryId().isBlank()
+                    && existingCategoryIds.contains(row.categoryId()))
+                    ? row.categoryId() : null;
+            String resolvedToAccountId = (row.toAccountId() != null && !row.toAccountId().isBlank()
+                    && existingAccountIds.contains(row.toAccountId()))
+                    ? row.toAccountId() : null;
+            LedgerRecurringRuleEntity entity = existing.get(row.id());
+            if (entity == null) {
+                entity = new LedgerRecurringRuleEntity();
+                entity.setId(row.id() != null ? row.id() : IdGenerator.newId("lrr"));
+                entity.setLibraryId(libraryId);
+            }
             mapToRecurringRule(row, entity);
-            recurringRuleRepository.save(entity);
+            entity.setCategoryId(resolvedCategoryId);
+            entity.setToAccountId(resolvedToAccountId);
+            toSave.add(entity);
         }
+        if (!toSave.isEmpty()) {
+            recurringRuleRepository.saveAll(toSave);
+        }
+        return rejected;
     }
 
-    private void upsertRecurringOccurrences(String libraryId, List<RecurringOccurrenceRow> rows) {
-        if (rows == null || rows.isEmpty()) return;
+    private java.util.List<LedgerSyncResponse.RejectedRowRef> upsertRecurringOccurrences(String libraryId, List<RecurringOccurrenceRow> rows) {
+        java.util.List<LedgerSyncResponse.RejectedRowRef> rejected = new java.util.ArrayList<>();
+        if (rows == null || rows.isEmpty()) return rejected;
+        List<String> ids = rows.stream().map(RecurringOccurrenceRow::id).filter(Objects::nonNull).toList();
+        if (ids.isEmpty()) return rejected;
+
+        // FK 预检：rule_id / transaction_id 均 NOT NULL + FK ON DELETE CASCADE → 拒绝
+        java.util.Set<String> ruleIdsToCheck = rows.stream()
+                .map(RecurringOccurrenceRow::ruleId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> txIdsToCheck = rows.stream()
+                .map(RecurringOccurrenceRow::transactionId)
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.toSet());
+        java.util.Set<String> existingRuleIds = ruleIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : recurringRuleRepository.findByLibraryIdAndIdIn(libraryId, ruleIdsToCheck)
+                        .stream().map(LedgerRecurringRuleEntity::getId).collect(Collectors.toSet());
+        java.util.Set<String> existingTxIds = txIdsToCheck.isEmpty()
+                ? java.util.Collections.emptySet()
+                : transactionRepository.findByLibraryIdAndIdIn(libraryId, txIdsToCheck)
+                        .stream().map(LedgerTransactionEntity::getId).collect(Collectors.toSet());
+
+        Map<String, LedgerRecurringOccurrenceEntity> existing = recurringOccurrenceRepository
+                .findByLibraryIdAndIdIn(libraryId, ids)
+                .stream().collect(Collectors.toMap(LedgerRecurringOccurrenceEntity::getId, e -> e));
+        List<LedgerRecurringOccurrenceEntity> toSave = new ArrayList<>(rows.size());
         for (RecurringOccurrenceRow row : rows) {
-            LedgerRecurringOccurrenceEntity entity = recurringOccurrenceRepository.findByIdAndLibraryId(row.id(), libraryId)
-                    .orElseGet(() -> {
-                        LedgerRecurringOccurrenceEntity e = new LedgerRecurringOccurrenceEntity();
-                        e.setId(row.id() != null ? row.id() : IdGenerator.newId("lro"));
-                        e.setLibraryId(libraryId);
-                        return e;
-                    });
+            if (row.id() == null) {
+                log.warn("upsertRecurringOccurrence skipped: row.id() is null");
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("recurring_occurrences", null, "null_id"));
+                continue;
+            }
+            if (row.ruleId() == null || row.ruleId().isBlank()) {
+                log.warn("upsertRecurringOccurrence skipped: id={} has blank ruleId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("recurring_occurrences", row.id(), "blank_rule_id"));
+                continue;
+            }
+            if (!existingRuleIds.contains(row.ruleId())) {
+                log.warn("upsertRecurringOccurrence skipped: id={} references non-existent ruleId={}", row.id(), row.ruleId());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("recurring_occurrences", row.id(), "rule_not_found:" + row.ruleId()));
+                continue;
+            }
+            if (row.transactionId() == null || row.transactionId().isBlank()) {
+                log.warn("upsertRecurringOccurrence skipped: id={} has blank transactionId", row.id());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("recurring_occurrences", row.id(), "blank_transaction_id"));
+                continue;
+            }
+            if (!existingTxIds.contains(row.transactionId())) {
+                log.warn("upsertRecurringOccurrence skipped: id={} references non-existent transactionId={}", row.id(), row.transactionId());
+                rejected.add(new LedgerSyncResponse.RejectedRowRef("recurring_occurrences", row.id(), "transaction_not_found:" + row.transactionId()));
+                continue;
+            }
+            LedgerRecurringOccurrenceEntity entity = existing.get(row.id());
+            if (entity == null) {
+                entity = new LedgerRecurringOccurrenceEntity();
+                entity.setId(row.id() != null ? row.id() : IdGenerator.newId("lro"));
+                entity.setLibraryId(libraryId);
+            }
             mapToRecurringOccurrence(row, entity);
-            recurringOccurrenceRepository.save(entity);
+            toSave.add(entity);
         }
+        if (!toSave.isEmpty()) {
+            recurringOccurrenceRepository.saveAll(toSave);
+        }
+        return rejected;
     }
 
     // -----------------------------------------------------------------------
@@ -283,19 +800,30 @@ public class LedgerSyncService {
             idsByTable.computeIfAbsent(ref.table(), k -> new ArrayList<>()).add(ref.id());
         }
 
+        Instant now = Instant.now();
+        long deletedAtMillis = now.toEpochMilli();
+
+        // FR-3: books keeps hard delete (uses isDeleted boolean archive, applyDeletions = permanent)
         deleteIfPresent(libraryId, idsByTable.get(TABLE_BOOKS), bookRepository::deleteByLibraryIdAndIdIn);
-        deleteIfPresent(libraryId, idsByTable.get(TABLE_CATEGORIES), categoryRepository::deleteByLibraryIdAndIdIn);
-        deleteIfPresent(libraryId, idsByTable.get(TABLE_ACCOUNTS), accountRepository::deleteByLibraryIdAndIdIn);
-        deleteIfPresent(libraryId, idsByTable.get(TABLE_TRANSACTIONS), transactionRepository::deleteByLibraryIdAndIdIn);
-        deleteIfPresent(libraryId, idsByTable.get(TABLE_BUDGETS), budgetRepository::deleteByLibraryIdAndIdIn);
-        deleteIfPresent(libraryId, idsByTable.get(TABLE_CATEGORY_BUDGETS), categoryBudgetRepository::deleteByLibraryIdAndIdIn);
+        // FR-3: deleted_items keeps hard delete (deletedAtMillis is a business NOT NULL field, not a soft-delete marker)
         deleteIfPresent(libraryId, idsByTable.get(TABLE_DELETED_ITEMS), deletedItemRepository::deleteByLibraryIdAndIdIn);
-        deleteIfPresent(libraryId, idsByTable.get(TABLE_RECURRING_RULES), recurringRuleRepository::deleteByLibraryIdAndIdIn);
-        deleteIfPresent(libraryId, idsByTable.get(TABLE_RECURRING_OCCURRENCES), recurringOccurrenceRepository::deleteByLibraryIdAndIdIn);
+
+        // FR-3: 7 tables soft delete (set deletedAtMillis + updatedAt, propagate via updatedAt > since on next sync)
+        softDeleteIfPresent(libraryId, idsByTable.get(TABLE_CATEGORIES), now, deletedAtMillis, categoryRepository::softDeleteByLibraryIdAndIdIn);
+        softDeleteIfPresent(libraryId, idsByTable.get(TABLE_ACCOUNTS), now, deletedAtMillis, accountRepository::softDeleteByLibraryIdAndIdIn);
+        softDeleteIfPresent(libraryId, idsByTable.get(TABLE_TRANSACTIONS), now, deletedAtMillis, transactionRepository::softDeleteByLibraryIdAndIdIn);
+        softDeleteIfPresent(libraryId, idsByTable.get(TABLE_BUDGETS), now, deletedAtMillis, budgetRepository::softDeleteByLibraryIdAndIdIn);
+        softDeleteIfPresent(libraryId, idsByTable.get(TABLE_CATEGORY_BUDGETS), now, deletedAtMillis, categoryBudgetRepository::softDeleteByLibraryIdAndIdIn);
+        softDeleteIfPresent(libraryId, idsByTable.get(TABLE_RECURRING_RULES), now, deletedAtMillis, recurringRuleRepository::softDeleteByLibraryIdAndIdIn);
+        softDeleteIfPresent(libraryId, idsByTable.get(TABLE_RECURRING_OCCURRENCES), now, deletedAtMillis, recurringOccurrenceRepository::softDeleteByLibraryIdAndIdIn);
     }
 
     private interface BulkDeleter {
         void delete(String libraryId, List<String> ids);
+    }
+
+    private interface BulkSoftDeleter {
+        void softDelete(String libraryId, List<String> ids, Long deletedAtMillis, Instant updatedAt);
     }
 
     private void deleteIfPresent(String libraryId, List<String> ids, BulkDeleter deleter) {
@@ -304,31 +832,39 @@ public class LedgerSyncService {
         }
     }
 
+    private void softDeleteIfPresent(String libraryId, List<String> ids, Instant updatedAt, Long deletedAtMillis, BulkSoftDeleter deleter) {
+        if (ids != null && !ids.isEmpty()) {
+            deleter.softDelete(libraryId, ids, deletedAtMillis, updatedAt);
+        }
+    }
+
     // -----------------------------------------------------------------------
-    // Query server changes since a given instant (output as Map for flexibility)
+    // Query server changes since a given instant (FR-14: parallel via virtual threads)
     // -----------------------------------------------------------------------
 
     private LedgerChangesDto queryChangesSince(String libraryId, Instant since) {
-        List<LedgerBookEntity> books = bookRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
-        List<LedgerCategoryEntity> categories = categoryRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
-        List<LedgerAccountEntity> accounts = accountRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
-        List<LedgerTransactionEntity> transactions = transactionRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
-        List<LedgerBudgetEntity> budgets = budgetRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
-        List<LedgerCategoryBudgetEntity> categoryBudgets = categoryBudgetRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
-        List<LedgerDeletedItemEntity> deletedItems = deletedItemRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
-        List<LedgerRecurringRuleEntity> recurringRules = recurringRuleRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
-        List<LedgerRecurringOccurrenceEntity> recurringOccurrences = recurringOccurrenceRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
+        // 顺序查询，避免虚拟线程在 @Transactional 内部导致事务上下文丢失和异常类型被包装为 RuntimeException。
+        // 原始 DataAccessException 会直接传播，GlobalExceptionHandler 可正确分类处理。
+        var books = bookRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
+        var categories = categoryRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
+        var accounts = accountRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
+        var transactions = transactionRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
+        var budgets = budgetRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
+        var categoryBudgets = categoryBudgetRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
+        var deletedItems = deletedItemRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
+        var recurringRules = recurringRuleRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
+        var recurringOccurrences = recurringOccurrenceRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
 
         return new LedgerChangesDto(
-                books.stream().map(this::bookToMap).toList(),
-                categories.stream().map(this::categoryToMap).toList(),
-                accounts.stream().map(this::accountToMap).toList(),
-                transactions.stream().map(this::transactionToMap).toList(),
-                budgets.stream().map(this::budgetToMap).toList(),
-                categoryBudgets.stream().map(this::categoryBudgetToMap).toList(),
-                deletedItems.stream().map(this::deletedItemToMap).toList(),
-                recurringRules.stream().map(this::recurringRuleToMap).toList(),
-                recurringOccurrences.stream().map(this::recurringOccurrenceToMap).toList(),
+                books.stream().map(this::bookToRow).toList(),
+                categories.stream().map(this::categoryToRow).toList(),
+                accounts.stream().map(this::accountToRow).toList(),
+                transactions.stream().map(this::transactionToRow).toList(),
+                budgets.stream().map(this::budgetToRow).toList(),
+                categoryBudgets.stream().map(this::categoryBudgetToRow).toList(),
+                deletedItems.stream().map(this::deletedItemToRow).toList(),
+                recurringRules.stream().map(this::recurringRuleToRow).toList(),
+                recurringOccurrences.stream().map(this::recurringOccurrenceToRow).toList(),
                 new ArrayList<>()
         );
     }
@@ -356,6 +892,7 @@ public class LedgerSyncService {
         entity.setType(parseEnum(row.type(), LedgerCategoryType.class));
         entity.setSortOrder(row.sortOrder());
         entity.setHidden(row.hidden() != null ? row.hidden() : false);
+        entity.setDeletedAtMillis(row.deletedAtMillis());
     }
 
     private void mapToAccount(AccountRow row, LedgerAccountEntity entity) {
@@ -371,6 +908,7 @@ public class LedgerSyncService {
         entity.setHidden(row.hidden() != null ? row.hidden() : false);
         entity.setNote(row.note());
         entity.setSortOrder(row.sortOrder());
+        entity.setDeletedAtMillis(row.deletedAtMillis());
     }
 
     private void mapToTransaction(TransactionRow row, LedgerTransactionEntity entity) {
@@ -392,12 +930,14 @@ public class LedgerSyncService {
         entity.setStartMillis(row.startMillis());
         entity.setEndMillis(row.endMillis());
         entity.setTotalAmountCents(row.totalAmountCents());
+        entity.setDeletedAtMillis(row.deletedAtMillis());
     }
 
     private void mapToCategoryBudget(CategoryBudgetRow row, LedgerCategoryBudgetEntity entity) {
         entity.setBudgetId(row.budgetId());
         entity.setCategoryId(row.categoryId());
         entity.setAmountCents(row.amountCents());
+        entity.setDeletedAtMillis(row.deletedAtMillis());
     }
 
     private void mapToDeletedItem(DeletedItemRow row, LedgerDeletedItemEntity entity) {
@@ -423,164 +963,173 @@ public class LedgerSyncService {
         entity.setEndAtMillis(row.endAtMillis());
         entity.setNextOccurrenceAtMillis(row.nextOccurrenceAtMillis());
         entity.setEnabled(row.enabled() != null ? row.enabled() : true);
+        entity.setDeletedAtMillis(row.deletedAtMillis());
     }
 
     private void mapToRecurringOccurrence(RecurringOccurrenceRow row, LedgerRecurringOccurrenceEntity entity) {
         entity.setRuleId(row.ruleId());
         entity.setTransactionId(row.transactionId());
         entity.setOccurrenceAtMillis(row.occurrenceAtMillis());
+        entity.setDeletedAtMillis(row.deletedAtMillis());
     }
 
     // -----------------------------------------------------------------------
-    // Entity → Map mappers (output, preserves timestamps & metadata)
+    // Entity → typed ChangeRow mappers (output, FR-10: replaces Map<String,Object>)
     // -----------------------------------------------------------------------
 
-    private Map<String, Object> bookToMap(LedgerBookEntity e) {
-        Map<String, Object> map = new HashMap<>();
-        putIfNotNull(map, "id", e.getId());
-        putIfNotNull(map, "libraryId", e.getLibraryId());
-        putIfNotNull(map, "name", e.getName());
-        putIfNotNull(map, "creatorUserId", e.getCreatorUserId());
-        putIfNotNull(map, "template", e.getTemplate());
-        putIfNotNull(map, "currencyCode", e.getCurrencyCode());
-        putIfNotNull(map, "currencySymbol", e.getCurrencySymbol());
-        putIfNotNull(map, "coverColor", e.getCoverColor());
-        putIfNotNull(map, "sortOrder", e.getSortOrder());
-        putIfNotNull(map, "isDeleted", e.getIsDeleted());
-        putIfNotNull(map, "createdAtMillis", instantToMillis(e.getCreatedAt()));
-        putIfNotNull(map, "updatedAtMillis", instantToMillis(e.getUpdatedAt()));
-        return map;
+    private BookChangeRow bookToRow(LedgerBookEntity e) {
+        return new BookChangeRow(
+                e.getId(),
+                e.getLibraryId(),
+                e.getName(),
+                e.getCreatorUserId(),
+                e.getTemplate(),
+                e.getCurrencyCode(),
+                e.getCurrencySymbol(),
+                e.getCoverColor(),
+                e.getSortOrder(),
+                e.getIsDeleted(),
+                instantToMillis(e.getCreatedAt()),
+                instantToMillis(e.getUpdatedAt())
+        );
     }
 
-    private Map<String, Object> categoryToMap(LedgerCategoryEntity e) {
-        Map<String, Object> map = new HashMap<>();
-        putIfNotNull(map, "id", e.getId());
-        putIfNotNull(map, "libraryId", e.getLibraryId());
-        putIfNotNull(map, "bookId", e.getBookId());
-        putIfNotNull(map, "name", e.getName());
-        putIfNotNull(map, "iconKey", e.getIconKey());
-        putIfNotNull(map, "color", e.getColor());
-        putIfNotNull(map, "type", enumName(e.getType()));
-        putIfNotNull(map, "sortOrder", e.getSortOrder());
-        putIfNotNull(map, "hidden", e.getHidden());
-        putIfNotNull(map, "createdAtMillis", instantToMillis(e.getCreatedAt()));
-        putIfNotNull(map, "updatedAtMillis", instantToMillis(e.getUpdatedAt()));
-        return map;
+    private CategoryChangeRow categoryToRow(LedgerCategoryEntity e) {
+        return new CategoryChangeRow(
+                e.getId(),
+                e.getLibraryId(),
+                e.getBookId(),
+                e.getName(),
+                e.getIconKey(),
+                e.getColor(),
+                enumName(e.getType()),
+                e.getSortOrder(),
+                e.getHidden(),
+                e.getDeletedAtMillis(),
+                instantToMillis(e.getCreatedAt()),
+                instantToMillis(e.getUpdatedAt())
+        );
     }
 
-    private Map<String, Object> accountToMap(LedgerAccountEntity e) {
-        Map<String, Object> map = new HashMap<>();
-        putIfNotNull(map, "id", e.getId());
-        putIfNotNull(map, "libraryId", e.getLibraryId());
-        putIfNotNull(map, "bookId", e.getBookId());
-        putIfNotNull(map, "name", e.getName());
-        putIfNotNull(map, "type", enumName(e.getType()));
-        putIfNotNull(map, "iconKey", e.getIconKey());
-        putIfNotNull(map, "color", e.getColor());
-        putIfNotNull(map, "initialBalanceCents", e.getInitialBalanceCents());
-        putIfNotNull(map, "balanceCents", e.getBalanceCents());
-        putIfNotNull(map, "creditLimitCents", e.getCreditLimitCents());
-        putIfNotNull(map, "includeInTotal", e.getIncludeInTotal());
-        putIfNotNull(map, "hidden", e.getHidden());
-        putIfNotNull(map, "note", e.getNote());
-        putIfNotNull(map, "sortOrder", e.getSortOrder());
-        putIfNotNull(map, "createdAtMillis", instantToMillis(e.getCreatedAt()));
-        putIfNotNull(map, "updatedAtMillis", instantToMillis(e.getUpdatedAt()));
-        return map;
+    private AccountChangeRow accountToRow(LedgerAccountEntity e) {
+        return new AccountChangeRow(
+                e.getId(),
+                e.getLibraryId(),
+                e.getBookId(),
+                e.getName(),
+                enumName(e.getType()),
+                e.getIconKey(),
+                e.getColor(),
+                e.getInitialBalanceCents(),
+                e.getBalanceCents(),
+                e.getCreditLimitCents(),
+                e.getIncludeInTotal(),
+                e.getHidden(),
+                e.getNote(),
+                e.getSortOrder(),
+                e.getDeletedAtMillis(),
+                instantToMillis(e.getCreatedAt()),
+                instantToMillis(e.getUpdatedAt())
+        );
     }
 
-    private Map<String, Object> transactionToMap(LedgerTransactionEntity e) {
-        Map<String, Object> map = new HashMap<>();
-        putIfNotNull(map, "id", e.getId());
-        putIfNotNull(map, "libraryId", e.getLibraryId());
-        putIfNotNull(map, "bookId", e.getBookId());
-        putIfNotNull(map, "categoryId", e.getCategoryId());
-        putIfNotNull(map, "accountId", e.getAccountId());
-        putIfNotNull(map, "toAccountId", e.getToAccountId());
-        putIfNotNull(map, "amountCents", e.getAmountCents());
-        putIfNotNull(map, "type", enumName(e.getType()));
-        putIfNotNull(map, "occurredAtMillis", e.getOccurredAtMillis());
-        putIfNotNull(map, "remark", e.getRemark());
-        putIfNotNull(map, "method", e.getMethod());
-        putIfNotNull(map, "deletedAtMillis", e.getDeletedAtMillis());
-        putIfNotNull(map, "createdAtMillis", instantToMillis(e.getCreatedAt()));
-        putIfNotNull(map, "updatedAtMillis", instantToMillis(e.getUpdatedAt()));
-        return map;
+    private TransactionChangeRow transactionToRow(LedgerTransactionEntity e) {
+        return new TransactionChangeRow(
+                e.getId(),
+                e.getLibraryId(),
+                e.getBookId(),
+                e.getCategoryId(),
+                e.getAccountId(),
+                e.getToAccountId(),
+                e.getAmountCents(),
+                enumName(e.getType()),
+                e.getOccurredAtMillis(),
+                e.getRemark(),
+                e.getMethod(),
+                e.getDeletedAtMillis(),
+                instantToMillis(e.getCreatedAt()),
+                instantToMillis(e.getUpdatedAt())
+        );
     }
 
-    private Map<String, Object> budgetToMap(LedgerBudgetEntity e) {
-        Map<String, Object> map = new HashMap<>();
-        putIfNotNull(map, "id", e.getId());
-        putIfNotNull(map, "libraryId", e.getLibraryId());
-        putIfNotNull(map, "bookId", e.getBookId());
-        putIfNotNull(map, "period", enumName(e.getPeriod()));
-        putIfNotNull(map, "startMillis", e.getStartMillis());
-        putIfNotNull(map, "endMillis", e.getEndMillis());
-        putIfNotNull(map, "totalAmountCents", e.getTotalAmountCents());
-        putIfNotNull(map, "createdAtMillis", instantToMillis(e.getCreatedAt()));
-        putIfNotNull(map, "updatedAtMillis", instantToMillis(e.getUpdatedAt()));
-        return map;
+    private BudgetChangeRow budgetToRow(LedgerBudgetEntity e) {
+        return new BudgetChangeRow(
+                e.getId(),
+                e.getLibraryId(),
+                e.getBookId(),
+                enumName(e.getPeriod()),
+                e.getStartMillis(),
+                e.getEndMillis(),
+                e.getTotalAmountCents(),
+                e.getDeletedAtMillis(),
+                instantToMillis(e.getCreatedAt()),
+                instantToMillis(e.getUpdatedAt())
+        );
     }
 
-    private Map<String, Object> categoryBudgetToMap(LedgerCategoryBudgetEntity e) {
-        Map<String, Object> map = new HashMap<>();
-        putIfNotNull(map, "id", e.getId());
-        putIfNotNull(map, "libraryId", e.getLibraryId());
-        putIfNotNull(map, "budgetId", e.getBudgetId());
-        putIfNotNull(map, "categoryId", e.getCategoryId());
-        putIfNotNull(map, "amountCents", e.getAmountCents());
-        putIfNotNull(map, "createdAtMillis", instantToMillis(e.getCreatedAt()));
-        putIfNotNull(map, "updatedAtMillis", instantToMillis(e.getUpdatedAt()));
-        return map;
+    private CategoryBudgetChangeRow categoryBudgetToRow(LedgerCategoryBudgetEntity e) {
+        // FR-10: bug fix — original categoryBudgetToMap omitted deletedAtMillis; type化 adds it.
+        return new CategoryBudgetChangeRow(
+                e.getId(),
+                e.getLibraryId(),
+                e.getBudgetId(),
+                e.getCategoryId(),
+                e.getAmountCents(),
+                e.getDeletedAtMillis(),
+                instantToMillis(e.getCreatedAt()),
+                instantToMillis(e.getUpdatedAt())
+        );
     }
 
-    private Map<String, Object> deletedItemToMap(LedgerDeletedItemEntity e) {
-        Map<String, Object> map = new HashMap<>();
-        putIfNotNull(map, "id", e.getId());
-        putIfNotNull(map, "libraryId", e.getLibraryId());
-        putIfNotNull(map, "bookId", e.getBookId());
-        putIfNotNull(map, "itemId", e.getItemId());
-        putIfNotNull(map, "type", enumName(e.getType()));
-        putIfNotNull(map, "title", e.getTitle());
-        putIfNotNull(map, "amountCents", e.getAmountCents());
-        putIfNotNull(map, "deletedAtMillis", e.getDeletedAtMillis());
-        putIfNotNull(map, "expiresAtMillis", e.getExpiresAtMillis());
-        putIfNotNull(map, "createdAtMillis", instantToMillis(e.getCreatedAt()));
-        putIfNotNull(map, "updatedAtMillis", instantToMillis(e.getUpdatedAt()));
-        return map;
+    private DeletedItemChangeRow deletedItemToRow(LedgerDeletedItemEntity e) {
+        return new DeletedItemChangeRow(
+                e.getId(),
+                e.getLibraryId(),
+                e.getBookId(),
+                e.getItemId(),
+                enumName(e.getType()),
+                e.getTitle(),
+                e.getAmountCents(),
+                e.getDeletedAtMillis(),
+                e.getExpiresAtMillis(),
+                instantToMillis(e.getCreatedAt()),
+                instantToMillis(e.getUpdatedAt())
+        );
     }
 
-    private Map<String, Object> recurringRuleToMap(LedgerRecurringRuleEntity e) {
-        Map<String, Object> map = new HashMap<>();
-        putIfNotNull(map, "id", e.getId());
-        putIfNotNull(map, "libraryId", e.getLibraryId());
-        putIfNotNull(map, "bookId", e.getBookId());
-        putIfNotNull(map, "type", enumName(e.getType()));
-        putIfNotNull(map, "categoryId", e.getCategoryId());
-        putIfNotNull(map, "accountId", e.getAccountId());
-        putIfNotNull(map, "toAccountId", e.getToAccountId());
-        putIfNotNull(map, "amountCents", e.getAmountCents());
-        putIfNotNull(map, "remark", e.getRemark());
-        putIfNotNull(map, "frequency", enumName(e.getFrequency()));
-        putIfNotNull(map, "startAtMillis", e.getStartAtMillis());
-        putIfNotNull(map, "endAtMillis", e.getEndAtMillis());
-        putIfNotNull(map, "nextOccurrenceAtMillis", e.getNextOccurrenceAtMillis());
-        putIfNotNull(map, "enabled", e.getEnabled());
-        putIfNotNull(map, "createdAtMillis", instantToMillis(e.getCreatedAt()));
-        putIfNotNull(map, "updatedAtMillis", instantToMillis(e.getUpdatedAt()));
-        return map;
+    private RecurringRuleChangeRow recurringRuleToRow(LedgerRecurringRuleEntity e) {
+        return new RecurringRuleChangeRow(
+                e.getId(),
+                e.getLibraryId(),
+                e.getBookId(),
+                enumName(e.getType()),
+                e.getCategoryId(),
+                e.getAccountId(),
+                e.getToAccountId(),
+                e.getAmountCents(),
+                e.getRemark(),
+                enumName(e.getFrequency()),
+                e.getStartAtMillis(),
+                e.getEndAtMillis(),
+                e.getNextOccurrenceAtMillis(),
+                e.getEnabled(),
+                e.getDeletedAtMillis(),
+                instantToMillis(e.getCreatedAt()),
+                instantToMillis(e.getUpdatedAt())
+        );
     }
 
-    private Map<String, Object> recurringOccurrenceToMap(LedgerRecurringOccurrenceEntity e) {
-        Map<String, Object> map = new HashMap<>();
-        putIfNotNull(map, "id", e.getId());
-        putIfNotNull(map, "libraryId", e.getLibraryId());
-        putIfNotNull(map, "ruleId", e.getRuleId());
-        putIfNotNull(map, "transactionId", e.getTransactionId());
-        putIfNotNull(map, "occurrenceAtMillis", e.getOccurrenceAtMillis());
-        putIfNotNull(map, "createdAtMillis", instantToMillis(e.getCreatedAt()));
-        putIfNotNull(map, "updatedAtMillis", instantToMillis(e.getUpdatedAt()));
-        return map;
+    private RecurringOccurrenceChangeRow recurringOccurrenceToRow(LedgerRecurringOccurrenceEntity e) {
+        return new RecurringOccurrenceChangeRow(
+                e.getId(),
+                e.getLibraryId(),
+                e.getRuleId(),
+                e.getTransactionId(),
+                e.getOccurrenceAtMillis(),
+                e.getDeletedAtMillis(),
+                instantToMillis(e.getCreatedAt()),
+                instantToMillis(e.getUpdatedAt())
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -603,11 +1152,5 @@ public class LedgerSyncService {
 
     private Long instantToMillis(Instant instant) {
         return instant != null ? instant.toEpochMilli() : null;
-    }
-
-    private void putIfNotNull(Map<String, Object> map, String key, Object value) {
-        if (value != null) {
-            map.put(key, value);
-        }
     }
 }

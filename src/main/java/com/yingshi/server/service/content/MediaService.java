@@ -71,7 +71,8 @@ public class MediaService {
 
     public List<MediaDto> getMediaFeed(AuthenticatedUser currentUser) {
         String libraryId = currentUser.libraryId();
-        List<MediaEntity> mediaItems = mediaRepository.findByLibraryIdAndDeletedAtIsNull(libraryId)
+        // P1-3 隔离修复 S1: 排除 life domain 媒体, 防止照片流返回今日痕迹的媒体
+        List<MediaEntity> mediaItems = mediaRepository.findByLibraryIdAndDeletedAtIsNullAndDomainNotLife(libraryId)
                 .stream()
                 .sorted(Comparator.comparing(MediaEntity::getDisplayTimeMillis).reversed().thenComparing(MediaEntity::getId))
                 .toList();
@@ -238,7 +239,7 @@ public class MediaService {
             return List.of();
         }
 
-        List<MediaEntity> mediaItems = mediaRepository.findByLibraryIdAndSourceFingerprintInAndDeletedAtIsNull(
+        List<MediaEntity> mediaItems = mediaRepository.findByLibraryIdAndSourceFingerprintInAndDeletedAtIsNullAndDomainNotLife(
                 libraryId,
                 normalizedFingerprints
         );
@@ -273,6 +274,30 @@ public class MediaService {
                         smallAlbumIdsByMediaId.getOrDefault(media.getId(), List.of())
                 ))
                 .toList();
+    }
+
+    /**
+     * 修改媒体显示时间。仅记录所有者可修改。
+     * 服务端将 displayTimeSource 置为 "MANUAL"，标识用户手动修改。
+     * 不发 push 通知（与 LifeConsoleService.updateMediaLocation 一致）：
+     * 1. 时间修改对其他端不是高优先级事件，依赖 SyncService 版本号涨触发轮询刷新即可
+     * 2. 避免照片流和 life 模块互相干扰
+     */
+    @Transactional
+    public Long updateMediaTime(String mediaId, Long displayTimeMillis, AuthenticatedUser currentUser) {
+        MediaEntity media = mediaRepository.findByIdAndLibraryIdAndDeletedAtIsNull(mediaId, currentUser.libraryId())
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.MEDIA_NOT_FOUND, "Media was not found."));
+        if (!currentUser.userId().equals(media.getRecordOwnerUserId())) {
+            throw new ApiException(HttpStatus.FORBIDDEN, ErrorCode.FORBIDDEN, "You can only update your own media time.");
+        }
+        if (displayTimeMillis == null || displayTimeMillis <= 0L) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "displayTimeMillis must be a positive value.");
+        }
+        media.setDisplayTimeMillis(displayTimeMillis);
+        media.setDisplayTimeSource("MANUAL");
+        mediaRepository.save(media);
+        // BaseEntity.@PreUpdate 会自动 bump updatedAt，推动 SyncService 的 photoFeedVersion / lifeConsoleVersion 涨
+        return media.getDisplayTimeMillis();
     }
 
     @Transactional

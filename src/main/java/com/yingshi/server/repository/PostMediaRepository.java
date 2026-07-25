@@ -28,4 +28,16 @@ public interface PostMediaRepository extends JpaRepository<PostMediaEntity, Stri
 
     @Query("SELECT MAX(pm.updatedAt) FROM PostMediaEntity pm WHERE pm.libraryId = :libraryId")
     Optional<Instant> findLatestUpdatedAtByLibraryId(@Param("libraryId") String libraryId);
+
+    // 排除 life domain 的 post_media (systemKey 不为 null 的 post 属于 life console album)
+    @Query("""
+            SELECT MAX(pm.updatedAt) FROM PostMediaEntity pm
+            WHERE pm.libraryId = :libraryId
+              AND pm.postId IN (
+                SELECT p.id FROM PostEntity p
+                WHERE p.libraryId = :libraryId
+                  AND (p.systemKey IS NULL OR p.systemKey = '')
+              )
+            """)
+    Optional<Instant> findLatestUpdatedAtByLibraryIdExcludingSystemAlbums(@Param("libraryId") String libraryId);
 }

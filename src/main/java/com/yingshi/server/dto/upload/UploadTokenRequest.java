@@ -59,6 +59,10 @@ public record UploadTokenRequest(
         @Size(max = 20, message = "domain must be at most 20 characters.")
         String domain,
 
+        // life 模块分类：PERSON / MEAL / null（非 life 上传）
+        @Size(max = 20, message = "lifeCategory must be at most 20 characters.")
+        String lifeCategory,
+
         @Size(max = 255, message = "sourceItemId must be at most 255 characters.")
         String sourceItemId,
 
@@ -67,6 +71,9 @@ public record UploadTokenRequest(
         Double longitude,
 
         @Size(max = 255, message = "locationLabel must be at most 255 characters.")
-        String locationLabel
+        String locationLabel,
+
+        @Size(max = 128, message = "idempotencyKey must be at most 128 characters.")
+        String idempotencyKey
 ) {
 }

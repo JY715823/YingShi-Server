@@ -38,7 +38,9 @@ public class TrashMapper {
                 sourceMedia == null ? null : sourceMedia.getHeight(),
                 sourceMedia == null ? null : sourceMedia.getAspectRatio(),
                 sourceMedia == null ? null : sourceMedia.getDurationMillis(),
-                sourceMedia == null ? null : sourceMedia.getMimeType()
+                sourceMedia == null ? null : sourceMedia.getMimeType(),
+                // P1-2 改造: 从 trashItem 自身携带的 lifeCategory 取，不依赖 sourceMedia（media 可能已被物理删）
+                item.getLifeCategory()
         );
     }
 

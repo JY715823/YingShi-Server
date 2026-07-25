@@ -1,4 +1,4 @@
-﻿# Upload API Contract
+# Upload API Contract
 
 更新时间：2026-06-18
 
@@ -47,7 +47,7 @@
 说明：
 
 - `operationId`、`operationType`、`operationTitle`、`operationMediaCount`、`sourceItemId` 用于传输中心分组和历史恢复
-- `operationType` 可为 `IMPORT_TO_APP / CREATE_POST / ADD_TO_EXISTING_POST`
+- `operationType` 可为 `IMPORT_TO_APP / CREATE_POST / ADD_TO_EXISTING_POST / LIFE_CONSOLE`
 
 响应 `data`：
 
@@ -57,9 +57,21 @@
   "provider": "local",
   "uploadUrl": "/api/uploads/upload_001/file",
   "expireAtMillis": 1777417000000,
-  "state": "waiting"
+  "state": "waiting",
+  "uploadMethod": "POST",
+  "objectKey": null,
+  "headers": {},
+  "confirmUrl": "/api/uploads/upload_001/confirm"
 }
 ```
+
+说明：
+
+- `uploadMethod` / `objectKey` / `headers` / `confirmUrl` 仅在 `STORAGE_DIRECT_UPLOAD_ENABLED=true` 且对象存储支持 presigned-put 时有意义
+- `uploadMethod` 为 `POST`（本地存储）或 `PUT`（直传对象存储）
+- `objectKey` 为直传时的对象 key，本地存储为 `null`
+- `headers` 为直传时附带的 HTTP headers（如 Content-Type）
+- `confirmUrl` 为直传后的确认 URL
 
 ## 2. `POST /api/uploads/{uploadId}/file`
 
@@ -122,20 +134,29 @@
 
 说明：
 
-- `state` 当前可能是 `waiting / success / failed / cancelled`
+- `state` 枚举值：
+  - `waiting`: 任务已创建，等待文件上传
+  - `uploading`: （Android 本地状态）字节流传输中，服务端无此态
+  - `success`: 上传成功，media 已创建
+  - `failed`: 上传失败，`errorMessage` 携带失败原因，可重试
+  - `cancelled`: 任务已取消
 - `progressPercent` 当前是服务端任务视角，不是实时字节流上传进度
+- `errorMessage` 在 `state=failed` 时携带失败原因，其他状态为 `null`
 
 ## 4. `GET /api/uploads`
 
 查询参数：
 
 - `state` 可选：`waiting / success / failed / cancelled`
-- `operationType` 可选：`IMPORT_TO_APP / CREATE_POST / ADD_TO_EXISTING_POST`
+- `operationType` 可选：`IMPORT_TO_APP / CREATE_POST / ADD_TO_EXISTING_POST / LIFE_CONSOLE`
 - `pageSize` 可选：默认 50，最大 200
+- `cursor` 可选：上一页返回的 `nextCursor`，格式为 `{updatedAtMillis}:{taskId}`，用于 keyset 分页
 
 响应：
 
-- 返回 `UploadTaskResponse[]`
+- 返回 `UploadTaskResponse[]` + `nextCursor` + `hasMore`
+- `hasMore=true` 时 `nextCursor` 非空，传入下一次请求的 `cursor` 参数加载下一页
+- `hasMore=false` 时 `nextCursor` 为 `null`，表示已到最后一页
 - 仅返回当前登录用户在当前共享库内、未被隐藏、最近 30 天更新过的任务
 
 ## 5. `POST /api/uploads/{uploadId}/confirm`

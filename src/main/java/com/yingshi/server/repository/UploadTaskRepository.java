@@ -45,6 +45,25 @@ public interface UploadTaskRepository extends JpaRepository<UploadTaskEntity, St
             @Param("mediaId") String mediaId
     );
 
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update UploadTaskEntity task
+            set task.state = :failedState,
+                task.completedAt = :completedAt,
+                task.errorMessage = :errorMessage
+            where task.id = :id
+              and task.libraryId = :libraryId
+              and task.state = :waitingState
+            """)
+    int markFailedIfWaiting(
+            @Param("id") String id,
+            @Param("libraryId") String libraryId,
+            @Param("failedState") UploadState failedState,
+            @Param("waitingState") UploadState waitingState,
+            @Param("completedAt") Instant completedAt,
+            @Param("errorMessage") String errorMessage
+    );
+
     @Query("""
             select task from UploadTaskEntity task
             where task.libraryId = :libraryId
@@ -88,5 +107,14 @@ public interface UploadTaskRepository extends JpaRepository<UploadTaskEntity, St
     @Query("SELECT MAX(t.updatedAt) FROM UploadTaskEntity t WHERE t.libraryId = :libraryId")
     Optional<Instant> findLatestUpdatedAtByLibraryId(@Param("libraryId") String libraryId);
 
+    // 排除 life domain 的 upload_task，避免 life 上传任务影响 notificationVersion
+    // （life 上传任务的变化已通过 lifeConsoleVersion 反映，无需再通过 notificationVersion 重复触发）
+    @Query("SELECT MAX(t.updatedAt) FROM UploadTaskEntity t WHERE t.libraryId = :libraryId AND (t.domain IS NULL OR t.domain != 'life')")
+    Optional<Instant> findLatestUpdatedAtByLibraryIdAndDomainNotLife(@Param("libraryId") String libraryId);
+
     List<UploadTaskEntity> findByStateAndExpireAtBeforeOrderByExpireAtAsc(UploadState state, Instant cutoff);
+
+    /** R3-DATA-003: Find existing task by idempotency key for duplicate prevention. */
+    Optional<UploadTaskEntity> findByIdempotencyKeyAndLibraryIdAndUploadedByUserId(
+            String idempotencyKey, String libraryId, String uploadedByUserId);
 }

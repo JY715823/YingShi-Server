@@ -91,6 +91,65 @@ class UploadIntegrationTest extends AbstractPostgresIntegrationTest {
     }
 
     @Test
+    void uploadTokenCreationIsIdempotentPerUser() throws Exception {
+        String token = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
+        String idempotencyKey = "upload-idempotent-" + System.nanoTime();
+        String requestBody = """
+                {"fileName": "idempotent.jpg", "fileSize": 256, "mimeType": "image/jpeg",
+                 "sourceFingerprint": "idempotent-fingerprint", "operationType": "IMPORT_TO_APP",
+                 "idempotencyKey": "%s"}
+                """.formatted(idempotencyKey);
+
+        MvcResult first = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType("application/json")
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andReturn();
+        MvcResult retry = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType("application/json")
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        org.junit.jupiter.api.Assertions.assertEquals(
+                readField(first, "data.uploadId"),
+                readField(retry, "data.uploadId")
+        );
+    }
+
+    @Test
+    void idempotencyKeysAreIsolatedBetweenPartners() throws Exception {
+        String tokenA = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
+        String tokenB = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
+        String idempotencyKey = "partner-isolation-" + System.nanoTime();
+        String requestBody = """
+                {"fileName": "partner.jpg", "fileSize": 256, "mimeType": "image/jpeg",
+                 "sourceFingerprint": "partner-fingerprint", "operationType": "IMPORT_TO_APP",
+                 "idempotencyKey": "%s"}
+                """.formatted(idempotencyKey);
+
+        MvcResult first = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + tokenA)
+                        .contentType("application/json")
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andReturn();
+        MvcResult second = mockMvc.perform(post("/api/uploads/token")
+                        .header("Authorization", "Bearer " + tokenB)
+                        .contentType("application/json")
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        org.junit.jupiter.api.Assertions.assertNotEquals(
+                readField(first, "data.uploadId"),
+                readField(second, "data.uploadId")
+        );
+    }
+
+    @Test
     void dismissUpload() throws Exception {
         String token = loginAndGetAccessToken();
 

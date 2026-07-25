@@ -180,16 +180,48 @@ public class ChatImportedZipService {
     // ZIP reading
     // -----------------------------------------------------------------------
 
+    /** R3-CHAT-002: Maximum number of entries allowed in a single ZIP archive. */
+    private static final int MAX_ENTRY_COUNT = 10_000;
+
+    /** R3-CHAT-002: Maximum compression ratio (uncompressed/compressed) to detect zip bombs. */
+    private static final double MAX_COMPRESSION_RATIO = 100.0;
+
     private Map<String, byte[]> readZipEntries(byte[] zipBytes) throws IOException {
         Map<String, byte[]> entries = new HashMap<>();
         try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
             ZipEntry entry;
             long totalSize = 0;
+            int entryCount = 0;
             while ((entry = zis.getNextEntry()) != null) {
                 if (entry.isDirectory()) {
                     continue;
                 }
+
+                // R3-CHAT-002: Enforce entry count limit
+                entryCount++;
+                if (entryCount > MAX_ENTRY_COUNT) {
+                    throw new IOException("ZIP archive exceeds maximum entry count of " + MAX_ENTRY_COUNT);
+                }
+
                 String name = entry.getName();
+
+                // R3-CHAT-002: Path traversal protection — reject entries with .. or absolute paths
+                if (name.contains("..") || name.startsWith("/") || name.startsWith("\\")) {
+                    throw new IOException("ZIP entry contains suspicious path: " + name);
+                }
+
+                // R3-CHAT-002: Compression ratio check for zip bomb detection
+                long compressedSize = entry.getCompressedSize();
+                long uncompressedSize = entry.getSize();
+                if (compressedSize > 0 && uncompressedSize > 0) {
+                    double ratio = (double) uncompressedSize / compressedSize;
+                    if (ratio > MAX_COMPRESSION_RATIO) {
+                        throw new IOException(
+                                "ZIP entry '" + name + "' has suspicious compression ratio " + ratio
+                                + " (max allowed: " + MAX_COMPRESSION_RATIO + ")");
+                    }
+                }
+
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 byte[] buffer = new byte[8192];
                 int len;

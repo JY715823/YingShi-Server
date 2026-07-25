@@ -9,6 +9,8 @@ public record HealthResponse(
         String application,
         List<String> activeProfiles,
         Map<String, String> checks,
-        Instant serverTime
+        Instant serverTime,
+        String version,
+        String buildTime
 ) {
 }

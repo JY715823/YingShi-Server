@@ -98,6 +98,11 @@ public class MediaEntity extends LibraryScopedEntity {
     @Column(nullable = false, length = 20)
     private String domain = "photo";
 
+    // life 模块分类：PERSON / MEAL / null（非 life 媒体）
+    // 用于 life 媒体不再放进相册后，直接从 media 表查询 today/history
+    @Column(name = "life_category", length = 20)
+    private String lifeCategory;
+
     @Column
     private Instant deletedAt;
 
@@ -333,6 +338,14 @@ public class MediaEntity extends LibraryScopedEntity {
 
     public void setDomain(String domain) {
         this.domain = domain;
+    }
+
+    public String getLifeCategory() {
+        return lifeCategory;
+    }
+
+    public void setLifeCategory(String lifeCategory) {
+        this.lifeCategory = lifeCategory;
     }
 
     public Instant getDeletedAt() {

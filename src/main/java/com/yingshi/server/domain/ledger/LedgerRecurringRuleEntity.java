@@ -53,6 +53,9 @@ public class LedgerRecurringRuleEntity extends LibraryScopedEntity {
     @Column(nullable = false)
     private Boolean enabled = true;
 
+    @Column(name = "deleted_at_millis")
+    private Long deletedAtMillis;
+
     public String getId() {
         return id;
     }
@@ -155,5 +158,13 @@ public class LedgerRecurringRuleEntity extends LibraryScopedEntity {
 
     public void setEnabled(Boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public Long getDeletedAtMillis() {
+        return deletedAtMillis;
+    }
+
+    public void setDeletedAtMillis(Long deletedAtMillis) {
+        this.deletedAtMillis = deletedAtMillis;
     }
 }

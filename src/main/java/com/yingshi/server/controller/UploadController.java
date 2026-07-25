@@ -12,7 +12,10 @@ import com.yingshi.server.dto.upload.UploadDismissBatchRequest;
 import com.yingshi.server.dto.upload.UploadTaskResponse;
 import com.yingshi.server.dto.upload.UploadTokenRequest;
 import com.yingshi.server.dto.upload.UploadTokenResponse;
-import com.yingshi.server.service.upload.UploadService;
+import com.yingshi.server.service.upload.UploadCleanupService;
+import com.yingshi.server.service.upload.UploadFileService;
+import com.yingshi.server.service.upload.UploadHistoryService;
+import com.yingshi.server.service.upload.UploadTokenService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -29,16 +32,34 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+/**
+ * FR-10: UploadService 已拆分为 4 个 Service，Controller 改为注入：
+ * - UploadTokenService (createUploadToken)
+ * - UploadFileService (uploadFile / confirmUpload)
+ * - UploadHistoryService (listUploadHistory / getUploadTask / dismissUpload / dismissUploadBatch)
+ * - UploadCleanupService (cancelUpload)
+ */
 @AuthRequired
 @Tag(name = "Uploads")
 @RestController
 @RequestMapping(value = "/api/uploads", produces = MediaType.APPLICATION_JSON_VALUE)
 public class UploadController {
 
-    private final UploadService uploadService;
+    private final UploadTokenService uploadTokenService;
+    private final UploadFileService uploadFileService;
+    private final UploadHistoryService uploadHistoryService;
+    private final UploadCleanupService uploadCleanupService;
 
-    public UploadController(UploadService uploadService) {
-        this.uploadService = uploadService;
+    public UploadController(
+            UploadTokenService uploadTokenService,
+            UploadFileService uploadFileService,
+            UploadHistoryService uploadHistoryService,
+            UploadCleanupService uploadCleanupService
+    ) {
+        this.uploadTokenService = uploadTokenService;
+        this.uploadFileService = uploadFileService;
+        this.uploadHistoryService = uploadHistoryService;
+        this.uploadCleanupService = uploadCleanupService;
     }
 
     @Operation(summary = "Create upload token", security = @SecurityRequirement(name = "bearerAuth"))
@@ -48,7 +69,7 @@ public class UploadController {
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), uploadService.createUploadToken(requestBody, currentUser));
+        return ApiResponse.success(requestId(request), uploadTokenService.createUploadToken(requestBody, currentUser));
     }
 
     @Operation(summary = "List upload history", security = @SecurityRequirement(name = "bearerAuth"))
@@ -61,7 +82,7 @@ public class UploadController {
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        UploadService.UploadHistoryResult result = uploadService.listUploadHistory(
+        UploadHistoryService.UploadHistoryResult result = uploadHistoryService.listUploadHistory(
                 currentUser,
                 state,
                 operationType,
@@ -87,7 +108,7 @@ public class UploadController {
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), uploadService.uploadFile(uploadId, file, currentUser));
+        return ApiResponse.success(requestId(request), uploadFileService.uploadFile(uploadId, file, currentUser));
     }
 
     @Operation(summary = "Get upload task status", security = @SecurityRequirement(name = "bearerAuth"))
@@ -97,7 +118,7 @@ public class UploadController {
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), uploadService.getUploadTask(uploadId, currentUser));
+        return ApiResponse.success(requestId(request), uploadHistoryService.getUploadTask(uploadId, currentUser));
     }
 
     @Operation(summary = "Confirm upload task", security = @SecurityRequirement(name = "bearerAuth"))
@@ -113,7 +134,7 @@ public class UploadController {
                 : requestBody;
         return ApiResponse.success(
                 requestId(request),
-                uploadService.confirmUpload(uploadId, normalizedRequest, currentUser)
+                uploadFileService.confirmUpload(uploadId, normalizedRequest, currentUser)
         );
     }
 
@@ -124,7 +145,7 @@ public class UploadController {
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), uploadService.cancelUpload(uploadId, currentUser));
+        return ApiResponse.success(requestId(request), uploadCleanupService.cancelUpload(uploadId, currentUser));
     }
 
     @Operation(summary = "Dismiss upload task from transfer center", security = @SecurityRequirement(name = "bearerAuth"))
@@ -134,7 +155,7 @@ public class UploadController {
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), uploadService.dismissUpload(uploadId, currentUser));
+        return ApiResponse.success(requestId(request), uploadHistoryService.dismissUpload(uploadId, currentUser));
     }
 
     @Operation(summary = "Dismiss visible upload tasks by category", security = @SecurityRequirement(name = "bearerAuth"))
@@ -149,7 +170,7 @@ public class UploadController {
                 : requestBody;
         return ApiResponse.success(
                 requestId(request),
-                uploadService.dismissUploadBatch(currentUser, normalizedRequest)
+                uploadHistoryService.dismissUploadBatch(currentUser, normalizedRequest)
         );
     }
 

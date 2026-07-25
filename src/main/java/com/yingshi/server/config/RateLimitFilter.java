@@ -47,23 +47,34 @@ public class RateLimitFilter {
 
     static class AuthRateLimitFilter extends OncePerRequestFilter {
 
+        private static final int MAX_BUCKETS = 10_000;
+        private static final long BUCKET_TTL_NANOS = Duration.ofMinutes(10).toNanos();
+
         private final long capacity;
         private final long refillTokens;
         private final long refillDurationNanos;
+        private final boolean trustForwardedHeaders;
         private final ConcurrentHashMap<String, TokenBucket> buckets = new ConcurrentHashMap<>();
+        private final AtomicLong lastCleanupNanos = new AtomicLong(System.nanoTime());
 
         AuthRateLimitFilter(AuthRateLimitProperties properties) {
             this.capacity = properties.getMaxRequests();
             Duration window = properties.getWindow();
             this.refillTokens = capacity;
             this.refillDurationNanos = window.toNanos();
+            this.trustForwardedHeaders = properties.isTrustForwardedHeaders();
         }
 
         @Override
         protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                         FilterChain filterChain) throws ServletException, IOException {
+            // Periodic cleanup to prevent memory leak
+            maybeCleanup();
+
             String clientIp = resolveClientIp(request);
             TokenBucket bucket = buckets.computeIfAbsent(clientIp, k -> new TokenBucket(capacity));
+            // Touch the bucket to update last-access time
+            bucket.lastAccessNanos.set(System.nanoTime());
             refill(bucket);
 
             if (bucket.tryConsume()) {
@@ -78,6 +89,49 @@ public class RateLimitFilter {
                 response.setHeader("X-RateLimit-Remaining", "0");
                 response.sendError(429, "Too many requests. Please try again later.");
             }
+        }
+
+        /**
+         * R3-DIST-001: Periodically remove stale buckets to prevent unbounded memory growth.
+         * Runs at most once per minute; removes buckets not accessed in BUCKET_TTL_NANOS.
+         */
+        private void maybeCleanup() {
+            long now = System.nanoTime();
+            long lastCleanup = lastCleanupNanos.get();
+            if (now - lastCleanup < Duration.ofMinutes(1).toNanos()) {
+                return;
+            }
+            if (lastCleanupNanos.compareAndSet(lastCleanup, now)) {
+                int before = buckets.size();
+                buckets.entrySet().removeIf(entry ->
+                        (now - entry.getValue().lastAccessNanos.get()) > BUCKET_TTL_NANOS
+                );
+                int removed = before - buckets.size();
+                if (removed > 0) {
+                    log.debug("RateLimit cleanup: removed {} stale buckets, {} remaining", removed, buckets.size());
+                }
+            }
+        }
+
+        /**
+         * R3-DIST-001: Resolve client IP with defense against X-Forwarded-For spoofing.
+         * Takes the RIGHTMOST IP from XFF (the one added by the trusted reverse proxy),
+         * not the leftmost (which the client can spoof).
+         * If no proxy headers present, falls back to remote address.
+         */
+        private String resolveClientIp(HttpServletRequest request) {
+            if (trustForwardedHeaders) {
+                String xff = request.getHeader("X-Forwarded-For");
+                if (xff != null && !xff.isBlank()) {
+                    String[] parts = xff.split(",");
+                    return parts[parts.length - 1].trim();
+                }
+                String xri = request.getHeader("X-Real-IP");
+                if (xri != null && !xri.isBlank()) {
+                    return xri.trim();
+                }
+            }
+            return request.getRemoteAddr();
         }
 
         private void refill(TokenBucket bucket) {
@@ -97,25 +151,16 @@ public class RateLimitFilter {
             }
         }
 
-        private String resolveClientIp(HttpServletRequest request) {
-            String xff = request.getHeader("X-Forwarded-For");
-            if (xff != null && !xff.isBlank()) {
-                return xff.split(",")[0].trim();
-            }
-            String xri = request.getHeader("X-Real-IP");
-            if (xri != null && !xri.isBlank()) {
-                return xri.trim();
-            }
-            return request.getRemoteAddr();
-        }
-
         private static class TokenBucket {
             final AtomicLong tokens;
             final AtomicLong lastRefillNanos;
+            final AtomicLong lastAccessNanos;
 
             TokenBucket(long initialTokens) {
                 this.tokens = new AtomicLong(initialTokens);
-                this.lastRefillNanos = new AtomicLong(System.nanoTime());
+                long now = System.nanoTime();
+                this.lastRefillNanos = new AtomicLong(now);
+                this.lastAccessNanos = new AtomicLong(now);
             }
 
             boolean tryConsume() {

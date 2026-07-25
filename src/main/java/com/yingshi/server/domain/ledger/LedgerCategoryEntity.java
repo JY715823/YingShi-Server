@@ -37,6 +37,9 @@ public class LedgerCategoryEntity extends LibraryScopedEntity {
     @Column(nullable = false)
     private Boolean hidden = false;
 
+    @Column(name = "deleted_at_millis")
+    private Long deletedAtMillis;
+
     public String getId() {
         return id;
     }
@@ -99,5 +102,13 @@ public class LedgerCategoryEntity extends LibraryScopedEntity {
 
     public void setHidden(Boolean hidden) {
         this.hidden = hidden;
+    }
+
+    public Long getDeletedAtMillis() {
+        return deletedAtMillis;
+    }
+
+    public void setDeletedAtMillis(Long deletedAtMillis) {
+        this.deletedAtMillis = deletedAtMillis;
     }
 }

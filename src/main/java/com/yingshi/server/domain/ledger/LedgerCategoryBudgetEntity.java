@@ -22,6 +22,9 @@ public class LedgerCategoryBudgetEntity extends LibraryScopedEntity {
     @Column(name = "amount_cents", nullable = false)
     private Long amountCents;
 
+    @Column(name = "deleted_at_millis")
+    private Long deletedAtMillis;
+
     public String getId() {
         return id;
     }
@@ -52,5 +55,13 @@ public class LedgerCategoryBudgetEntity extends LibraryScopedEntity {
 
     public void setAmountCents(Long amountCents) {
         this.amountCents = amountCents;
+    }
+
+    public Long getDeletedAtMillis() {
+        return deletedAtMillis;
+    }
+
+    public void setDeletedAtMillis(Long deletedAtMillis) {
+        this.deletedAtMillis = deletedAtMillis;
     }
 }

@@ -9,24 +9,28 @@ import com.yingshi.server.dto.ledger.LedgerSyncRows.DeletedItemRow;
 import com.yingshi.server.dto.ledger.LedgerSyncRows.RecurringOccurrenceRow;
 import com.yingshi.server.dto.ledger.LedgerSyncRows.RecurringRuleRow;
 import com.yingshi.server.dto.ledger.LedgerSyncRows.TransactionRow;
+import jakarta.validation.Valid;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Typed input for client → server sync changes.
+ * Typed input for client -> server sync changes.
  * Uses typed records for type-safe field access.
+ *
+ * <p>FR-11: {@code @Valid} on each list element cascades validation into the
+ * {@link LedgerSyncRows} records' {@code @Size} constraints.</p>
  */
 public record LedgerClientChangesDto(
-        List<BookRow> books,
-        List<CategoryRow> categories,
-        List<AccountRow> accounts,
-        List<TransactionRow> transactions,
-        List<BudgetRow> budgets,
-        List<CategoryBudgetRow> categoryBudgets,
-        List<DeletedItemRow> deletedItems,
-        List<RecurringRuleRow> recurringRules,
-        List<RecurringOccurrenceRow> recurringOccurrences,
+        List<@Valid BookRow> books,
+        List<@Valid CategoryRow> categories,
+        List<@Valid AccountRow> accounts,
+        List<@Valid TransactionRow> transactions,
+        List<@Valid BudgetRow> budgets,
+        List<@Valid CategoryBudgetRow> categoryBudgets,
+        List<@Valid DeletedItemRow> deletedItems,
+        List<@Valid RecurringRuleRow> recurringRules,
+        List<@Valid RecurringOccurrenceRow> recurringOccurrences,
         List<DeletedRowRef> deletedRowIds
 ) {
 

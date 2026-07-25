@@ -107,7 +107,7 @@ class LiveServerIntegrationTest {
                         .uri(URI.create(BASE_URL + "/api/ledger/sync"))
                         .header("Content-Type", "application/json")
                         .POST(HttpRequest.BodyPublishers.ofString("""
-                                {"lastSyncVersionMillis":0,"clientChanges":{"books":[],"categories":[],"accounts":[],"transactions":[],"budgets":[],"categoryBudgets":[],"deletedItems":[],"recurringRules":[],"recurringOccurrences":[]},"deletedRowIds":{}}
+                                {"lastSyncVersionMillis":0,"changes":{"books":[],"categories":[],"accounts":[],"transactions":[],"budgets":[],"categoryBudgets":[],"deletedItems":[],"recurringRules":[],"recurringOccurrences":[],"deletedRowIds":[]}}
                                 """))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());

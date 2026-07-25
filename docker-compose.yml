@@ -89,12 +89,13 @@ services:
       APP_AUTH_JWT_SECRET: ${APP_AUTH_JWT_SECRET:-change-me-to-a-long-dev-secret-at-least-32-characters}
       APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-}
       APP_PRODUCTION_SAFETY_ENABLED: ${APP_PRODUCTION_SAFETY_ENABLED:-false}
+      APP_DEV_SEED_ENABLED: ${APP_DEV_SEED_ENABLED:-true}
       AUTH_MAIL_ENABLED: ${AUTH_MAIL_ENABLED:-true}
       AUTH_MAIL_HOST: ${AUTH_MAIL_HOST:-smtp.qq.com}
       AUTH_MAIL_PORT: ${AUTH_MAIL_PORT:-587}
-      AUTH_MAIL_USERNAME: ${AUTH_MAIL_USERNAME:-1085060329@qq.com}
+      AUTH_MAIL_USERNAME: ${AUTH_MAIL_USERNAME:-}
       AUTH_MAIL_PASSWORD: ${AUTH_MAIL_PASSWORD:-}
-      AUTH_MAIL_FROM_ADDRESS: ${AUTH_MAIL_FROM_ADDRESS:-1085060329@qq.com}
+      AUTH_MAIL_FROM_ADDRESS: ${AUTH_MAIL_FROM_ADDRESS:-}
       AUTH_MAIL_FROM_NAME: ${AUTH_MAIL_FROM_NAME:-映世}
       AUTH_MAIL_AUTH: ${AUTH_MAIL_AUTH:-true}
       AUTH_MAIL_STARTTLS: ${AUTH_MAIL_STARTTLS:-true}
@@ -109,10 +110,9 @@ services:
       FCM_PROJECT_ID: ${FCM_PROJECT_ID:-}
       FCM_SERVICE_ACCOUNT_PATH: ${FCM_SERVICE_ACCOUNT_PATH:-}
       FCM_SERVICE_ACCOUNT_JSON_BASE64: ${FCM_SERVICE_ACCOUNT_JSON_BASE64:-}
-      PUSH_SELF_FALLBACK_ENABLED: ${PUSH_SELF_FALLBACK_ENABLED:-false}
       # FR-18: Amap reverse geocoding (server-side). Enabled by default; set AMAP_GEOCODING_ENABLED=false to disable. Requires AMAP_GEOCODING_KEY=<web-key>.
       AMAP_GEOCODING_ENABLED: ${AMAP_GEOCODING_ENABLED:-true}
-      AMAP_GEOCODING_KEY: ${AMAP_GEOCODING_KEY:-a658afca501f9337e964af99b3f2670f}
+      AMAP_GEOCODING_KEY: ${AMAP_GEOCODING_KEY:-}
       AMAP_GEOCODING_ENDPOINT: ${AMAP_GEOCODING_ENDPOINT:-https://restapi.amap.com/v3/geocode/regeo}
       AMAP_GEOCODING_TIMEOUT_MILLIS: ${AMAP_GEOCODING_TIMEOUT_MILLIS:-3000}
       # 代理软依赖化：默认不走代理（直连 FCM）；用户需要时在 .env 设置 JAVA_TOOL_OPTIONS / HTTP_PROXY
@@ -121,10 +121,17 @@ services:
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres,minio}
       JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:-}
       SERVER_PORT: ${SERVER_PORT:-8080}
+      YINGSHI_FFMPEG_PATH: ${YINGSHI_FFMPEG_PATH:-/usr/bin/ffmpeg}
     ports:
-      - "${SERVER_HOST_PORT:-8080}:8080"
+      - "${SERVER_HOST_BIND_IP:-127.0.0.1}:${SERVER_HOST_PORT:-8080}:8080"
     volumes:
       - ${FCM_SERVICE_ACCOUNT_HOST_PATH:-E:/Study/App/YingShi-Server/.missing-firebase-service-account.json}:/run/secrets/firebase-service-account.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
 

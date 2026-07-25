@@ -99,4 +99,28 @@ class MediaStorageFieldServiceTests {
         assertNull(service.storagePathForRead(media));
         assertTrue(service.diagnose(media).objectKeyMissing());
     }
+
+    @Test
+    void derivedObjectKeysPreserveDomainPrefix() {
+        StorageProperties properties = new StorageProperties(
+                "local", "yingshi-media", tempDir.toString(), null, "us-east-1",
+                null, null, null, null, null, null, null, null, null, null
+        );
+        LocalMediaStorageService service = new LocalMediaStorageService(
+                properties, new LocalObjectStorageService(properties)
+        );
+
+        assertEquals(
+                "photo/previews/2026/04/cache-preview-v2-1280.jpg",
+                service.imagePreviewObjectKey("photo/originals/2026/04/media_001.jpg", "cache", 1280)
+        );
+        assertEquals(
+                "life/previews/2026/04/cache-cover-v2-1280.jpg",
+                service.videoCoverObjectKey("life/originals/2026/04/media_002.mp4", "cache", 1280)
+        );
+        assertEquals(
+                "previews/2026/04/cache-preview-v2-1280.jpg",
+                service.imagePreviewObjectKey("originals/2026/04/media_003.jpg", "cache", 1280)
+        );
+    }
 }

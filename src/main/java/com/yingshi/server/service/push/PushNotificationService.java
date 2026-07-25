@@ -19,12 +19,14 @@ import com.yingshi.server.repository.PushDeliveryAuditRepository;
 import com.yingshi.server.repository.PushPreferenceRepository;
 import com.yingshi.server.repository.UserRepository;
 import com.yingshi.server.domain.UserEntity;
+import com.yingshi.server.service.sse.SseEmitterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -55,7 +57,7 @@ public class PushNotificationService {
     private final PushPreferenceRepository pushPreferenceRepository;
     private final PushMessageSender pushMessageSender;
     private final UserRepository userRepository;
-    private final boolean selfFallbackEnabled;
+    private final SseEmitterRegistry sseEmitterRegistry;
 
     public PushNotificationService(
             PushDeviceTokenRepository pushDeviceTokenRepository,
@@ -63,14 +65,14 @@ public class PushNotificationService {
             PushPreferenceRepository pushPreferenceRepository,
             PushMessageSender pushMessageSender,
             UserRepository userRepository,
-            @Value("${app.push.self-fallback-enabled:false}") boolean selfFallbackEnabled
+            SseEmitterRegistry sseEmitterRegistry
     ) {
         this.pushDeviceTokenRepository = pushDeviceTokenRepository;
         this.pushDeliveryAuditRepository = pushDeliveryAuditRepository;
         this.pushPreferenceRepository = pushPreferenceRepository;
         this.pushMessageSender = pushMessageSender;
         this.userRepository = userRepository;
-        this.selfFallbackEnabled = selfFallbackEnabled;
+        this.sseEmitterRegistry = sseEmitterRegistry;
     }
 
     @Transactional
@@ -146,7 +148,6 @@ public class PushNotificationService {
     @Transactional(readOnly = true)
     public PushDiagnosticsResponse getDiagnostics(AuthenticatedUser currentUser) {
         return new PushDiagnosticsResponse(
-                selfFallbackEnabled,
                 Math.toIntExact(pushDeviceTokenRepository.countByLibraryIdAndUserIdAndEnabledTrue(currentUser.libraryId(), currentUser.userId())),
                 Math.toIntExact(pushDeviceTokenRepository.countByLibraryIdAndEnabledTrue(currentUser.libraryId())),
                 pushDeliveryAuditRepository.findTop30ByLibraryIdOrderByCreatedAtDesc(currentUser.libraryId()).stream()
@@ -157,51 +158,102 @@ public class PushNotificationService {
 
     @Transactional
     public void notifyLifeConsoleChanged(String libraryId, String actorUserId, String reason) {
+        notifyLifeConsoleChanged(libraryId, actorUserId, reason, null);
+    }
+
+    @Transactional
+    public void notifyLifeConsoleChanged(String libraryId, String actorUserId, String reason, String mediaId) {
         String category = lifeCategoryForReason(reason);
-        TokenResolution resolution = targetTokensFor(libraryId, actorUserId, MODULE_LIFE, category);
-        if (resolution.targetTokens().isEmpty()) {
+        String actorDisplayName = resolveDisplayName(actorUserId);
+        Map<String, String> data = lifeConsoleChangedData(libraryId, actorUserId, reason, category, actorDisplayName, mediaId);
+        // 服务端推送 body 内容日志（使用 warn 级别便于排查推送内容问题）
+        log.warn("notifyLifeConsoleChanged: libraryId={}, actorUserId={}, reason={}, mediaId={}, title={}, body={}, targetRoute={}, category={}",
+                libraryId, actorUserId, reason, mediaId, data.get("title"), data.get("body"), data.get("targetRoute"), category);
+
+        // SSE 推送：无论 FCM token 是否可用都发送（SSE 不依赖 FCM）
+        // 排除 actor 自己的连接，与 FCM partner-only 设计一致
+        //
+        // 关键：SSE 推送必须延迟到事务提交后执行（afterCommit）。
+        // 原因：notifyLifeConsoleChanged 通常在 LifeConsoleService.addMedia 等事务内被调用，
+        // 如果在事务提交前推送 SSE，接收方收到推送后立即调用 getToday() 查询数据库，
+        // 此时 addMedia 事务尚未提交，接收方查不到新上传的媒体，
+        // 导致 LifePushDispatchActivity.resolveMedia 按 mediaId 匹配失败，
+        // fallback 到 category match 返回第一张，造成"通知跳转到错误媒体"的问题。
+        sendSseAfterCommit(libraryId, actorUserId, data);
+
+        // P1-3 修复: life 推送完全由 SSE 负责, 不再发送 FCM。
+        // 原因:
+        //   1. FCM 在中国大陆被 GFW 封锁, 大部分设备无法接收
+        //   2. SSE 已稳定工作, FCM 作为备份价值有限
+        //   3. FCM 和 SSE 同时推送会导致客户端 onMessageReceived 被调用,
+        //      虽然 dedup 会拦截, 但仍浪费资源并增加日志噪音
+        //   4. 减少 FCM 调用可降低服务端 pushMessageSender 负载
+        log.info("notifyLifeConsoleChanged: skipping FCM for life module (SSE only), libraryId={}, actorUserId={}, reason={}",
+                libraryId, actorUserId, reason);
+    }
+
+    /**
+     * 在事务提交后推送 SSE，确保接收方查询时能看到已提交的数据。
+     * 如果没有活动事务，立即推送（兼容非事务上下文）。
+     */
+    private void sendSseAfterCommit(String libraryId, String actorUserId, Map<String, String> data) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    sseEmitterRegistry.sendToPartners(libraryId, actorUserId, data);
+                }
+            });
+            log.info("SSE push scheduled after commit: libraryId={}, reason={}", libraryId, data.get("reason"));
+        } else {
+            log.info("SSE push immediate (no active transaction): libraryId={}, reason={}", libraryId, data.get("reason"));
+            sseEmitterRegistry.sendToPartners(libraryId, actorUserId, data);
+        }
+    }
+
+    /**
+     * 在事务提交后推送 FCM，确保接收方查询时能看到已提交的数据。
+     */
+    private void sendFcmAfterCommit(TokenResolution resolution, Map<String, String> data,
+                                     String libraryId, String actorUserId, String category) {
+        Runnable fcmSend = () -> {
+            PushDeliveryResult result = pushMessageSender.sendDataMessage(resolution.targetTokens(), data);
+            if (!result.invalidTokens().isEmpty()) {
+                disableInvalidTokens(result.invalidTokens());
+            }
             recordAudit(
                     libraryId,
                     actorUserId,
                     MODULE_LIFE,
                     category,
                     LIFE_CONSOLE_CHANGED,
-                    "life",
-                    "no_target",
-                    noTargetReason(resolution),
+                    data.get("targetRoute"),
+                    deliveryStatus(result),
+                    deliveryReason(result),
                     resolution,
-                    PushDeliveryResult.skipped()
+                    result
             );
-            log.info("No target device token for {}: libraryId={}, actorUserId={}, reason={}, selfFallbackEnabled={}", LIFE_CONSOLE_CHANGED, libraryId, actorUserId, reason, selfFallbackEnabled);
-            return;
+            log.info(
+                    "Sent {} to {} device(s), successful={}, invalid={}: {}",
+                    LIFE_CONSOLE_CHANGED,
+                    result.attempted(),
+                    result.successful(),
+                    result.invalidTokens().size(),
+                    data
+            );
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    fcmSend.run();
+                }
+            });
+            log.info("FCM push scheduled after commit: libraryId={}, reason={}", libraryId, data.get("reason"));
+        } else {
+            log.info("FCM push immediate (no active transaction): libraryId={}, reason={}", libraryId, data.get("reason"));
+            fcmSend.run();
         }
-
-        String actorDisplayName = resolveDisplayName(actorUserId);
-        Map<String, String> data = lifeConsoleChangedData(libraryId, actorUserId, reason, category, actorDisplayName);
-        PushDeliveryResult result = pushMessageSender.sendDataMessage(resolution.targetTokens(), data);
-        if (!result.invalidTokens().isEmpty()) {
-            disableInvalidTokens(result.invalidTokens());
-        }
-        recordAudit(
-                libraryId,
-                actorUserId,
-                MODULE_LIFE,
-                category,
-                LIFE_CONSOLE_CHANGED,
-                data.get("targetRoute"),
-                deliveryStatus(result),
-                deliveryReason(result),
-                resolution,
-                result
-        );
-        log.info(
-                "Sent {} to {} device(s), successful={}, invalid={}: {}",
-                LIFE_CONSOLE_CHANGED,
-                result.attempted(),
-                result.successful(),
-                result.invalidTokens().size(),
-                data
-        );
     }
 
     @Transactional
@@ -222,6 +274,34 @@ public class PushNotificationService {
     ) {
         String safeCategory = normalizePhotoCategory(category);
         String safeRoute = targetRoute == null || targetRoute.isBlank() ? "photos" : targetRoute.trim();
+        String actorDisplayName = resolveDisplayName(actorUserId);
+
+        // Build data first — needed for both SSE and FCM
+        Map<String, String> data = new HashMap<>();
+        data.put("type", "photos.changed");
+        data.put("event", "photos.changed");
+        data.put("module", MODULE_PHOTOS);
+        data.put("category", safeCategory);
+        data.put("libraryId", libraryId);
+        data.put("actorUserId", actorUserId);
+        data.put("actorDisplayName", actorDisplayName);
+        String name = actorDisplayName.isBlank() ? "你的伴侣" : actorDisplayName;
+        String resolvedTitle = title == null || title.isBlank() ? "照片" : title.trim().replace("对方", name);
+        String resolvedBody = body == null || body.isBlank() ? name + "更新了照片内容。" : body.trim().replace("对方", name);
+        data.put("title", resolvedTitle);
+        data.put("body", resolvedBody);
+        data.put("targetRoute", safeRoute);
+        data.put("occurredAtMillis", Long.toString(Instant.now().toEpochMilli()));
+        if (notificationId != null && !notificationId.isBlank()) {
+            data.put("notificationId", notificationId.trim());
+        }
+        if (groupId != null && !groupId.isBlank()) {
+            data.put("groupId", groupId.trim());
+        }
+
+        // SSE 推送：无论 FCM token 是否可用都发送（SSE 不依赖 FCM）
+        sseEmitterRegistry.sendToPartners(libraryId, actorUserId, data);
+
         TokenResolution resolution = targetTokensFor(libraryId, actorUserId, MODULE_PHOTOS, safeCategory);
         if (resolution.targetTokens().isEmpty()) {
             recordAudit(
@@ -236,33 +316,8 @@ public class PushNotificationService {
                     resolution,
                     PushDeliveryResult.skipped()
             );
-            log.info("No target device token for photo push: libraryId={}, actorUserId={}, category={}, selfFallbackEnabled={}", libraryId, actorUserId, safeCategory, selfFallbackEnabled);
+            log.info("No target device token for photo push: libraryId={}, actorUserId={}, category={}", libraryId, actorUserId, safeCategory);
             return;
-        }
-        Map<String, String> data = new HashMap<>();
-        data.put("type", "photos.changed");
-        data.put("event", "photos.changed");
-        data.put("module", MODULE_PHOTOS);
-        data.put("category", safeCategory);
-        data.put("libraryId", libraryId);
-        data.put("actorUserId", actorUserId);
-        String actorDisplayName = resolveDisplayName(actorUserId);
-        data.put("actorDisplayName", actorDisplayName);
-        String resolvedTitle = title == null || title.isBlank() ? "照片模块有新提醒" : title.trim();
-        String resolvedBody = body == null || body.isBlank() ? "对方刚更新了照片内容。" : body.trim();
-        if (!actorDisplayName.isBlank()) {
-            resolvedTitle = resolvedTitle.replace("对方", actorDisplayName);
-            resolvedBody = resolvedBody.replace("对方", actorDisplayName);
-        }
-        data.put("title", resolvedTitle);
-        data.put("body", resolvedBody);
-        data.put("targetRoute", safeRoute);
-        data.put("occurredAtMillis", Long.toString(Instant.now().toEpochMilli()));
-        if (notificationId != null && !notificationId.isBlank()) {
-            data.put("notificationId", notificationId.trim());
-        }
-        if (groupId != null && !groupId.isBlank()) {
-            data.put("groupId", groupId.trim());
         }
         PushDeliveryResult result = pushMessageSender.sendDataMessage(resolution.targetTokens(), data);
         if (!result.invalidTokens().isEmpty()) {
@@ -300,7 +355,7 @@ public class PushNotificationService {
                 .orElse(defaultPreferenceEnabled(safeModule, safeCategory));
     }
 
-    private Map<String, String> lifeConsoleChangedData(String libraryId, String actorUserId, String reason, String category, String actorDisplayName) {
+    private Map<String, String> lifeConsoleChangedData(String libraryId, String actorUserId, String reason, String category, String actorDisplayName, String mediaId) {
         String safeReason = reason == null || reason.isBlank() ? "changed" : reason.trim();
         String occurredAtMillis = Long.toString(Instant.now().toEpochMilli());
         Map<String, String> data = new HashMap<>();
@@ -312,12 +367,16 @@ public class PushNotificationService {
         data.put("actorUserId", actorUserId);
         data.put("actorDisplayName", actorDisplayName);
         data.put("reason", safeReason);
-        data.put("title", lifePushTitle(safeReason, actorDisplayName));
+        data.put("title", lifePushTitle(safeReason));
         data.put("body", lifePushBody(safeReason, actorDisplayName));
         data.put("targetRoute", safeReason.startsWith("bowel_") ? "life:bowel" : "life:trace");
         data.put("occurredAtMillis", occurredAtMillis);
         data.put("notificationId", "life:" + safeReason + ":" + occurredAtMillis);
         data.put("groupId", "life:" + libraryId + ":" + LocalDate.now().toString());
+        // 携带具体媒体 ID，客户端据此精准跳转到对应媒体的查看态
+        if (mediaId != null && !mediaId.isBlank()) {
+            data.put("mediaId", mediaId.trim());
+        }
         return data;
     }
 
@@ -368,30 +427,31 @@ public class PushNotificationService {
         };
     }
 
-    private String lifePushTitle(String reason, String actorDisplayName) {
-        String name = actorDisplayName == null || actorDisplayName.isBlank() ? null : actorDisplayName.trim();
+    // ── 推送文案 v2: 标题=模块名, 正文={name}+具体操作 ──
+    private String lifePushTitle(String reason) {
         return switch (normalizeKey(reason)) {
-            case "person_media_added" -> name != null ? name + "添加了新的人物痕迹" : "人物痕迹有新更新";
-            case "person_media_deleted" -> name != null ? name + "整理了人物痕迹" : "人物痕迹有变更";
-            case "meal_media_added" -> name != null ? name + "添加了新的吃饭记录" : "吃饭有新记录";
-            case "meal_media_deleted" -> name != null ? name + "整理了吃饭记录" : "吃饭记录有变更";
-            case "bowel_added", "bowel_deleted" -> name != null ? name + "记录了今日痕迹" : "今日痕迹有新更新";
-            default -> name != null ? name + "更新了生活记录" : "今日痕迹有新更新";
+            case "person_media_added", "person_media_deleted" -> "人物痕迹";
+            case "meal_media_added", "meal_media_deleted" -> "吃饭痕迹";
+            case "bowel_added", "bowel_deleted" -> "大便痕迹";
+            default -> "今日痕迹";
         };
     }
 
     private String lifePushBody(String reason, String actorDisplayName) {
-        String name = actorDisplayName == null || actorDisplayName.isBlank() ? null : actorDisplayName.trim();
+        String name = actorDisplayName == null || actorDisplayName.isBlank() ? "你的伴侣" : actorDisplayName.trim();
         return switch (normalizeKey(reason)) {
-            case "person_media_added" -> name != null ? name + "刚添加了新的人物痕迹。" : "对方刚添加了新的人物痕迹。";
-            case "person_media_deleted" -> name != null ? name + "整理了人物痕迹里的媒体。" : "对方整理了人物痕迹里的媒体。";
-            case "meal_media_added" -> name != null ? name + "刚添加了新的吃饭记录。" : "对方刚添加了新的吃饭记录。";
-            case "meal_media_deleted" -> name != null ? name + "整理了吃饭记录里的媒体。" : "对方整理了吃饭记录里的媒体。";
-            case "media_added" -> name != null ? name + "刚把新的照片或视频放进今日痕迹。" : "对方刚把新的照片或视频放进今日痕迹。";
-            case "media_deleted" -> name != null ? name + "整理了今日痕迹里的媒体。" : "对方整理了今日痕迹里的媒体。";
-            case "bowel_added" -> name != null ? name + "记录了一次排便。" : "对方记录了一次排便。";
-            case "bowel_deleted" -> name != null ? name + "撤回了一条排便记录。" : "对方撤回了一条排便记录。";
-            default -> name != null ? name + "刚更新了生活记录。" : "对方刚更新了生活记录。";
+            case "person_media_added" -> name + "上传了人物照片";
+            case "person_media_deleted" -> name + "删除了人物照片";
+            case "meal_media_added" -> name + "上传了吃饭照片";
+            case "meal_media_deleted" -> name + "删除了吃饭照片";
+            // 大便通知文案统一使用 💩 emoji，避免"大便/排便"等直接文字
+            case "bowel_added" -> name + "记录了一次💩";
+            case "bowel_deleted" -> name + "撤回了一次💩";
+            case "media_added" -> name + "上传了新的照片或视频";
+            case "media_deleted" -> name + "删除了照片或视频";
+            case "media_location_updated" -> name + "更新了照片位置";
+            case "bowel_location_updated" -> name + "更新了💩位置";
+            default -> name + "更新了生活记录";
         };
     }
 
@@ -430,9 +490,6 @@ public class PushNotificationService {
     private String noTargetReason(TokenResolution resolution) {
         if (resolution.enabledDeviceCount() == 0) {
             return "no_enabled_device_token";
-        }
-        if (resolution.partnerDeviceCount() == 0 && !selfFallbackEnabled) {
-            return "no_partner_token_self_fallback_disabled";
         }
         if (resolution.partnerDeviceCount() == 0) {
             return "no_partner_token";
@@ -524,9 +581,14 @@ public class PushNotificationService {
             return "";
         }
         return userRepository.findById(userId)
-                .map(UserEntity::getDisplayName)
-                .filter(name -> name != null && !name.isBlank())
-                .map(String::trim)
+                .map(user -> {
+                    String displayName = user.getDisplayName();
+                    if (displayName != null && !displayName.isBlank()) {
+                        return displayName.trim();
+                    }
+                    String account = user.getAccount();
+                    return account != null ? account.trim() : "";
+                })
                 .orElse("");
     }
 

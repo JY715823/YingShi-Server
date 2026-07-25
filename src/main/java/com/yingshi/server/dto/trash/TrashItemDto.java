@@ -22,7 +22,9 @@ public record TrashItemDto(
         Integer sourceMediaHeight,
         Double sourceMediaAspectRatio,
         Long sourceMediaDurationMillis,
-        String sourceMediaMimeType
+        String sourceMediaMimeType,
+        // P1-2 改造: life 回收站分类 (PERSON/MEAL/null); null 表示照片回收站
+        String lifeCategory
 ) {
     @JsonIgnore
     public String sourcePostId() {
