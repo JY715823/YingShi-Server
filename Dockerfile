@@ -36,7 +36,7 @@ EXPOSE 8080
 
 # Health check for container orchestrators
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -sf http://localhost:8080/api/health || exit 1
+    CMD curl -sf http://localhost:8080/actuator/health/liveness || exit 1
 
 # JVM: use 75% of container memory, leave room for OS/ffmpeg
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-XX:+UseContainerSupport", "-jar", "/app/app.jar"]

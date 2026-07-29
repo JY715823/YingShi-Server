@@ -12,7 +12,7 @@ import jakarta.validation.constraints.Size;
  * {@code @Valid} cascade rejects oversized payloads with 400 instead of 500.</p>
  *
  * <p>每个 record 都标注 {@link JsonIgnoreProperties}(ignoreUnknown = true)，
- * 容忍客户端多出的字段（如 createdAtMillis/updatedAtMillis/ownerUserId），
+ * 容忍客户端多出的字段（如 createdAtMillis/updatedAtMillis），
  * 避免 Jackson 反序列化失败导致 500。</p>
  */
 public final class LedgerSyncRows {
@@ -63,7 +63,11 @@ public final class LedgerSyncRows {
             Boolean hidden,
             @Size(max = 2000) String note,
             Integer sortOrder,
-            Long deletedAtMillis
+            Long deletedAtMillis,
+            @Size(max = 255) String ownerUserId,
+            @Size(max = 64) String bankKey,
+            @Size(max = 255) String bankName,
+            @Size(max = 16) String cardNumberTail
     ) {
     }
 

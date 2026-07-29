@@ -38,7 +38,11 @@ public class RateLimitFilter {
                 "/api/auth/login/challenge/resend",
                 "/api/auth/login/verify",
                 "/api/auth/login/remembered",
-                "/api/auth/refresh-token"
+                "/api/auth/refresh-token",
+                // R2-H-G6: 扩展应用层限流覆盖上传与聊天导入路径
+                "/api/upload/*",
+                "/api/chat/imported/upload-zip",
+                "/api/chat/imported/media/*"
         );
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 20);
         registration.setName("authRateLimitFilter");

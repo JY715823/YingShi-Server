@@ -5,6 +5,11 @@
     <property name="LOG_PATH" value="${LOG_PATH:-${java.io.tmpdir:-/tmp}/yingshi-logs}"/>
     <property name="LOG_FILE" value="${LOG_PATH}/yingshi-server"/>
 
+    <!-- R0-H: Global log masking converter for lat/lng and token redaction.
+         Registered for use in pattern-based appenders via %masked.
+         LogstashEncoder (JSON) relies on source-level masking in services. -->
+    <conversionRule conversionWord="masked" converterClass="com.yingshi.server.config.logging.MaskingConverter"/>
+
     <!-- Console: human-readable for dev, JSON for prod -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">

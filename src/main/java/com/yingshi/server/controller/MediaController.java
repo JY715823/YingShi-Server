@@ -62,18 +62,16 @@ public class MediaController {
     public ApiResponse<List<MediaDto>> getMediaFeed(
             @CurrentUser AuthenticatedUser currentUser,
             @RequestParam(required = false) String cursor,
-            @RequestParam(required = false) Integer pageSize,
+            @RequestParam(required = false, defaultValue = "30") Integer pageSize,
             HttpServletRequest request
     ) {
-        if (cursor != null || pageSize != null) {
-            MediaFeedPage page = mediaService.getMediaFeedPage(currentUser, cursor, pageSize);
-            return ApiResponse.success(
-                    requestId(request),
-                    page.items(),
-                    new PageInfo(1, page.pageSize(), page.nextCursor(), page.hasMore())
-            );
-        }
-        return ApiResponse.success(requestId(request), mediaService.getMediaFeed(currentUser));
+        // R2-E-9: 全量非分页路径已移除，强制走分页路径
+        MediaFeedPage page = mediaService.getMediaFeedPage(currentUser, cursor, pageSize);
+        return ApiResponse.success(
+                requestId(request),
+                page.items(),
+                new PageInfo(1, page.pageSize(), page.nextCursor(), page.hasMore())
+        );
     }
 
     @Operation(summary = "Get app import status by source fingerprint", security = @SecurityRequirement(name = "bearerAuth"))

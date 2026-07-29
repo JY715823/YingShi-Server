@@ -60,6 +60,17 @@ public interface MediaRepository extends JpaRepository<MediaEntity, String> {
     @Query("SELECT m FROM MediaEntity m ORDER BY m.updatedAt DESC")
     List<MediaEntity> findTopByOrderByUpdatedAtDesc(org.springframework.data.domain.Pageable pageable);
 
+    // R2-D-1/2: 孤儿扫描持久 cursor — 从上次扫描位置继续，按 (updatedAt ASC, id ASC) 向前推进。
+    // cursorUpdatedAt/cursorId 为上次最后一条的值；首次扫描传 cursorUpdatedAt=Instant.EPOCH, cursorId=null。
+    @Query("SELECT m FROM MediaEntity m WHERE m.updatedAt > :cursorUpdatedAt "
+            + "OR (m.updatedAt = :cursorUpdatedAt AND m.id > :cursorId) "
+            + "ORDER BY m.updatedAt ASC, m.id ASC")
+    List<MediaEntity> findOrphanCandidatesSince(
+            @Param("cursorUpdatedAt") Instant cursorUpdatedAt,
+            @Param("cursorId") String cursorId,
+            org.springframework.data.domain.Pageable pageable
+    );
+
     @Query("""
             SELECT m FROM MediaEntity m
             WHERE m.libraryId = :libraryId
@@ -107,6 +118,10 @@ public interface MediaRepository extends JpaRepository<MediaEntity, String> {
 
     @Query("SELECT MAX(m.updatedAt) FROM MediaEntity m WHERE m.libraryId = :libraryId")
     Optional<Instant> findLatestUpdatedAtByLibraryId(@Param("libraryId") String libraryId);
+
+    // R1-H-3: 配额校验 - 统计 library 已用存储（未软删的 media sizeBytes 总和）
+    @Query("SELECT COALESCE(SUM(m.sizeBytes), 0) FROM MediaEntity m WHERE m.libraryId = :libraryId AND m.deletedAt IS NULL")
+    long sumStorageBytesByLibraryId(@Param("libraryId") String libraryId);
 
     @Query("SELECT MAX(m.updatedAt) FROM MediaEntity m WHERE m.libraryId = :libraryId AND m.deletedAt IS NULL")
     Optional<Instant> findLatestUpdatedAtByLibraryIdAndDeletedAtIsNull(@Param("libraryId") String libraryId);

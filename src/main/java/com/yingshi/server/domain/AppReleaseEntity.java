@@ -54,6 +54,26 @@ public class AppReleaseEntity extends BaseEntity {
     @Column(name = "published", nullable = false)
     private Boolean published = true;
 
+    /** APK 文件的 SHA-256 校验值，用于客户端校验下载完整性。 */
+    @Column(name = "apk_sha256", length = 64)
+    private String apkSha256;
+
+    /** APK 文件大小（字节），用于客户端展示下载进度。 */
+    @Column(name = "file_size_bytes")
+    private Long fileSizeBytes;
+
+    /** 支持该版本的最低客户端 versionCode，低于此值必须强制更新。 */
+    @Column(name = "min_supported_version_code")
+    private Integer minSupportedVersionCode;
+
+    /** APK 下载的 CDN/对象存储域名，与 download_url 拼接使用。 */
+    @Column(name = "download_host", length = 255)
+    private String downloadHost;
+
+    /** APK 签名证书的 SHA-256 指纹，用于客户端校验签名一致性。 */
+    @Column(name = "signer_sha256", length = 64)
+    private String signerSha256;
+
     @PrePersist
     void ensureId() {
         if (id == null || id.isBlank()) {
@@ -123,5 +143,45 @@ public class AppReleaseEntity extends BaseEntity {
 
     public void setPublished(Boolean published) {
         this.published = published;
+    }
+
+    public String getApkSha256() {
+        return apkSha256;
+    }
+
+    public void setApkSha256(String apkSha256) {
+        this.apkSha256 = apkSha256;
+    }
+
+    public Long getFileSizeBytes() {
+        return fileSizeBytes;
+    }
+
+    public void setFileSizeBytes(Long fileSizeBytes) {
+        this.fileSizeBytes = fileSizeBytes;
+    }
+
+    public Integer getMinSupportedVersionCode() {
+        return minSupportedVersionCode;
+    }
+
+    public void setMinSupportedVersionCode(Integer minSupportedVersionCode) {
+        this.minSupportedVersionCode = minSupportedVersionCode;
+    }
+
+    public String getDownloadHost() {
+        return downloadHost;
+    }
+
+    public void setDownloadHost(String downloadHost) {
+        this.downloadHost = downloadHost;
+    }
+
+    public String getSignerSha256() {
+        return signerSha256;
+    }
+
+    public void setSignerSha256(String signerSha256) {
+        this.signerSha256 = signerSha256;
     }
 }

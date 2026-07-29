@@ -49,8 +49,11 @@ import com.yingshi.server.repository.ledger.LedgerDeletedItemRepository;
 import com.yingshi.server.repository.ledger.LedgerRecurringOccurrenceRepository;
 import com.yingshi.server.repository.ledger.LedgerRecurringRuleRepository;
 import com.yingshi.server.repository.ledger.LedgerTransactionRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -88,6 +91,9 @@ public class LedgerSyncService {
     private final LedgerDeletedItemRepository deletedItemRepository;
     private final LedgerRecurringRuleRepository recurringRuleRepository;
     private final LedgerRecurringOccurrenceRepository recurringOccurrenceRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public LedgerSyncService(
             LedgerBookRepository bookRepository,
@@ -211,6 +217,7 @@ public class LedgerSyncService {
         rejected.addAll(upsertRecurringRules(libraryId, changes.recurringRules()));
         recurringRuleRepository.flush();
         rejected.addAll(upsertRecurringOccurrences(libraryId, changes.recurringOccurrences()));
+        recurringOccurrenceRepository.flush();
         return rejected;
     }
 
@@ -441,8 +448,24 @@ public class LedgerSyncService {
             toSave.add(entity);
         }
         if (!toSave.isEmpty()) {
-            transactionRepository.saveAll(toSave);
-            transactionRepository.flush();
+            try {
+                transactionRepository.saveAll(toSave);
+                transactionRepository.flush();
+            } catch (DataIntegrityViolationException ex) {
+                // R1-F-4: 转账 dedupe 唯一约束等冲突，回退到逐条保存以定位冲突 row
+                log.warn("upsertTransaction batch constraint violation, falling back to per-row: {}", ex.getMessage());
+                entityManager.clear();
+                for (LedgerTransactionEntity entity : toSave) {
+                    try {
+                        transactionRepository.save(entity);
+                        transactionRepository.flush();
+                    } catch (DataIntegrityViolationException perEx) {
+                        log.warn("upsertTransaction rejected duplicate: id={}", entity.getId());
+                        rejected.add(new LedgerSyncResponse.RejectedRowRef("transactions", entity.getId(), "duplicate"));
+                        entityManager.clear();
+                    }
+                }
+            }
         }
         return rejected;
     }
@@ -783,7 +806,24 @@ public class LedgerSyncService {
             toSave.add(entity);
         }
         if (!toSave.isEmpty()) {
-            recurringOccurrenceRepository.saveAll(toSave);
+            try {
+                recurringOccurrenceRepository.saveAll(toSave);
+                recurringOccurrenceRepository.flush();
+            } catch (DataIntegrityViolationException ex) {
+                // R1-F-4: recurring occurrence 唯一约束冲突，回退到逐条保存以定位冲突 row
+                log.warn("upsertRecurringOccurrence batch constraint violation, falling back to per-row: {}", ex.getMessage());
+                entityManager.clear();
+                for (LedgerRecurringOccurrenceEntity entity : toSave) {
+                    try {
+                        recurringOccurrenceRepository.save(entity);
+                        recurringOccurrenceRepository.flush();
+                    } catch (DataIntegrityViolationException perEx) {
+                        log.warn("upsertRecurringOccurrence rejected duplicate: id={}", entity.getId());
+                        rejected.add(new LedgerSyncResponse.RejectedRowRef("recurring_occurrences", entity.getId(), "duplicate"));
+                        entityManager.clear();
+                    }
+                }
+            }
         }
         return rejected;
     }
@@ -909,6 +949,10 @@ public class LedgerSyncService {
         entity.setNote(row.note());
         entity.setSortOrder(row.sortOrder());
         entity.setDeletedAtMillis(row.deletedAtMillis());
+        entity.setOwnerUserId(row.ownerUserId());
+        entity.setBankKey(row.bankKey());
+        entity.setBankName(row.bankName());
+        entity.setCardNumberTail(row.cardNumberTail());
     }
 
     private void mapToTransaction(TransactionRow row, LedgerTransactionEntity entity) {
@@ -1029,7 +1073,11 @@ public class LedgerSyncService {
                 e.getSortOrder(),
                 e.getDeletedAtMillis(),
                 instantToMillis(e.getCreatedAt()),
-                instantToMillis(e.getUpdatedAt())
+                instantToMillis(e.getUpdatedAt()),
+                e.getOwnerUserId(),
+                e.getBankKey(),
+                e.getBankName(),
+                e.getCardNumberTail()
         );
     }
 

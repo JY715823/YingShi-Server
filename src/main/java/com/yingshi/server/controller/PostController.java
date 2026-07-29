@@ -6,10 +6,12 @@ import com.yingshi.server.common.auth.CurrentUser;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.common.response.ApiResponse;
+import com.yingshi.server.common.response.PageInfo;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.domain.PostMediaDeleteMode;
 import com.yingshi.server.dto.content.AddPostMediaRequest;
 import com.yingshi.server.dto.content.CreatePostRequest;
+import com.yingshi.server.dto.content.CursorPage;
 import com.yingshi.server.dto.content.PostDetailDto;
 import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.dto.content.UpdatePostCoverRequest;
@@ -55,10 +57,17 @@ public class PostController {
     @Operation(summary = "List small albums", security = @SecurityRequirement(name = "bearerAuth"))
     @GetMapping
     public ApiResponse<List<PostSummaryDto>> listSmallAlbums(
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false, defaultValue = "30") Integer pageSize,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), postService.listPosts(currentUser));
+        CursorPage<PostSummaryDto> page = postService.listPosts(currentUser, cursor, pageSize);
+        return ApiResponse.success(
+                requestId(request),
+                page.items(),
+                new PageInfo(1, page.pageSize(), page.nextCursor(), page.hasMore())
+        );
     }
 
     @Operation(summary = "Get small album detail", security = @SecurityRequirement(name = "bearerAuth"))

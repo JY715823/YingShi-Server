@@ -2,6 +2,7 @@ package com.yingshi.server.service.trash;
 
 import com.yingshi.server.common.IdGenerator;
 import com.yingshi.server.common.auth.AuthenticatedUser;
+import com.yingshi.server.common.cursor.CursorCodec;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.domain.AlbumEntity;
@@ -9,6 +10,7 @@ import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaDeleteMode;
 import com.yingshi.server.domain.PostMediaEntity;
+import com.yingshi.server.domain.PurgeIntentEntity;
 import com.yingshi.server.domain.TrashItemEntity;
 import com.yingshi.server.domain.TrashItemState;
 import com.yingshi.server.domain.TrashItemType;
@@ -22,15 +24,14 @@ import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.CommentRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
+import com.yingshi.server.repository.PurgeIntentRepository;
 import com.yingshi.server.repository.TrashItemRepository;
 import com.yingshi.server.service.push.PushDispatchSupport;
 import com.yingshi.server.service.push.PushNotificationService;
 import com.yingshi.server.service.upload.LocalMediaStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,10 +52,11 @@ public class TrashService {
 
     private static final Duration UNDO_WINDOW = Duration.ofHours(24);
     private static final int DEFAULT_PAGE = 1;
-    private static final int DEFAULT_SIZE = 10;
+    private static final int DEFAULT_SIZE = 30;
     private static final Logger logger = LoggerFactory.getLogger(TrashService.class);
 
     private final TrashItemRepository trashItemRepository;
+    private final PurgeIntentRepository purgeIntentRepository;
     private final AlbumRepository albumRepository;
     private final PostRepository postRepository;
     private final MediaRepository mediaRepository;
@@ -64,9 +66,11 @@ public class TrashService {
     private final LocalMediaStorageService localMediaStorageService;
     private final PushNotificationService pushNotificationService;
     private final TrashSnapshotHelper snapshotHelper;
+    private final CursorCodec cursorCodec;
 
     public TrashService(
             TrashItemRepository trashItemRepository,
+            PurgeIntentRepository purgeIntentRepository,
             AlbumRepository albumRepository,
             PostRepository postRepository,
             MediaRepository mediaRepository,
@@ -75,9 +79,11 @@ public class TrashService {
             TrashMapper trashMapper,
             LocalMediaStorageService localMediaStorageService,
             PushNotificationService pushNotificationService,
-            TrashSnapshotHelper snapshotHelper
+            TrashSnapshotHelper snapshotHelper,
+            CursorCodec cursorCodec
     ) {
         this.trashItemRepository = trashItemRepository;
+        this.purgeIntentRepository = purgeIntentRepository;
         this.albumRepository = albumRepository;
         this.postRepository = postRepository;
         this.mediaRepository = mediaRepository;
@@ -87,6 +93,7 @@ public class TrashService {
         this.localMediaStorageService = localMediaStorageService;
         this.pushNotificationService = pushNotificationService;
         this.snapshotHelper = snapshotHelper;
+        this.cursorCodec = cursorCodec;
     }
 
     @Transactional
@@ -209,56 +216,112 @@ public class TrashService {
     }
 
     @Transactional(readOnly = true)
-    public TrashPageResponse listTrash(String itemType, Integer page, Integer size, AuthenticatedUser currentUser) {
+    public TrashPageResponse listTrash(String itemType, String cursor, Integer page, Integer size, AuthenticatedUser currentUser) {
         int normalizedPage = normalizePage(page);
         int normalizedSize = normalizeSize(size);
-        PageRequest pageRequest = PageRequest.of(
-                normalizedPage - 1,
-                normalizedSize,
-                Sort.by(Sort.Order.desc("deletedAt"), Sort.Order.desc("id"))
-        );
+        String libraryId = currentUser.libraryId();
 
-        Page<TrashItemEntity> items = itemType == null || itemType.isBlank()
-                ? trashItemRepository.findByLibraryIdAndState(currentUser.libraryId(), TrashItemState.IN_TRASH, pageRequest)
-                : trashItemRepository.findByLibraryIdAndStateAndItemType(
-                currentUser.libraryId(),
-                TrashItemState.IN_TRASH,
-                parseItemType(itemType),
-                pageRequest
-        );
+        // R2-C-1/2/3/4: SQL 层过滤 lifeCategory IS NULL (photo 回收站)，keyset 分页，真实 totalElements/hasMore。
+        // 多取一条用于判定 hasMore，避免依赖客户端累计已返回数。
+        int fetchSize = normalizedSize + 1;
+        Instant cursorAt;
+        String cursorId;
+        String[] cursorParts = decodeCursor(cursor);
+        if (cursorParts == null) {
+            cursorAt = Instant.now();
+            cursorId = null;
+        } else {
+            cursorAt = Instant.ofEpochMilli(Long.parseLong(cursorParts[0]));
+            cursorId = cursorParts[1];
+        }
 
-        // P1-2 改造: photo 回收站只返回 lifeCategory IS NULL 的项，life 回收站单独走 listLifeTrash
-        List<TrashItemEntity> photoOnly = items.stream()
-                .filter(item -> item.getLifeCategory() == null)
-                .toList();
+        List<TrashItemEntity> fetched;
+        long totalElements;
+        if (itemType == null || itemType.isBlank()) {
+            fetched = trashItemRepository.findPhotoTrashBeforeCursor(
+                    libraryId, TrashItemState.IN_TRASH, cursorAt, cursorId, PageRequest.of(0, fetchSize));
+            totalElements = trashItemRepository.countPhotoTrash(libraryId, TrashItemState.IN_TRASH);
+        } else {
+            TrashItemType parsed = parseItemType(itemType);
+            fetched = trashItemRepository.findPhotoTrashBeforeCursorByItemType(
+                    libraryId, TrashItemState.IN_TRASH, parsed, cursorAt, cursorId, PageRequest.of(0, fetchSize));
+            totalElements = trashItemRepository.countPhotoTrashByItemType(libraryId, TrashItemState.IN_TRASH, parsed);
+        }
+
+        boolean hasMore = fetched.size() > normalizedSize;
+        List<TrashItemEntity> pageItems = hasMore
+                ? fetched.subList(0, normalizedSize)
+                : fetched;
+        String nextCursor = null;
+        if (hasMore && !pageItems.isEmpty()) {
+            TrashItemEntity last = pageItems.get(pageItems.size() - 1);
+            nextCursor = encodeCursor(last.getDeletedAt(), last.getId());
+        }
 
         return new TrashPageResponse(
-                photoOnly.stream().map(this::toTrashItemDto).toList(),
+                pageItems.stream().map(this::toTrashItemDto).toList(),
                 normalizedPage,
                 normalizedSize,
-                photoOnly.size(),
-                false
+                totalElements,
+                hasMore,
+                nextCursor
         );
+    }
+
+    private String encodeCursor(Instant deletedAt, String id) {
+        // R2-C-附-2: 接入 CursorCodec HMAC-SHA256 签名, 防止客户端伪造 cursor 跳到任意位置。
+        String payload = deletedAt.toEpochMilli() + "|" + (id == null ? "" : id);
+        return cursorCodec.encode(payload);
+    }
+
+    private String[] decodeCursor(String cursor) {
+        // R2-C-附-2: 解码 HMAC 签名的 cursor; 解码失败或签名不匹配时返回 null (从头开始, 保留兼容性)。
+        if (cursor == null || cursor.isBlank()) {
+            return null;
+        }
+        try {
+            String payload = cursorCodec.decode(cursor);
+            int idx = payload.indexOf('|');
+            if (idx < 0) {
+                return null;
+            }
+            String millis = payload.substring(0, idx);
+            String id = payload.substring(idx + 1);
+            return new String[]{millis, id.isEmpty() ? null : id};
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /**
      * P1-2 改造: life 回收站列表，按 category 过滤 (PERSON/MEAL/null=所有 life)。
+     * R2-C-5/6: 增加 cursor keyset 分页，避免一次性返回全部 life 回收站。
+     * 保守实现: 保留 List 返回类型以兼容现有 Controller/Android 契约；客户端可基于最后一条的
+     * deletedAtMillis + trashItemId 构造 cursor 触发下一页。
      */
     @Transactional(readOnly = true)
-    public List<TrashItemDto> listLifeTrash(String lifeCategory, AuthenticatedUser currentUser) {
+    public List<TrashItemDto> listLifeTrash(String lifeCategory, String cursor, Integer size, AuthenticatedUser currentUser) {
+        int normalizedSize = normalizeSize(size);
+        String libraryId = currentUser.libraryId();
+        Instant cursorAt;
+        String cursorId;
+        String[] cursorParts = decodeCursor(cursor);
+        if (cursorParts == null) {
+            cursorAt = Instant.now();
+            cursorId = null;
+        } else {
+            cursorAt = Instant.ofEpochMilli(Long.parseLong(cursorParts[0]));
+            cursorId = cursorParts[1];
+        }
+
         List<TrashItemEntity> items;
         if (lifeCategory == null || lifeCategory.isBlank()) {
-            items = trashItemRepository.findLifeTrashByLibraryIdAndState(
-                    currentUser.libraryId(),
-                    TrashItemState.IN_TRASH
-            );
+            items = trashItemRepository.findLifeTrashBeforeCursor(
+                    libraryId, TrashItemState.IN_TRASH, cursorAt, cursorId, PageRequest.of(0, normalizedSize));
         } else {
             String normalized = lifeCategory.trim().toUpperCase(Locale.ROOT);
-            items = trashItemRepository.findLifeTrashByLibraryIdAndStateAndCategory(
-                    currentUser.libraryId(),
-                    TrashItemState.IN_TRASH,
-                    normalized
-            );
+            items = trashItemRepository.findLifeTrashBeforeCursorByCategory(
+                    libraryId, TrashItemState.IN_TRASH, normalized, cursorAt, cursorId, PageRequest.of(0, normalizedSize));
         }
         return items.stream().map(this::toTrashItemDto).toList();
     }
@@ -342,8 +405,11 @@ public class TrashService {
         }
 
         TrashItemDto itemDto = toTrashItemDto(item);
+        // R3-TRASH-002: 事务内记录 purge intents + 删除 DB 记录 (purgeItemData)，标记 PURGING。
+        // 事务提交后 PurgeIntentProcessor 异步处理对象存储删除，全部完成后清理 trash item。
         purgeItemData(item, currentUser.libraryId());
-        trashItemRepository.delete(item);
+        item.setState(TrashItemState.PURGING);
+        trashItemRepository.save(item);
         return itemDto;
     }
 
@@ -356,8 +422,10 @@ public class TrashService {
         if (item.getUndoDeadlineAt() == null || item.getUndoDeadlineAt().isAfter(Instant.now())) {
             return;
         }
+        // R3-TRASH-002: 同 purgeTrashItem，事务内记录 intents + 清理 DB + 标记 PURGING。
         purgeItemData(item, libraryId);
-        trashItemRepository.delete(item);
+        item.setState(TrashItemState.PURGING);
+        trashItemRepository.save(item);
     }
 
     /**
@@ -401,9 +469,23 @@ public class TrashService {
     }
 
     @Transactional(readOnly = true)
-    public List<PendingCleanupDto> getPendingCleanup(AuthenticatedUser currentUser) {
+    public List<PendingCleanupDto> getPendingCleanup(String cursor, Integer size, AuthenticatedUser currentUser) {
         // P1-2 改造: photo 回收站 pending-cleanup 只返回 lifeCategory IS NULL 的项
-        return trashItemRepository.findPhotoTrashByLibraryIdAndState(currentUser.libraryId(), TrashItemState.PENDING_CLEANUP)
+        // R2-C-7: 增加 cursor keyset 分页，避免一次性返回全部 pending-cleanup。
+        int normalizedSize = normalizeSize(size);
+        String libraryId = currentUser.libraryId();
+        Instant cursorAt;
+        String cursorId;
+        String[] cursorParts = decodeCursor(cursor);
+        if (cursorParts == null) {
+            cursorAt = Instant.now();
+            cursorId = null;
+        } else {
+            cursorAt = Instant.ofEpochMilli(Long.parseLong(cursorParts[0]));
+            cursorId = cursorParts[1];
+        }
+        return trashItemRepository.findPhotoTrashBeforeCursor(
+                        libraryId, TrashItemState.PENDING_CLEANUP, cursorAt, cursorId, PageRequest.of(0, normalizedSize))
                 .stream()
                 .map(item -> trashMapper.toPendingCleanupDto(toTrashItemDto(item), item.getRemovedAt(), item.getUndoDeadlineAt()))
                 .toList();
@@ -411,22 +493,30 @@ public class TrashService {
 
     /**
      * P1-2 改造: life 回收站 pending-cleanup（24h 撤回中心），按 category 过滤 (PERSON/MEAL/null=所有 life)。
+     * R2-C-7: 增加 cursor keyset 分页，避免一次性返回全部 life pending-cleanup。
      */
     @Transactional(readOnly = true)
-    public List<PendingCleanupDto> getLifePendingCleanup(String lifeCategory, AuthenticatedUser currentUser) {
+    public List<PendingCleanupDto> getLifePendingCleanup(String lifeCategory, String cursor, Integer size, AuthenticatedUser currentUser) {
+        int normalizedSize = normalizeSize(size);
+        String libraryId = currentUser.libraryId();
+        Instant cursorAt;
+        String cursorId;
+        String[] cursorParts = decodeCursor(cursor);
+        if (cursorParts == null) {
+            cursorAt = Instant.now();
+            cursorId = null;
+        } else {
+            cursorAt = Instant.ofEpochMilli(Long.parseLong(cursorParts[0]));
+            cursorId = cursorParts[1];
+        }
         List<TrashItemEntity> items;
         if (lifeCategory == null || lifeCategory.isBlank()) {
-            items = trashItemRepository.findLifeTrashByLibraryIdAndState(
-                    currentUser.libraryId(),
-                    TrashItemState.PENDING_CLEANUP
-            );
+            items = trashItemRepository.findLifeTrashBeforeCursor(
+                    libraryId, TrashItemState.PENDING_CLEANUP, cursorAt, cursorId, PageRequest.of(0, normalizedSize));
         } else {
             String normalized = lifeCategory.trim().toUpperCase(Locale.ROOT);
-            items = trashItemRepository.findLifeTrashByLibraryIdAndStateAndCategory(
-                    currentUser.libraryId(),
-                    TrashItemState.PENDING_CLEANUP,
-                    normalized
-            );
+            items = trashItemRepository.findLifeTrashBeforeCursorByCategory(
+                    libraryId, TrashItemState.PENDING_CLEANUP, normalized, cursorAt, cursorId, PageRequest.of(0, normalizedSize));
         }
         return items.stream()
                 .map(item -> trashMapper.toPendingCleanupDto(toTrashItemDto(item), item.getRemovedAt(), item.getUndoDeadlineAt()))
@@ -620,7 +710,11 @@ public class TrashService {
                             });
                 }
                 // Delete the duplicate media file + DB record + comments
-                localMediaStorageService.deleteStoredMediaFiles(media.getStoragePath(), media.getId());
+                // H3 修复: 对象存储删除走 PurgeIntent outbox 模式 (与 purgeTrashItem 一致),
+                // 避免事务回滚后对象被永久删除但 DB 记录回滚导致对象孤立;
+                // 同时避免对象删除失败导致事务回滚 (restore 操作应优先保证 DB 一致性).
+                // trash_item_id 关联当前 restore 的 trash item, 仅用于追踪触发上下文.
+                recordPurgeIntent(item, libraryId, "MEDIA", media);
                 postMediaRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
                 commentRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
                 mediaRepository.delete(media);
@@ -655,7 +749,7 @@ public class TrashService {
         TrashSnapshotHelper.SmallAlbumDeletedSnapshot snapshot = snapshotHelper.readSmallAlbumDeletedSnapshot(item);
         purgeMediaSystemDeletedItemsForSmallAlbum(libraryId, snapshot.smallAlbumId());
         purgeMediaRemovedItemsForSmallAlbum(libraryId, snapshot.smallAlbumId());
-        purgeSmallAlbumCascade(libraryId, snapshot.smallAlbumId());
+        purgeSmallAlbumCascade(item, libraryId, snapshot.smallAlbumId());
         commentRepository.deleteByLibraryIdAndPostId(libraryId, snapshot.smallAlbumId());
         postRepository.findByIdAndLibraryId(snapshot.smallAlbumId(), libraryId).ifPresent(postRepository::delete);
     }
@@ -665,7 +759,7 @@ public class TrashService {
         for (String smallAlbumId : snapshot.smallAlbumIds()) {
             purgeMediaSystemDeletedItemsForSmallAlbum(libraryId, smallAlbumId);
             purgeMediaRemovedItemsForSmallAlbum(libraryId, smallAlbumId);
-            purgeSmallAlbumCascade(libraryId, smallAlbumId);
+            purgeSmallAlbumCascade(item, libraryId, smallAlbumId);
             commentRepository.deleteByLibraryIdAndPostId(libraryId, smallAlbumId);
             postRepository.findByIdAndLibraryId(smallAlbumId, libraryId).ifPresent(postRepository::delete);
         }
@@ -687,7 +781,8 @@ public class TrashService {
             return;
         }
         MediaEntity media = mediaOpt.get();
-        localMediaStorageService.deleteStoredMediaFiles(media.getStoragePath(), media.getId());
+        // R3-TRASH-002: 记录 purge intent，对象删除由 PurgeIntentProcessor 异步执行
+        recordPurgeIntent(item, libraryId, "MEDIA", media);
         postMediaRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
         commentRepository.deleteByLibraryIdAndMediaId(libraryId, media.getId());
         mediaRepository.delete(media);
@@ -730,14 +825,15 @@ public class TrashService {
      * Cascade-deletes media files + DB records for all media in a small album that are not referenced by other posts.
      * Post_media relations for this small album are deleted first; remaining references (from other posts) protect the media.
      */
-    private void purgeSmallAlbumCascade(String libraryId, String smallAlbumId) {
+    private void purgeSmallAlbumCascade(TrashItemEntity item, String libraryId, String smallAlbumId) {
         List<PostMediaEntity> relations = postMediaRepository.findByLibraryIdAndPostIdOrderBySortOrderAsc(libraryId, smallAlbumId);
         Set<String> mediaIds = relations.stream().map(PostMediaEntity::getMediaId).collect(Collectors.toSet());
         postMediaRepository.deleteByLibraryIdAndPostId(libraryId, smallAlbumId);
         for (String mediaId : mediaIds) {
             if (!postMediaRepository.existsByLibraryIdAndMediaId(libraryId, mediaId)) {
                 mediaRepository.findByIdAndLibraryId(mediaId, libraryId).ifPresent(media -> {
-                    localMediaStorageService.deleteStoredMediaFiles(media.getStoragePath(), media.getId());
+                    // R3-TRASH-002: 记录 purge intent，对象删除由 PurgeIntentProcessor 异步执行
+                    recordPurgeIntent(item, libraryId, "MEDIA", media);
                     commentRepository.deleteByLibraryIdAndMediaId(libraryId, mediaId);
                     mediaRepository.delete(media);
                 });
@@ -753,6 +849,29 @@ public class TrashService {
             case MEDIA_SYSTEM_DELETED -> purgeMediaSystemDeleted(item, libraryId);
             default -> throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.REMOVE_FROM_TRASH_CONFLICT, "Unsupported trash item type.");
         }
+    }
+
+    /**
+     * R3-TRASH-002: 记录单个 purge intent 到 outbox 表 (purge_intents)。
+     * 在事务内调用，捕获 media 的 storagePath / objectKey / mediaId，
+     * 以便 PurgeIntentProcessor 在事务提交后异步删除对象存储文件。
+     * DB 记录 (media / post_media / comments) 仍在事务内删除，保证 DB 一致性；
+     * 仅对象存储删除被推迟到事务外，避免回滚导致对象永久丢失。
+     */
+    private void recordPurgeIntent(TrashItemEntity item, String libraryId, String objectType, MediaEntity media) {
+        PurgeIntentEntity intent = new PurgeIntentEntity();
+        intent.setId(IdGenerator.newId("purge"));
+        intent.setTrashItemId(item.getId());
+        intent.setLibraryId(libraryId);
+        intent.setObjectType(objectType);
+        intent.setStoragePath(media.getStoragePath());
+        intent.setObjectKey(media.getOriginalObjectKey());
+        intent.setMediaId(media.getId());
+        intent.setState("PENDING");
+        intent.setAttempts(0);
+        intent.setMaxAttempts(5);
+        intent.setNextRetryAt(Instant.now());
+        purgeIntentRepository.save(intent);
     }
 
     private TrashItemEntity createTrashItem(

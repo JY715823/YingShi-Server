@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Collections;
 
 @Service
 public class ChatImportedSyncService {
@@ -78,10 +79,24 @@ public class ChatImportedSyncService {
             applyDeletions(libraryId, clientChanges.deletedRowIds());
         }
 
-        Instant since = Instant.ofEpochMilli(request.lastSyncVersionMillis());
+        // R1-B-2/R1-B-5: lastSyncSequence replaces lastSyncVersionMillis. Until
+        // per-row sequence assignment + Repository#findByLibraryIdAndSyncSequenceAfter
+        // land, bridge by treating the sequence as epoch millis so existing
+        // updated_at-based queryChangesSince keeps working. A null value requests
+        // a full snapshot.
+        Long lastSyncSequence = request.lastSyncSequence();
+        Instant since = lastSyncSequence != null ? Instant.ofEpochMilli(lastSyncSequence) : Instant.EPOCH;
         ChatImportedChangesDto serverChanges = queryChangesSince(libraryId, since);
 
-        return new ChatImportedSyncResponse(syncStart.toEpochMilli(), serverChanges);
+        // rejectedOperationIds/conflictOperationIds stay empty until per-operation
+        // validation is wired through applyChanges. nextSyncSequence is currently
+        // the sync window's start millis; clients echo it back as lastSyncSequence.
+        return new ChatImportedSyncResponse(
+                syncStart.toEpochMilli(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                serverChanges
+        );
     }
 
     // -----------------------------------------------------------------------

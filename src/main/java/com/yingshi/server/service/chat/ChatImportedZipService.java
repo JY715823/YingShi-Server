@@ -3,6 +3,8 @@ package com.yingshi.server.service.chat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yingshi.server.common.IdGenerator;
+import com.yingshi.server.common.exception.ApiException;
+import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.domain.chat.ImportedChatEntity;
 import com.yingshi.server.domain.chat.ImportedMessageEntity;
 import com.yingshi.server.domain.chat.ImportedMessageSearchEntity;
@@ -16,11 +18,13 @@ import com.yingshi.server.repository.chat.ImportedResourceRepository;
 import com.yingshi.server.service.storage.ObjectStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -50,6 +54,9 @@ public class ChatImportedZipService {
 
     /** Safety limit: 500 MB unzipped content. */
     private static final long MAX_UNCOMPRESSED_BYTES = 500L * 1024 * 1024;
+
+    /** R1-C-4: Maximum allowed size of a single decompressed entry (100 MB). */
+    private static final long MAX_SINGLE_ENTRY_BYTES = 100L * 1024 * 1024;
 
     private final ImportedChatRepository chatRepository;
     private final ImportedMessageRepository messageRepository;
@@ -187,6 +194,18 @@ public class ChatImportedZipService {
     private static final double MAX_COMPRESSION_RATIO = 100.0;
 
     private Map<String, byte[]> readZipEntries(byte[] zipBytes) throws IOException {
+        // R1-C-5: Pre-check temp disk space before allocating buffers — refuse early
+        // if there isn't enough headroom for the worst-case uncompressed payload.
+        // (Buffering still happens in memory via ByteArrayOutputStream; the
+        // streaming-to-temp-file variant is tracked as a follow-up.)
+        File tmpDir = new File(System.getProperty("java.io.tmpdir"));
+        long usableSpace = tmpDir.getUsableSpace();
+        if (usableSpace < MAX_UNCOMPRESSED_BYTES * 2) {
+            throw new ApiException(HttpStatus.INSUFFICIENT_STORAGE, ErrorCode.CHAT_IMPORT_SIZE_EXCEEDED,
+                    "Insufficient temp disk space: required at least "
+                    + (MAX_UNCOMPRESSED_BYTES * 2) + " bytes, available " + usableSpace + " bytes");
+        }
+
         Map<String, byte[]> entries = new HashMap<>();
         try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
             ZipEntry entry;
@@ -222,15 +241,33 @@ public class ChatImportedZipService {
                     }
                 }
 
+                // R1-C-4: Reject entries whose declared uncompressed size exceeds the
+                // single-entry cap before we even start reading bytes.
+                if (uncompressedSize > MAX_SINGLE_ENTRY_BYTES) {
+                    throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.CHAT_IMPORT_SIZE_EXCEEDED,
+                            "Single file exceeds 100MB limit: " + name);
+                }
+
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 byte[] buffer = new byte[8192];
                 int len;
+                long entrySize = 0;
                 while ((len = zis.read(buffer)) > 0) {
                     baos.write(buffer, 0, len);
+                    entrySize += len;
                     totalSize += len;
+                    // R1-C-4: Guard against entries whose actual decompressed size
+                    // exceeds the cap even when the declared size was unknown (-1).
+                    if (entrySize > MAX_SINGLE_ENTRY_BYTES) {
+                        throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
+                                ErrorCode.CHAT_IMPORT_SIZE_EXCEEDED,
+                                "Single file exceeds 100MB limit: " + name);
+                    }
                     if (totalSize > MAX_UNCOMPRESSED_BYTES) {
-                        throw new IOException(
-                                "ZIP content exceeds maximum allowed size of " + MAX_UNCOMPRESSED_BYTES + " bytes");
+                        throw new ApiException(HttpStatus.INSUFFICIENT_STORAGE,
+                                ErrorCode.CHAT_IMPORT_SIZE_EXCEEDED,
+                                "ZIP total content exceeds maximum allowed size of "
+                                + MAX_UNCOMPRESSED_BYTES + " bytes");
                     }
                 }
                 entries.put(name, baos.toByteArray());
@@ -320,7 +357,7 @@ public class ChatImportedZipService {
             try {
                 nodes.add(objectMapper.readTree(line));
             } catch (IOException e) {
-                log.warn("Skipping malformed JSONL line {} in {}: {}", i + 1, sourceName, e.getMessage());
+                log.warn("Skipping malformed JSONL line {} in resource=***: {}", i + 1, e.getMessage());
             }
         }
         return nodes;
@@ -509,14 +546,14 @@ public class ChatImportedZipService {
                 );
                 resource.setFileSizeBytes((long) resourceBytes.length);
                 mediaCounter[0]++;
-                log.debug("Stored resource {} ({} bytes) -> {}", storedObjectKey, resourceBytes.length, fileName);
+                log.debug("Stored resource=*** ({} bytes)", resourceBytes.length);
             } catch (Exception e) {
-                log.warn("Failed to store resource file '{}' to object storage: {}",
-                        storedObjectKey, e.getMessage());
+                log.warn("Failed to store resource=*** to object storage: {}",
+                        e.getMessage());
                 // Keep the entity but without confirmed storage
             }
         } else {
-            log.debug("Resource file not found in ZIP for localPath='{}', fileName='{}'", localPath, fileName);
+            log.debug("Resource file not found in ZIP for resource=***");
         }
 
         allResources.add(resource);

@@ -25,8 +25,8 @@ management:
   endpoints:
     web:
       exposure:
-        # FR-2: Expose prometheus and info for internal monitoring (restricted by nginx to internal network)
-        include: health,info,prometheus
+        # FR-2: Expose health and prometheus for internal monitoring (restricted by nginx to internal network)
+        include: health,prometheus
   endpoint:
     health:
       show-details: never
@@ -43,8 +43,19 @@ logging:
     root: WARN
     com.yingshi.server: INFO
 
+server:
+  tomcat:
+    remoteip:
+      remote-ip-header: X-Forwarded-For
+      protocol-header: X-Forwarded-Proto
+      trusted-proxies: 127.0.0.1,172.16.0.0/12,10.0.0.0/8
+
 app:
   production-safety:
     enabled: true
   dev-seed:
     enabled: false
+  auth:
+    rate-limit:
+      # R2-H-G7: 生产环境启用 trustForwardedHeaders, 让 RateLimitFilter 从 X-Forwarded-For 解析真实客户端 IP
+      trust-forwarded-headers: true

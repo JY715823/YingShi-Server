@@ -50,6 +50,7 @@ public class AuthService {
     private final AuthSessionService authSessionService;
     private final AuthLoginChallengeService authLoginChallengeService;
     private final AuthRememberedLoginService authRememberedLoginService;
+    private final AuthFailurePersistenceService authFailurePersistenceService;
     private final LocalMediaStorageService localMediaStorageService;
     private final AuthAccountLockoutProperties accountLockoutProperties;
 
@@ -62,6 +63,7 @@ public class AuthService {
             AuthSessionService authSessionService,
             AuthLoginChallengeService authLoginChallengeService,
             AuthRememberedLoginService authRememberedLoginService,
+            AuthFailurePersistenceService authFailurePersistenceService,
             LocalMediaStorageService localMediaStorageService,
             AuthAccountLockoutProperties accountLockoutProperties
     ) {
@@ -73,6 +75,7 @@ public class AuthService {
         this.authSessionService = authSessionService;
         this.authLoginChallengeService = authLoginChallengeService;
         this.authRememberedLoginService = authRememberedLoginService;
+        this.authFailurePersistenceService = authFailurePersistenceService;
         this.localMediaStorageService = localMediaStorageService;
         this.accountLockoutProperties = accountLockoutProperties;
     }
@@ -85,7 +88,7 @@ public class AuthService {
         requireAccountNotLocked(user);
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            recordFailedLogin(user);
+            authFailurePersistenceService.recordFailedLogin(user);
             throw invalidCredentials();
         }
 
@@ -138,7 +141,7 @@ public class AuthService {
         requireAccountNotLocked(user);
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            recordFailedLogin(user);
+            authFailurePersistenceService.recordFailedLogin(user);
             throw invalidCredentials();
         }
 
@@ -407,18 +410,6 @@ public class AuthService {
                     "Account is temporarily locked due to too many failed login attempts."
             );
         }
-    }
-
-    private void recordFailedLogin(UserEntity user) {
-        if (!accountLockoutProperties.isEnabled()) {
-            return;
-        }
-        int attempts = user.getFailedLoginAttempts() + 1;
-        user.setFailedLoginAttempts(attempts);
-        if (attempts >= accountLockoutProperties.getMaxAttempts()) {
-            user.setLockedUntil(Instant.now().plus(accountLockoutProperties.getLockDuration()));
-        }
-        userRepository.save(user);
     }
 
     private void resetFailedLoginAttempts(UserEntity user) {

@@ -16,8 +16,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageInputStream;
 import javax.imageio.stream.ImageOutputStream;
 import java.awt.Graphics2D;
 import java.awt.Color;
@@ -171,6 +173,29 @@ public class LocalMediaStorageService {
                 return true;
             }
             Files.createDirectories(previewPath.getParent());
+            // R1-H-4: 先读元数据校验像素数，防止解压炸弹 OOM
+            try (ImageInputStream iis = ImageIO.createImageInputStream(sourcePath.toFile())) {
+                Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+                if (!readers.hasNext()) {
+                    logger.warn("Cannot generate image preview: unsupported image format for {}", sourcePath);
+                    return false;
+                }
+                ImageReader reader = readers.next();
+                reader.setInput(iis);
+                try {
+                    int probeWidth = reader.getWidth(0);
+                    int probeHeight = reader.getHeight(0);
+                    if ((long) probeWidth * probeHeight > 100_000_000L) {
+                        logger.warn("Image exceeds max pixels, skipping preview: {}x{}", probeWidth, probeHeight);
+                        return false;
+                    }
+                } finally {
+                    reader.dispose();
+                }
+            } catch (IOException probeException) {
+                logger.warn("Failed to probe image metadata for {}", sourcePath, probeException);
+                return false;
+            }
             BufferedImage sourceImage = ImageIO.read(sourcePath.toFile());
             if (sourceImage == null || sourceImage.getWidth() <= 0 || sourceImage.getHeight() <= 0) {
                 logger.warn("Cannot generate image preview: ImageIO failed to decode source file {} (size={})",
@@ -182,6 +207,9 @@ public class LocalMediaStorageService {
             return Files.exists(previewPath) && Files.size(previewPath) > 0L;
         } catch (IOException exception) {
             logger.warn("Cannot generate image preview: IO error for source {}", sourcePath, exception);
+            return false;
+        } catch (OutOfMemoryError oom) {
+            logger.error("OOM decoding image: {}", sourcePath, oom);
             return false;
         }
     }

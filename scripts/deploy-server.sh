@@ -15,12 +15,13 @@
 #
 # 首次部署额外步骤见 docs/deployment/tencent-cloud-production.md
 # ============================================================
-set -e
+set -euo pipefail
 
 SERVER_HOST="${YINGSHI_SSH_HOST:-yingshi}"
 REMOTE_DIR="${YINGSHI_REMOTE_DIR:-/opt/yingshi}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+HEALTH_CHECK_URL="http://localhost:8080/actuator/health/liveness"
 
 echo "============================================================"
 echo "  YingShi 后端部署"
@@ -62,36 +63,56 @@ echo ""
 echo "[3/4] 重建容器（首次可能需要 3-5 分钟编译）..."
 ssh "$SERVER_HOST" "cd $REMOTE_DIR && docker compose -f docker-compose.prod.yml up -d --build" 2>&1 | tail -20
 
-# ---- 4. 健康检查 ----
+# ---- 4. 健康检查（统一用 /actuator/health/liveness，失败则 exit 1）----
 echo ""
 echo "[4/4] 健康检查..."
 echo "    等待服务启动（20秒）..."
 sleep 20
 
-# 优先用 Docker 健康状态检查（不依赖端口映射）
+HEALTH_CHECK_PASSED=false
 HEALTH_STATUS=$(ssh "$SERVER_HOST" "docker inspect --format='{{.State.Health.Status}}' yingshi-server 2>/dev/null || echo 'no-healthcheck'")
 if [ "$HEALTH_STATUS" = "healthy" ]; then
     echo "    ✅ 服务健康: healthy"
+    HEALTH_CHECK_PASSED=true
 elif [ "$HEALTH_STATUS" = "starting" ]; then
     echo "    ⏳ 服务正在启动，再等 20 秒..."
     sleep 20
     HEALTH_STATUS=$(ssh "$SERVER_HOST" "docker inspect --format='{{.State.Health.Status}}' yingshi-server 2>/dev/null || echo 'unknown'")
     if [ "$HEALTH_STATUS" = "healthy" ]; then
         echo "    ✅ 服务健康: healthy"
-    else
-        echo "    ⚠️  健康检查: $HEALTH_STATUS"
-        echo "    手动检查: ssh $SERVER_HOST 'docker logs yingshi-server --tail 50'"
-    fi
-else
-    # 回退到 curl 检查（兼容无 healthcheck 的旧部署）
-    HEALTH=$(ssh "$SERVER_HOST" "curl -sf http://localhost:8080/actuator/health 2>/dev/null || echo 'FAILED'")
-    if echo "$HEALTH" | grep -q '"status":"UP"'; then
-        echo "    ✅ 服务健康: UP"
-    else
-        echo "    ⚠️  健康检查未通过 ($HEALTH_STATUS)"
-        echo "    手动检查: ssh $SERVER_HOST 'docker logs yingshi-server --tail 50'"
+        HEALTH_CHECK_PASSED=true
     fi
 fi
+
+if [ "$HEALTH_CHECK_PASSED" = "false" ]; then
+    # 回退到 curl 检查 /actuator/health/liveness
+    HEALTH=$(ssh "$SERVER_HOST" "curl -sf $HEALTH_CHECK_URL 2>/dev/null || echo 'FAILED'")
+    if echo "$HEALTH" | grep -q '"status":"UP"'; then
+        echo "    ✅ 服务健康: UP"
+        HEALTH_CHECK_PASSED=true
+    fi
+fi
+
+if [ "$HEALTH_CHECK_PASSED" = "false" ]; then
+    echo "    ❌ 健康检查未通过 ($HEALTH_STATUS)"
+    echo "    手动检查: ssh $SERVER_HOST 'docker logs yingshi-server --tail 50'"
+    exit 1
+fi
+
+# ---- 5. 记录镜像 digest 到 releases/ ----
+echo ""
+echo "记录镜像 digest..."
+IMAGE_DIGEST=$(ssh "$SERVER_HOST" "docker inspect --format='{{index .RepoDigests 0}}' yingshi-server 2>/dev/null || docker inspect --format='{{.Id}}' yingshi-server 2>/dev/null || echo 'unknown'")
+RELEASES_DIR="$PROJECT_DIR/releases"
+mkdir -p "$RELEASES_DIR"
+RELEASE_FILE="$RELEASES_DIR/release-$(date +%Y%m%d-%H%M%S).txt"
+{
+    echo "Release: $(date +%Y-%m-%dT%H:%M:%S%z)"
+    echo "Image Digest: $IMAGE_DIGEST"
+    echo "Git SHA: $(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null || echo 'unknown')"
+    echo "Host: $SERVER_HOST"
+} > "$RELEASE_FILE"
+echo "    Release record: $RELEASE_FILE"
 
 # ---- 清理 ----
 rm -f "$TARBALL"
@@ -101,5 +122,5 @@ echo "============================================================"
 echo "  部署完成！"
 echo "  API 地址: https://yingshi92.xyz:8443/"
 echo "  下载页:   https://yingshi92.xyz:8443/"
-echo "  健康检查: https://yingshi92.xyz:8443/api/health"
+echo "  健康检查: https://yingshi92.xyz:8443/actuator/health/liveness"
 echo "============================================================"

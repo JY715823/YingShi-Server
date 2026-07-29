@@ -77,4 +77,60 @@ public interface TrashItemRepository extends JpaRepository<TrashItemEntity, Stri
     // P1-2 改造: photo 回收站查询 — lifeCategory IS NULL 表示 photo 媒体回收站
     @Query("SELECT t FROM TrashItemEntity t WHERE t.libraryId = :libraryId AND t.state = :state AND t.lifeCategory IS NULL ORDER BY t.deletedAt DESC")
     List<TrashItemEntity> findPhotoTrashByLibraryIdAndState(@Param("libraryId") String libraryId, @Param("state") TrashItemState state);
+
+    // R2-C-1 photo 回收站 keyset 分页 — SQL 层过滤 lifeCategory IS NULL，避免内存过滤。
+    // cursor/cursorId 组成 (deletedAt DESC, id DESC) 的稳定 keyset，初始调用传 cursor=now, cursorId=null。
+    @Query("SELECT t FROM TrashItemEntity t WHERE t.libraryId = :libraryId AND t.state = :state AND t.lifeCategory IS NULL "
+            + "AND (t.deletedAt < :cursor OR (t.deletedAt = :cursor AND t.id < :cursorId)) "
+            + "ORDER BY t.deletedAt DESC, t.id DESC")
+    List<TrashItemEntity> findPhotoTrashBeforeCursor(
+            @Param("libraryId") String libraryId,
+            @Param("state") TrashItemState state,
+            @Param("cursor") Instant cursor,
+            @Param("cursorId") String cursorId,
+            Pageable pageable);
+
+    // R2-C-1 photo 回收站 keyset 分页 + itemType 过滤
+    @Query("SELECT t FROM TrashItemEntity t WHERE t.libraryId = :libraryId AND t.state = :state AND t.lifeCategory IS NULL "
+            + "AND t.itemType = :itemType "
+            + "AND (t.deletedAt < :cursor OR (t.deletedAt = :cursor AND t.id < :cursorId)) "
+            + "ORDER BY t.deletedAt DESC, t.id DESC")
+    List<TrashItemEntity> findPhotoTrashBeforeCursorByItemType(
+            @Param("libraryId") String libraryId,
+            @Param("state") TrashItemState state,
+            @Param("itemType") TrashItemType itemType,
+            @Param("cursor") Instant cursor,
+            @Param("cursorId") String cursorId,
+            Pageable pageable);
+
+    // R2-C-2 photo 回收站真实总数 — SQL 层过滤 lifeCategory IS NULL
+    @Query("SELECT COUNT(t) FROM TrashItemEntity t WHERE t.libraryId = :libraryId AND t.state = :state AND t.lifeCategory IS NULL")
+    long countPhotoTrash(@Param("libraryId") String libraryId, @Param("state") TrashItemState state);
+
+    // R2-C-2 photo 回收站真实总数 + itemType 过滤
+    @Query("SELECT COUNT(t) FROM TrashItemEntity t WHERE t.libraryId = :libraryId AND t.state = :state AND t.lifeCategory IS NULL AND t.itemType = :itemType")
+    long countPhotoTrashByItemType(@Param("libraryId") String libraryId, @Param("state") TrashItemState state, @Param("itemType") TrashItemType itemType);
+
+    // R2-C-5/6 life 回收站 keyset 分页 — lifeCategory IS NOT NULL（所有 life）
+    @Query("SELECT t FROM TrashItemEntity t WHERE t.libraryId = :libraryId AND t.state = :state AND t.lifeCategory IS NOT NULL "
+            + "AND (t.deletedAt < :cursor OR (t.deletedAt = :cursor AND t.id < :cursorId)) "
+            + "ORDER BY t.deletedAt DESC, t.id DESC")
+    List<TrashItemEntity> findLifeTrashBeforeCursor(
+            @Param("libraryId") String libraryId,
+            @Param("state") TrashItemState state,
+            @Param("cursor") Instant cursor,
+            @Param("cursorId") String cursorId,
+            Pageable pageable);
+
+    // R2-C-5/6 life 回收站 keyset 分页 — 按 category
+    @Query("SELECT t FROM TrashItemEntity t WHERE t.libraryId = :libraryId AND t.state = :state AND t.lifeCategory = :lifeCategory "
+            + "AND (t.deletedAt < :cursor OR (t.deletedAt = :cursor AND t.id < :cursorId)) "
+            + "ORDER BY t.deletedAt DESC, t.id DESC")
+    List<TrashItemEntity> findLifeTrashBeforeCursorByCategory(
+            @Param("libraryId") String libraryId,
+            @Param("state") TrashItemState state,
+            @Param("lifeCategory") String lifeCategory,
+            @Param("cursor") Instant cursor,
+            @Param("cursorId") String cursorId,
+            Pageable pageable);
 }

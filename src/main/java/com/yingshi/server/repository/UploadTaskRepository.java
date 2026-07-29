@@ -70,8 +70,8 @@ public interface UploadTaskRepository extends JpaRepository<UploadTaskEntity, St
               and task.uploadedByUserId = :uploadedByUserId
               and task.dismissedAt is null
               and task.updatedAt >= :updatedAfter
-              and (:state is null or task.state = :state)
-              and (:operationType is null or task.operationType = :operationType)
+              and (:state = :state or task.state = :state)
+              and (:operationType = :operationType or task.operationType = :operationType)
             order by task.updatedAt desc, task.id desc
             """)
     java.util.List<UploadTaskEntity> findVisibleHistory(
@@ -82,15 +82,36 @@ public interface UploadTaskRepository extends JpaRepository<UploadTaskEntity, St
             @Param("operationType") String operationType
     );
 
+    // Split: first page without cursor — avoids PostgreSQL "could not determine
+    // data type of parameter" on (:cursor IS NULL OR ...) pattern.
     @Query("""
             select task from UploadTaskEntity task
             where task.libraryId = :libraryId
               and task.uploadedByUserId = :uploadedByUserId
               and task.dismissedAt is null
               and task.updatedAt >= :updatedAfter
-              and (:state is null or task.state = :state)
-              and (:operationType is null or task.operationType = :operationType)
-              and (:cursorUpdatedAt is null or task.updatedAt < :cursorUpdatedAt or (task.updatedAt = :cursorUpdatedAt and task.id < :cursorId))
+              and (:state = :state or task.state = :state)
+              and (:operationType = :operationType or task.operationType = :operationType)
+            order by task.updatedAt desc, task.id desc
+            """)
+    java.util.List<UploadTaskEntity> findVisibleHistoryFirstPage(
+            @Param("libraryId") String libraryId,
+            @Param("uploadedByUserId") String uploadedByUserId,
+            @Param("updatedAfter") Instant updatedAfter,
+            @Param("state") UploadState state,
+            @Param("operationType") String operationType,
+            Pageable pageable
+    );
+
+    @Query("""
+            select task from UploadTaskEntity task
+            where task.libraryId = :libraryId
+              and task.uploadedByUserId = :uploadedByUserId
+              and task.dismissedAt is null
+              and task.updatedAt >= :updatedAfter
+              and (:state = :state or task.state = :state)
+              and (:operationType = :operationType or task.operationType = :operationType)
+              and (task.updatedAt < :cursorUpdatedAt or (task.updatedAt = :cursorUpdatedAt and task.id < :cursorId))
             order by task.updatedAt desc, task.id desc
             """)
     java.util.List<UploadTaskEntity> findVisibleHistoryPage(

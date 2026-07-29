@@ -32,6 +32,42 @@ public interface PostRepository extends JpaRepository<PostEntity, String> {
     @Query("SELECT p FROM PostEntity p WHERE p.libraryId = :libraryId AND p.deletedAt IS NULL ORDER BY p.displayTimeMillis DESC, p.updatedAt DESC")
     List<PostEntity> findByLibraryIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(@Param("libraryId") String libraryId);
 
+    // R2-E-5: keyset pagination for small album list (ORDER BY updatedAt DESC, id DESC)
+    @Query("""
+            SELECT p FROM PostEntity p
+            WHERE p.libraryId = :libraryId
+              AND p.deletedAt IS NULL
+              AND (:cursorUpdatedAt IS NULL
+                   OR p.updatedAt < :cursorUpdatedAt
+                   OR (p.updatedAt = :cursorUpdatedAt AND p.id < :cursorId))
+            ORDER BY p.updatedAt DESC, p.id DESC
+            """)
+    List<PostEntity> findPostPage(
+            @Param("libraryId") String libraryId,
+            @Param("cursorUpdatedAt") Instant cursorUpdatedAt,
+            @Param("cursorId") String cursorId,
+            org.springframework.data.domain.Pageable pageable
+    );
+
+    // R2-E-4: keyset pagination for small albums under an album (ORDER BY updatedAt DESC, id DESC)
+    @Query("""
+            SELECT p FROM PostEntity p
+            WHERE p.libraryId = :libraryId
+              AND p.albumId = :albumId
+              AND p.deletedAt IS NULL
+              AND (:cursorUpdatedAt IS NULL
+                   OR p.updatedAt < :cursorUpdatedAt
+                   OR (p.updatedAt = :cursorUpdatedAt AND p.id < :cursorId))
+            ORDER BY p.updatedAt DESC, p.id DESC
+            """)
+    List<PostEntity> findPostPageByAlbum(
+            @Param("libraryId") String libraryId,
+            @Param("albumId") String albumId,
+            @Param("cursorUpdatedAt") Instant cursorUpdatedAt,
+            @Param("cursorId") String cursorId,
+            org.springframework.data.domain.Pageable pageable
+    );
+
     @Query("SELECT p FROM PostEntity p WHERE p.libraryId = :libraryId AND p.deletedAt IS NULL ORDER BY p.updatedAt DESC")
     List<PostEntity> findByLibraryIdAndDeletedAtIsNullOrderByUpdatedAtDesc(@Param("libraryId") String libraryId);
 

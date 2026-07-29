@@ -83,16 +83,13 @@ public class UploadHistoryService {
         }
 
         PageRequest pageRequest = PageRequest.of(0, pageSize + 1);
-        List<UploadTaskEntity> entities = uploadTaskRepository.findVisibleHistoryPage(
-                currentUser.libraryId(),
-                currentUser.userId(),
-                updatedAfter,
-                state,
-                operationType,
-                cursorUpdatedAt,
-                cursorId,
-                pageRequest
-        );
+        List<UploadTaskEntity> entities = cursorUpdatedAt != null
+                ? uploadTaskRepository.findVisibleHistoryPage(
+                        currentUser.libraryId(), currentUser.userId(), updatedAfter,
+                        state, operationType, cursorUpdatedAt, cursorId, pageRequest)
+                : uploadTaskRepository.findVisibleHistoryFirstPage(
+                        currentUser.libraryId(), currentUser.userId(), updatedAfter,
+                        state, operationType, pageRequest);
         boolean hasMore = entities.size() > pageSize;
         List<UploadTaskEntity> pageItems = hasMore
                 ? entities.subList(0, pageSize)

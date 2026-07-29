@@ -55,6 +55,18 @@ public class LedgerAccountEntity extends LibraryScopedEntity {
     @Column(name = "deleted_at_millis")
     private Long deletedAtMillis;
 
+    @Column(name = "owner_user_id")
+    private String ownerUserId;
+
+    @Column(name = "bank_key", length = 64)
+    private String bankKey;
+
+    @Column(name = "bank_name")
+    private String bankName;
+
+    @Column(name = "card_number_tail", length = 16)
+    private String cardNumberTail;
+
     public String getId() {
         return id;
     }
@@ -166,4 +178,16 @@ public class LedgerAccountEntity extends LibraryScopedEntity {
     public void setDeletedAtMillis(Long deletedAtMillis) {
         this.deletedAtMillis = deletedAtMillis;
     }
+
+    public String getOwnerUserId() { return ownerUserId; }
+    public void setOwnerUserId(String ownerUserId) { this.ownerUserId = ownerUserId; }
+
+    public String getBankKey() { return bankKey; }
+    public void setBankKey(String bankKey) { this.bankKey = bankKey; }
+
+    public String getBankName() { return bankName; }
+    public void setBankName(String bankName) { this.bankName = bankName; }
+
+    public String getCardNumberTail() { return cardNumberTail; }
+    public void setCardNumberTail(String cardNumberTail) { this.cardNumberTail = cardNumberTail; }
 }

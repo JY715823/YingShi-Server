@@ -1,5 +1,7 @@
 package com.yingshi.server.service.notification;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yingshi.server.common.IdGenerator;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.exception.ApiException;
@@ -17,6 +19,8 @@ import com.yingshi.server.domain.TrashItemState;
 import com.yingshi.server.domain.UploadState;
 import com.yingshi.server.domain.UploadTaskEntity;
 import com.yingshi.server.domain.UserEntity;
+import com.yingshi.server.domain.notification.NotificationEventEntity;
+import com.yingshi.server.domain.notification.NotificationReadWaterlineEntity;
 import com.yingshi.server.dto.notification.NotificationDto;
 import com.yingshi.server.dto.notification.NotificationMarkAllReadResponse;
 import com.yingshi.server.dto.notification.NotificationMediaItemDto;
@@ -24,13 +28,19 @@ import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.BowelEventRepository;
 import com.yingshi.server.repository.CommentRepository;
 import com.yingshi.server.repository.MediaRepository;
+import com.yingshi.server.repository.NotificationEventRepository;
 import com.yingshi.server.repository.NotificationReadRepository;
+import com.yingshi.server.repository.NotificationReadWaterlineRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.repository.TrashItemRepository;
 import com.yingshi.server.repository.UploadTaskRepository;
 import com.yingshi.server.repository.UserRepository;
 import com.yingshi.server.domain.PostMediaEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,11 +52,14 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
 public class NotificationService {
+
+    private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 
     private static final int DEFAULT_LIMIT = 50;
     private static final int MAX_LIMIT = 200;
@@ -56,11 +69,14 @@ public class NotificationService {
     private final TrashItemRepository trashItemRepository;
     private final UploadTaskRepository uploadTaskRepository;
     private final NotificationReadRepository notificationReadRepository;
+    private final NotificationReadWaterlineRepository notificationReadWaterlineRepository;
+    private final NotificationEventRepository notificationEventRepository;
     private final UserRepository userRepository;
     private final MediaRepository mediaRepository;
     private final BowelEventRepository bowelEventRepository;
     private final AlbumRepository albumRepository;
     private final PostMediaRepository postMediaRepository;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public NotificationService(
             CommentRepository commentRepository,
@@ -68,6 +84,8 @@ public class NotificationService {
             TrashItemRepository trashItemRepository,
             UploadTaskRepository uploadTaskRepository,
             NotificationReadRepository notificationReadRepository,
+            NotificationReadWaterlineRepository notificationReadWaterlineRepository,
+            NotificationEventRepository notificationEventRepository,
             UserRepository userRepository,
             MediaRepository mediaRepository,
             BowelEventRepository bowelEventRepository,
@@ -79,6 +97,8 @@ public class NotificationService {
         this.trashItemRepository = trashItemRepository;
         this.uploadTaskRepository = uploadTaskRepository;
         this.notificationReadRepository = notificationReadRepository;
+        this.notificationReadWaterlineRepository = notificationReadWaterlineRepository;
+        this.notificationEventRepository = notificationEventRepository;
         this.userRepository = userRepository;
         this.mediaRepository = mediaRepository;
         this.bowelEventRepository = bowelEventRepository;
@@ -86,33 +106,108 @@ public class NotificationService {
         this.postMediaRepository = postMediaRepository;
     }
 
+    /**
+     * R2-A-1: Persist a notification event to the {@code notification_events} table.
+     *
+     * <p>This is the durable backing store for SSE replay (replaces the in-memory
+     * ring buffer that was lost on server restart). Idempotent: if an event with
+     * the same (eventId, libraryId, userId) already exists, the existing record
+     * is kept and no duplicate is inserted.
+     *
+     * <p>Called from SSE send paths (via SseEmitterRegistry) when an event is
+     * pushed to a client, so the same event can be redelivered after reconnect.
+     *
+     * @param libraryId shared library scope
+     * @param userId    recipient user (the partner, not the actor)
+     * @param eventId   stable business event id (e.g. {@code "post:abc"})
+     * @param type      event type (e.g. {@code "content_update"})
+     * @param data      opaque JSON payload (SSE event data)
+     */
+    @Transactional
+    public void recordEvent(String libraryId, String userId, String eventId, String type, String data) {
+        if (libraryId == null || userId == null || eventId == null || eventId.isBlank()) {
+            return;
+        }
+        Optional<NotificationEventEntity> existing = notificationEventRepository
+                .findByEventIdAndLibraryIdAndUserId(eventId, libraryId, userId);
+        if (existing.isPresent()) {
+            return;
+        }
+        NotificationEventEntity entity = new NotificationEventEntity();
+        entity.setLibraryId(libraryId);
+        entity.setUserId(userId);
+        entity.setEventId(eventId);
+        entity.setType(type == null ? "message" : type);
+        entity.setData(data == null ? "{}" : data);
+        notificationEventRepository.save(entity);
+    }
+
+    /**
+     * R2-A: List notifications from the persistent {@code notification_events} table.
+     *
+     * <p>Replaces the previous {@code collectNotificationEvents()} approach that
+     * dynamically rebuilt notifications from 5 business tables (comments/posts/
+     * trashItems/uploadTasks/bowelEvents) on every request. The events table is
+     * populated by {@link com.yingshi.server.service.sse.SseEmitterRegistry#sendToPartners}
+     * and {@link #recordEvent}, so reading from it gives a consistent view of
+     * what was actually pushed.
+     *
+     * <p>Cursor format: {@code createdAtMillis:notificationId} (colon-separated,
+     * compatible with the existing client contract). The {@code notificationId}
+     * is the business {@code event_id} in the events table; it is resolved to
+     * the BIGSERIAL {@code id} for efficient DB-level pagination.
+     *
+     * <p>Read state is determined by the read waterline
+     * ({@code notification_read_waterline}) — events with {@code id <= waterline}
+     * are read — plus per-notification {@code notification_reads} rows for
+     * individual mark-read operations on events newer than the waterline.
+     */
     @Transactional(readOnly = true)
     public List<NotificationDto> listNotifications(AuthenticatedUser currentUser, Integer limit, String cursor) {
-        return materializeNotifications(
-                collectNotificationEvents(currentUser),
-                currentUser.userId(),
-                normalizeLimit(limit),
-                cursor
-        );
+        int normalizedLimit = normalizeLimit(limit);
+        String libraryId = currentUser.libraryId();
+        String userId = currentUser.userId();
+
+        List<NotificationEventEntity> entities = fetchEventsWithCursor(libraryId, cursor, normalizedLimit);
+        if (entities.isEmpty()) {
+            return List.of();
+        }
+
+        ReadStateResolver readState = buildReadStateResolver(userId, libraryId, entities);
+        return entities.stream()
+                .map(entity -> toDtoFromEvent(entity, currentUser, readState))
+                .toList();
     }
 
+    /**
+     * R2-A: Get a single notification by id from the events table.
+     *
+     * <p>{@code notificationId} corresponds to the business {@code event_id}
+     * column (not the BIGSERIAL {@code id}).
+     */
     @Transactional(readOnly = true)
     public NotificationDto getNotification(String notificationId, AuthenticatedUser currentUser) {
-        return materializeNotifications(
-                collectNotificationEvents(currentUser),
-                currentUser.userId(),
-                null,
-                null
-        ).stream()
-                .filter(notification -> notification.notificationId().equals(notificationId))
-                .findFirst()
-                .orElseThrow(() -> new ApiException(
-                        HttpStatus.NOT_FOUND,
-                        ErrorCode.NOT_FOUND,
-                        "Notification was not found."
-                ));
+        List<NotificationEventEntity> matches = notificationEventRepository
+                .findByLibraryIdAndEventId(currentUser.libraryId(), notificationId);
+        if (matches.isEmpty()) {
+            throw new ApiException(
+                    HttpStatus.NOT_FOUND,
+                    ErrorCode.NOT_FOUND,
+                    "Notification was not found."
+            );
+        }
+        NotificationEventEntity entity = matches.get(0);
+        ReadStateResolver readState = buildReadStateResolver(currentUser.userId(), currentUser.libraryId(), List.of(entity));
+        return toDtoFromEvent(entity, currentUser, readState);
     }
 
+    /**
+     * R2-A: Mark a single notification as read.
+     *
+     * <p>Writes a per-notification row to {@code notification_reads} (kept for
+     * backward compatibility and individual mark-read). Does not advance the
+     * waterline — that only happens on mark-all-read.
+     */
     @Transactional
     public NotificationDto markRead(String notificationId, AuthenticatedUser currentUser) {
         NotificationDto notification = getNotification(notificationId, currentUser);
@@ -120,31 +215,250 @@ public class NotificationService {
         return withReadState(notification, true);
     }
 
+    /**
+     * R2-A: Mark all notifications as read for the current user.
+     *
+     * <p>Advances the read waterline to the newest event in the library, so
+     * subsequent {@link #listNotifications} calls treat all events at or below
+     * the waterline as read without per-row lookups. Also writes individual
+     * {@code notification_reads} rows for events newer than the previous
+     * waterline (backward-compat path for clients that still inspect that table).
+     */
     @Transactional
     public NotificationMarkAllReadResponse markAllRead(AuthenticatedUser currentUser) {
-        List<NotificationEvent> events = collectNotificationEvents(currentUser);
-        if (events.isEmpty()) {
+        String libraryId = currentUser.libraryId();
+        String userId = currentUser.userId();
+
+        Long maxEventId = notificationEventRepository.findMaxIdByLibraryId(libraryId);
+        if (maxEventId == null) {
             return new NotificationMarkAllReadResponse(true, 0);
         }
 
-        List<String> notificationIds = events.stream()
-                .map(NotificationEvent::notificationId)
+        Optional<NotificationReadWaterlineEntity> existingWaterline =
+                notificationReadWaterlineRepository.findByUserIdAndLibraryId(userId, libraryId);
+        Long previousWaterlineId = existingWaterline
+                .map(NotificationReadWaterlineEntity::lastReadEventIdAsLong)
+                .orElse(null);
+
+        // Backward-compat: write notification_reads rows for events newer than
+        // the previous waterline so legacy read-state lookups still work.
+        int newlyReadCount = writeReadRecordsForNewEvents(userId, libraryId, previousWaterlineId);
+
+        // Advance the waterline to the newest event.
+        advanceWaterline(userId, libraryId, maxEventId);
+
+        return new NotificationMarkAllReadResponse(true, newlyReadCount);
+    }
+
+    /**
+     * R2-A: Fetch events from the events table with cursor-based pagination.
+     *
+     * <p>Cursor format: {@code createdAtMillis:notificationId}. The
+     * {@code notificationId} is resolved to the event's BIGSERIAL {@code id}
+     * via {@link NotificationEventRepository#findByLibraryIdAndEventId} for an
+     * efficient {@code id < cursor} query. Falls back to timestamp-based
+     * pagination if the cursor event has been purged by retention.
+     */
+    private List<NotificationEventEntity> fetchEventsWithCursor(String libraryId, String cursor, int limit) {
+        Pageable pageable = PageRequest.of(0, limit);
+        if (cursor == null || cursor.isBlank()) {
+            return notificationEventRepository.findByLibraryIdOrderByIdDesc(libraryId, pageable);
+        }
+        // Cursor format: "createdAtMillis:notificationId" (colon-separated, client compat)
+        String[] parts = cursor.split(":", 2);
+        if (parts.length != 2) {
+            return notificationEventRepository.findByLibraryIdOrderByIdDesc(libraryId, pageable);
+        }
+        try {
+            long cursorMillis = Long.parseLong(parts[0]);
+            String cursorEventId = parts[1];
+            // Resolve cursor event_id -> BIGSERIAL id for efficient pagination.
+            List<NotificationEventEntity> cursorEvents =
+                    notificationEventRepository.findByLibraryIdAndEventId(libraryId, cursorEventId);
+            if (!cursorEvents.isEmpty()) {
+                Long cursorPkId = cursorEvents.get(0).getId();
+                return notificationEventRepository.findByLibraryIdAndIdLessThanOrderByIdDesc(libraryId, cursorPkId, pageable);
+            }
+            // Fallback: cursor event was purged by retention — use timestamp.
+            Instant cursorInstant = Instant.ofEpochMilli(cursorMillis);
+            return notificationEventRepository.findByLibraryIdAndCreatedAtBeforeOrderByCreatedAtDescIdDesc(libraryId, cursorInstant, pageable);
+        } catch (NumberFormatException ignored) {
+            return notificationEventRepository.findByLibraryIdOrderByIdDesc(libraryId, pageable);
+        }
+    }
+
+    /**
+     * R2-A: Build a read-state resolver that combines the waterline and the
+     * per-notification {@code notification_reads} table.
+     *
+     * <p>An event is considered read if:
+     * <ol>
+     *   <li>the waterline exists and {@code event.id <= waterline.lastReadEventId}, OR</li>
+     *   <li>the event's business id is in {@code notification_reads} (individual markRead), OR</li>
+     *   <li>the current user is the actor (own actions are implicitly read).</li>
+     * </ol>
+     */
+    private ReadStateResolver buildReadStateResolver(String userId, String libraryId, List<NotificationEventEntity> entities) {
+        Long waterlineId = notificationReadWaterlineRepository
+                .findByUserIdAndLibraryId(userId, libraryId)
+                .map(NotificationReadWaterlineEntity::lastReadEventIdAsLong)
+                .orElse(null);
+
+        // Only need to check notification_reads for events newer than the waterline.
+        List<String> idsToCheck = entities.stream()
+                .filter(e -> waterlineId == null || e.getId() == null || e.getId() > waterlineId)
+                .map(NotificationEventEntity::getEventId)
                 .toList();
-        Set<String> existingReadIds = notificationReadRepository
-                .findByUserIdAndNotificationIdIn(currentUser.userId(), notificationIds)
+        Set<String> individuallyReadIds = idsToCheck.isEmpty()
+                ? Set.of()
+                : notificationReadRepository.findByUserIdAndNotificationIdIn(userId, idsToCheck).stream()
+                        .map(NotificationReadEntity::getNotificationId)
+                        .collect(Collectors.toSet());
+
+        return new ReadStateResolver(waterlineId, individuallyReadIds);
+    }
+
+    /**
+     * R2-A: Map a persistent event entity to a {@link NotificationDto}.
+     *
+     * <p>The {@code data} column is a JSONB string of {@code Map<String, String>}
+     * written by {@code SseEmitterRegistry.persistEvent} / {@code recordEvent}.
+     * Fields not present in the push payload (e.g. mediaItems, targetSummary)
+     * are left null/empty — the events table stores what was pushed, which is
+     * the essential notification content.
+     */
+    private NotificationDto toDtoFromEvent(NotificationEventEntity entity, AuthenticatedUser currentUser, ReadStateResolver readState) {
+        Map<String, Object> data = deserializeEventData(entity.getData());
+        String notificationId = entity.getEventId();
+        String actorUserId = getStr(data, "actorUserId");
+        boolean actorIsCurrentUser = currentUser.userId().equals(actorUserId);
+        boolean isRead = readState.isRead(entity, actorIsCurrentUser);
+        long createdAtMillis = entity.getCreatedAt() != null ? entity.getCreatedAt().toEpochMilli() : 0L;
+        return new NotificationDto(
+                notificationId,
+                getStr(data, "type"),
+                getStr(data, "module"),
+                getStr(data, "category"),
+                getStr(data, "title"),
+                getStr(data, "body"),
+                createdAtMillis,
+                isRead,
+                actorUserId,
+                getStr(data, "actorDisplayName"),
+                null, // actorAvatarUrl not carried in SSE payload
+                actorIsCurrentUser,
+                getStr(data, "groupId"),
+                getStr(data, "operationId"),
+                getInt(data, "groupItemCount"),
+                List.of(), // mediaItems not carried in SSE payload
+                getStr(data, "targetRoute"),
+                getStr(data, "targetSummary"),
+                getStr(data, "targetType"),
+                getStr(data, "smallAlbumId"),
+                getStr(data, "mediaId"),
+                getStr(data, "trashItemId")
+        );
+    }
+
+    /**
+     * R2-A: Deserialize the JSONB {@code data} column into a {@code Map<String, Object>}.
+     * Returns an empty map on failure (never null) so callers can safely use {@link #getStr}.
+     */
+    private Map<String, Object> deserializeEventData(String data) {
+        if (data == null || data.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(data, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("Failed to deserialize notification event data: eventId={}, error={}", data, e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private String getStr(Map<String, Object> data, String key) {
+        Object value = data.get(key);
+        return value == null ? null : value.toString();
+    }
+
+    private Integer getInt(Map<String, Object> data, String key) {
+        Object value = data.get(key);
+        if (value == null) return null;
+        if (value instanceof Number number) return number.intValue();
+        try {
+            return Integer.parseInt(value.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * R2-A: Write {@code notification_reads} rows for events newer than the
+     * previous waterline (backward-compat for legacy read-state lookups).
+     *
+     * @return number of newly written rows
+     */
+    private int writeReadRecordsForNewEvents(String userId, String libraryId, Long previousWaterlineId) {
+        // Fetch events newer than the previous waterline (or all if no waterline yet).
+        List<NotificationEventEntity> newEvents;
+        if (previousWaterlineId == null) {
+            // No previous waterline: cap at MAX_LIMIT most recent events to bound work.
+            newEvents = notificationEventRepository.findByLibraryIdOrderByIdDesc(
+                    libraryId, PageRequest.of(0, MAX_LIMIT));
+        } else {
+            newEvents = notificationEventRepository.findByLibraryIdAndIdGreaterThanOrderByIdAsc(
+                    libraryId, previousWaterlineId);
+        }
+        if (newEvents.isEmpty()) {
+            return 0;
+        }
+        List<String> notificationIds = newEvents.stream()
+                .map(NotificationEventEntity::getEventId)
+                .toList();
+        Set<String> alreadyRead = notificationReadRepository
+                .findByUserIdAndNotificationIdIn(userId, notificationIds)
                 .stream()
                 .map(NotificationReadEntity::getNotificationId)
                 .collect(Collectors.toSet());
-
         Instant now = Instant.now();
         List<NotificationReadEntity> newReads = notificationIds.stream()
-                .filter(notificationId -> !existingReadIds.contains(notificationId))
-                .map(notificationId -> buildReadEntity(currentUser.userId(), notificationId, now))
+                .filter(id -> !alreadyRead.contains(id))
+                .map(id -> buildReadEntity(userId, id, now))
                 .toList();
         if (!newReads.isEmpty()) {
             notificationReadRepository.saveAll(newReads);
         }
-        return new NotificationMarkAllReadResponse(true, newReads.size());
+        return newReads.size();
+    }
+
+    /**
+     * R2-A: Advance the read waterline to {@code maxEventId} (upsert).
+     */
+    private void advanceWaterline(String userId, String libraryId, Long maxEventId) {
+        String maxEventIdStr = String.valueOf(maxEventId);
+        Instant now = Instant.now();
+        int updated = notificationReadWaterlineRepository.updateWaterline(userId, libraryId, maxEventIdStr, now);
+        if (updated == 0) {
+            NotificationReadWaterlineEntity entity = new NotificationReadWaterlineEntity();
+            entity.setUserId(userId);
+            entity.setLibraryId(libraryId);
+            entity.setLastReadEventId(maxEventIdStr);
+            entity.setLastReadAt(now);
+            notificationReadWaterlineRepository.save(entity);
+        }
+    }
+
+    /**
+     * R2-A: Resolves the read state of an event using the waterline + per-row table.
+     */
+    private record ReadStateResolver(Long waterlineId, Set<String> individuallyReadIds) {
+        boolean isRead(NotificationEventEntity entity, boolean actorIsCurrentUser) {
+            if (actorIsCurrentUser) return true;
+            if (waterlineId != null && entity.getId() != null && entity.getId() <= waterlineId) {
+                return true;
+            }
+            return individuallyReadIds.contains(entity.getEventId());
+        }
     }
 
     private List<NotificationEvent> collectNotificationEvents(AuthenticatedUser currentUser) {
@@ -496,7 +810,7 @@ public class NotificationService {
         }
         ActorDescriptor actor = actorDescriptor(actorUserId, context.usersById().get(actorUserId), null);
         return new NotificationEvent(
-                "post:" + post.getId() + ":" + updatedAtMillis,
+                "post:" + post.getId(),
                 "content_update",
                 "photos",
                 "content_update",
@@ -527,11 +841,13 @@ public class NotificationService {
             case IN_TRASH -> "「" + itemName + "」已移入回收站";
             case PENDING_CLEANUP -> "「" + itemName + "」等待彻底清理";
             case RESTORED -> "「" + itemName + "」已从回收站恢复";
+            case PURGING -> "「" + itemName + "」正在彻底清理";
         };
         String body = switch (item.getState()) {
             case IN_TRASH -> itemName + " 已进入回收站。";
             case PENDING_CLEANUP -> itemName + " 正在等待永久清理。";
             case RESTORED -> itemName + " 已恢复到原位置。";
+            case PURGING -> itemName + " 正在彻底清理。";
         };
         ActorDescriptor actor = actorDescriptor(item.getActorUserId(), context.usersById().get(item.getActorUserId()), null);
         return new NotificationEvent(
@@ -866,7 +1182,7 @@ public class NotificationService {
         String latestMediaId = findLatestMediaIdForPost(post.getLibraryId(), post.getId());
 
         return new NotificationEvent(
-                "life_media:" + post.getId() + ":" + createdAtMillis,
+                "life_media:" + post.getId(),
                 "content_update",
                 "life",
                 "trace",

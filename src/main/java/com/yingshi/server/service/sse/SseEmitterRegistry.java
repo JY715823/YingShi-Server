@@ -1,17 +1,22 @@
 package com.yingshi.server.service.sse;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.yingshi.server.domain.notification.NotificationEventEntity;
+import com.yingshi.server.repository.NotificationEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 管理 libraryId -> SseEmitter 连接的注册表。
@@ -21,26 +26,34 @@ import java.util.concurrent.atomic.AtomicLong;
  * - 使用 ConcurrentHashMap 保证线程安全
  * - 提供 sendToPartners() 方法：向 library 内所有非 actor 连接推送事件
  * - 定时发送心跳（:heartbeat 注释行），客户端据此判断连接存活性
- * - R3-DIST-003: 事件ID + ring buffer for Last-Event-ID replay
+ *
+ * R2-A-1: 持久化事件表替代纯内存 ring buffer
+ * - SSE event id 现在使用 notification_events 表的 BIGSERIAL id（持久化、单调递增）
+ * - 重启后客户端仍可通过 Last-Event-ID 补拉丢失事件（之前 AtomicLong 重启后重置）
+ * - 内存 ring buffer 仍保留作为短期缓存（避免每次 replay 都打 DB）
  */
 @Component
 public class SseEmitterRegistry {
     private static final Logger log = LoggerFactory.getLogger(SseEmitterRegistry.class);
 
-    /** R3-DIST-003: Monotonic event counter for event IDs. */
-    private final AtomicLong eventCounter = new AtomicLong(0);
-
-    /** R3-DIST-003: Ring buffer of recent events for Last-Event-ID replay (max 200 events). */
+    /** R3-DIST-003: Ring buffer of recent events for fast in-memory replay (max 200 events). */
     private static final int EVENT_BUFFER_SIZE = 200;
     private final ConcurrentLinkedDeque<BufferedEvent> eventBuffer = new ConcurrentLinkedDeque<>();
 
     private record Connection(String connectionId, String userId, SseEmitter emitter) {}
 
-    /** R3-DIST-003: Buffered event for Last-Event-ID replay. */
+    /** R3-DIST-003: Buffered event for fast in-memory Last-Event-ID replay. */
     private record BufferedEvent(long eventId, String libraryId, Map<String, String> data) {}
 
     // libraryId -> (connectionId -> Connection)
     private final Map<String, Map<String, Connection>> connectionsByLibrary = new ConcurrentHashMap<>();
+
+    private final NotificationEventRepository notificationEventRepository;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    public SseEmitterRegistry(NotificationEventRepository notificationEventRepository) {
+        this.notificationEventRepository = notificationEventRepository;
+    }
 
     /**
      * 注册一个新的 SSE 连接。
@@ -90,7 +103,11 @@ public class SseEmitterRegistry {
      * 向 library 内所有非 actor 的连接推送事件数据。
      * 与 FCM targetTokensFor() 的 partner-only 设计保持一致。
      * 无论 FCM token 是否可用，SSE 都会尝试推送（SSE 不依赖 FCM）。
+     *
+     * R2-A-1: 同时将事件持久化到 notification_events 表，使用其 BIGSERIAL id
+     * 作为 SSE event id（替代之前的 AtomicLong 自增计数器，server 重启后仍可补拉）。
      */
+    @Transactional
     public void sendToPartners(String libraryId, String actorUserId, Map<String, String> data) {
         Map<String, Connection> libraryConnections = connectionsByLibrary.get(libraryId);
         if (libraryConnections == null || libraryConnections.isEmpty()) {
@@ -98,8 +115,11 @@ public class SseEmitterRegistry {
             return;
         }
 
-        // R3-DIST-003: Assign monotonic event ID and buffer for replay
-        long eventId = eventCounter.incrementAndGet();
+        // R2-A-1: Persist event to notification_events table for replay after restart.
+        // user_id stores the actorUserId (audit purpose); replay is library-scoped.
+        long eventId = persistEvent(libraryId, actorUserId, data);
+
+        // Still cache in memory ring buffer for fast in-memory replay path.
         bufferEvent(new BufferedEvent(eventId, libraryId, data));
 
         int sent = 0;
@@ -130,7 +150,43 @@ public class SseEmitterRegistry {
     }
 
     /**
-     * R3-DIST-003: Buffer an event for Last-Event-ID replay.
+     * R2-A-1: Persist event to notification_events table.
+     * Returns the database BIGSERIAL id used as the SSE event id.
+     * Idempotent: if (eventId, libraryId, userId) already exists, reuses that id.
+     */
+    private long persistEvent(String libraryId, String userId, Map<String, String> data) {
+        String businessEventId = data != null ? data.get("notificationId") : null;
+        String type = data != null ? data.get("type") : null;
+        if (businessEventId == null || businessEventId.isBlank()) {
+            // Fall back to a synthetic id if data has no notificationId field
+            businessEventId = "sse:" + libraryId + ":" + System.currentTimeMillis();
+        }
+        String jsonData;
+        try {
+            jsonData = objectMapper.writeValueAsString(data == null ? Map.of() : data);
+        } catch (Exception e) {
+            log.warn("Failed to serialize SSE data for persistence: {}", e.getMessage());
+            jsonData = "{}";
+        }
+        // Idempotent: reuse existing record if present
+        NotificationEventEntity existing = notificationEventRepository
+                .findByEventIdAndLibraryIdAndUserId(businessEventId, libraryId, userId)
+                .orElse(null);
+        if (existing != null) {
+            return existing.getId();
+        }
+        NotificationEventEntity entity = new NotificationEventEntity();
+        entity.setLibraryId(libraryId);
+        entity.setUserId(userId);
+        entity.setEventId(businessEventId);
+        entity.setType(type == null ? "message" : type);
+        entity.setData(jsonData);
+        NotificationEventEntity saved = notificationEventRepository.save(entity);
+        return saved.getId();
+    }
+
+    /**
+     * R3-DIST-003: Buffer an event for fast in-memory Last-Event-ID replay.
      * Maintains a ring buffer of EVENT_BUFFER_SIZE most recent events.
      */
     private void bufferEvent(BufferedEvent event) {
@@ -141,29 +197,84 @@ public class SseEmitterRegistry {
     }
 
     /**
-     * R3-DIST-003: Replay missed events to a newly connected client.
-     * Sends all buffered events with eventId > lastEventId for the given library.
+     * R2-A-1: Replay missed events to a newly connected client.
+     *
+     * <p>Query strategy:
+     * <ol>
+     *   <li>Try the in-memory ring buffer first (fast path, covers transient disconnects)</li>
+     *   <li>Always fall back to the persistent event table (covers server restart scenarios
+     *       where the ring buffer was lost, or when lastEventId is older than the buffer)</li>
+     * </ol>
+     *
+     * @param libraryId   library scope
+     * @param lastEventId last SSE event id the client received (BIGSERIAL id from notification_events)
+     * @param emitter     target SSE emitter to send replayed events to
      */
     public void replayEvents(String libraryId, long lastEventId, SseEmitter emitter) {
         int replayed = 0;
+
+        // Fast path: in-memory ring buffer (covers most reconnect cases)
         for (BufferedEvent event : eventBuffer) {
             if (event.eventId() > lastEventId && libraryId.equals(event.libraryId())) {
-                try {
-                    emitter.send(
-                        SseEmitter.event()
-                            .id(String.valueOf(event.eventId()))
-                            .name("message")
-                            .data(event.data(), MediaType.APPLICATION_JSON)
-                    );
+                if (sendReplay(emitter, event.eventId(), event.data(), libraryId)) {
                     replayed++;
-                } catch (IOException | IllegalStateException ex) {
-                    log.warn("SSE replay failed: libraryId={}, eventId={}", libraryId, event.eventId());
+                } else {
                     break;
                 }
             }
         }
+
+        // R2-A-1: Persistent path — query event table for any events with id > lastEventId
+        // that are NOT in the ring buffer (e.g. server restart, or older than buffer window).
+        // This is what makes replay survive server restarts.
+        if (lastEventId > 0) {
+            try {
+                List<NotificationEventEntity> missed = notificationEventRepository
+                        .findByLibraryIdAndIdGreaterThanOrderByIdAsc(libraryId, lastEventId);
+                for (NotificationEventEntity entity : missed) {
+                    // Skip ones already replayed from ring buffer
+                    if (entity.getId() <= lastEventId) continue;
+                    Map<String, String> data = deserializeData(entity.getData());
+                    if (sendReplay(emitter, entity.getId(), data, libraryId)) {
+                        replayed++;
+                    } else {
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("SSE replay: failed to query event table: libraryId={}, lastEventId={}, error={}",
+                        libraryId, lastEventId, e.getMessage());
+            }
+        }
+
         if (replayed > 0) {
             log.info("SSE replay: libraryId={}, lastEventId={}, replayed={}", libraryId, lastEventId, replayed);
+        }
+    }
+
+    private boolean sendReplay(SseEmitter emitter, long eventId, Map<String, String> data, String libraryId) {
+        try {
+            emitter.send(
+                SseEmitter.event()
+                    .id(String.valueOf(eventId))
+                    .name("message")
+                    .data(data, MediaType.APPLICATION_JSON)
+            );
+            return true;
+        } catch (IOException | IllegalStateException ex) {
+            log.warn("SSE replay failed: libraryId={}, eventId={}", libraryId, eventId);
+            return false;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, String> deserializeData(String json) {
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, String>>() {});
+        } catch (Exception e) {
+            log.warn("Failed to deserialize SSE event data: {}", e.getMessage());
+            return Map.of();
         }
     }
 

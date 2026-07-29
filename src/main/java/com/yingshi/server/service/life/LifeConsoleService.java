@@ -6,6 +6,7 @@ import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.domain.BowelEventEntity;
 import com.yingshi.server.domain.MediaEntity;
+import com.yingshi.server.domain.SharedLibraryEntity;
 import com.yingshi.server.domain.SharedLibraryMemberEntity;
 import com.yingshi.server.domain.UserEntity;
 import com.yingshi.server.dto.content.MediaDto;
@@ -25,6 +26,7 @@ import com.yingshi.server.mapper.ContentMapper;
 import com.yingshi.server.repository.BowelEventRepository;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.SharedLibraryMemberRepository;
+import com.yingshi.server.repository.SharedLibraryRepository;
 import com.yingshi.server.repository.UserRepository;
 import com.yingshi.server.service.geocoding.GeocodingService;
 import com.yingshi.server.service.push.PushNotificationService;
@@ -65,6 +67,8 @@ public class LifeConsoleService {
     private final BowelEventRepository bowelEventRepository;
     private final UserRepository userRepository;
     private final SharedLibraryMemberRepository sharedLibraryMemberRepository;
+    // R2-F-1/2: 注入 SharedLibraryRepository 用于读取 library 固定 zoneId
+    private final SharedLibraryRepository sharedLibraryRepository;
     private final ContentMapper contentMapper;
     private final TrashService trashService;
     private final PushNotificationService pushNotificationService;
@@ -75,6 +79,7 @@ public class LifeConsoleService {
             BowelEventRepository bowelEventRepository,
             UserRepository userRepository,
             SharedLibraryMemberRepository sharedLibraryMemberRepository,
+            SharedLibraryRepository sharedLibraryRepository,
             ContentMapper contentMapper,
             TrashService trashService,
             PushNotificationService pushNotificationService,
@@ -84,6 +89,7 @@ public class LifeConsoleService {
         this.bowelEventRepository = bowelEventRepository;
         this.userRepository = userRepository;
         this.sharedLibraryMemberRepository = sharedLibraryMemberRepository;
+        this.sharedLibraryRepository = sharedLibraryRepository;
         this.contentMapper = contentMapper;
         this.trashService = trashService;
         this.pushNotificationService = pushNotificationService;
@@ -92,7 +98,8 @@ public class LifeConsoleService {
 
     @Transactional(readOnly = true)
     public LifeConsoleTodayResponse getToday(String date, String zoneId, AuthenticatedUser currentUser) {
-        ZoneId resolvedZone = parseZoneId(zoneId);
+        // R2-F-1/2: 不再信任客户端 zoneId，统一使用 library zoneId
+        ZoneId resolvedZone = resolveLibraryZoneId(currentUser, zoneId);
         LocalDate resolvedDate = parseDate(date, resolvedZone);
         DateRange dateRange = dateRange(resolvedDate, resolvedZone);
         LifeUsers users = resolveLifeUsers(currentUser);
@@ -102,7 +109,8 @@ public class LifeConsoleService {
 
     @Transactional(readOnly = true)
     public LifeConsoleHistoryResponse getHistory(String zoneId, Integer limitDays, AuthenticatedUser currentUser) {
-        ZoneId resolvedZone = parseZoneId(zoneId);
+        // R2-F-1/2: 不再信任客户端 zoneId，统一使用 library zoneId
+        ZoneId resolvedZone = resolveLibraryZoneId(currentUser, zoneId);
         int safeLimitDays = Math.max(7, Math.min(limitDays == null ? 60 : limitDays, 365));
         LifeUsers users = resolveLifeUsers(currentUser);
 
@@ -130,7 +138,8 @@ public class LifeConsoleService {
             throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.MEDIA_NOT_FOUND, "One or more mediaIds do not exist in the shared library.");
         }
 
-        ZoneId zone = parseZoneId(zoneId);
+        // R2-F-1/2: 不再信任客户端 zoneId，统一使用 library zoneId
+        ZoneId zone = resolveLibraryZoneId(currentUser, zoneId);
         LocalDate today = LocalDate.now(zone);
 
         // P1-1 改造: life 媒体不再放进相册/小相册，直接在 MediaEntity 上设置 domain + lifeCategory.
@@ -218,7 +227,8 @@ public class LifeConsoleService {
         bowelEventRepository.save(event);
         notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "bowel_added");
 
-        ZoneId zone = parseZoneId(zoneId);
+        // R2-F-1/2: 不再信任客户端 zoneId，统一使用 library zoneId
+        ZoneId zone = resolveLibraryZoneId(currentUser, zoneId);
         LocalDate today = LocalDate.now(zone);
         LifeUsers users = resolveLifeUsers(currentUser);
         return new LifeConsoleBowelMutationResponse(
@@ -229,7 +239,8 @@ public class LifeConsoleService {
 
     @Transactional
     public LifeConsoleBowelMutationResponse deleteLatestBowelEvent(String zoneId, AuthenticatedUser currentUser) {
-        ZoneId zone = parseZoneId(zoneId);
+        // R2-F-1/2: 不再信任客户端 zoneId，统一使用 library zoneId
+        ZoneId zone = resolveLibraryZoneId(currentUser, zoneId);
         LocalDate today = LocalDate.now(zone);
         DateRange range = dateRange(today, zone);
         BowelEventEntity event = bowelEventRepository
@@ -268,6 +279,10 @@ public class LifeConsoleService {
         Double lat = request.latitude();
         Double lng = request.longitude();
         String label = request.locationLabel();
+        // R2-F-5/9: 记录坐标元数据用于诊断（坐标已脱敏）
+        log.info("updateMediaLocation: mediaId={} lat={} lng={} label={} capturedAt={} accuracy={} provider={} coordSystem={}",
+                mediaId, maskCoord(lat), maskCoord(lng), label,
+                request.capturedAt(), request.accuracy(), request.provider(), request.coordSystem());
         if (label == null || label.isBlank()) {
             label = geocodingService.reverseGeocode(lat, lng);
         }
@@ -299,6 +314,10 @@ public class LifeConsoleService {
         Double lat = request.latitude();
         Double lng = request.longitude();
         String label = request.locationLabel();
+        // R2-F-5/9: 记录坐标元数据用于诊断（坐标已脱敏）
+        log.info("updateBowelEventLocation: eventId={} lat={} lng={} label={} capturedAt={} accuracy={} provider={} coordSystem={}",
+                eventId, maskCoord(lat), maskCoord(lng), label,
+                request.capturedAt(), request.accuracy(), request.provider(), request.coordSystem());
         if (label == null || label.isBlank()) {
             label = geocodingService.reverseGeocode(lat, lng);
         }
@@ -308,7 +327,8 @@ public class LifeConsoleService {
         bowelEventRepository.save(event);
         // 位置更新不触发推送通知（同 updateMediaLocation 的理由）
         // notifyLifeConsoleChanged(currentUser.libraryId(), currentUser.userId(), "bowel_location_updated");
-        ZoneId zone = parseZoneId(null);
+        // R2-F-1/2: 不再信任客户端 zoneId，统一使用 library zoneId
+        ZoneId zone = resolveLibraryZoneId(currentUser);
         LocalDate today = LocalDate.now(zone);
         LifeUsers users = resolveLifeUsers(currentUser);
         return new LifeConsoleBowelMutationResponse(
@@ -704,6 +724,54 @@ public class LifeConsoleService {
         } catch (DateTimeException exception) {
             throw new ApiException(HttpStatus.BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "zoneId is invalid.");
         }
+    }
+
+    /**
+     * R2-F-9: 坐标脱敏工具方法。日志中打印坐标时必须使用此方法。
+     * 保留 2 位小数，精度约 1km，足以识别大致区域但无法定位具体位置。
+     * 注意：logback-spring.xml 的 MaskingConverter 已对 `lat=X,lng=Y` 模式做兜底脱敏，
+     * 此方法提供应用层的精确脱敏（例如分开打印 lat/lng 时）。
+     */
+    private String maskCoord(Double coord) {
+        if (coord == null) {
+            return "null";
+        }
+        return String.format(Locale.ROOT, "%.2f", coord);
+    }
+
+    /**
+     * R2-F-1/2: 从 shared library 读取固定 zoneId，不再信任客户端 zoneId.
+     * 双机时区不同会得到不同"今天"，library 绑定固定 zoneId 解决此问题。
+     */
+    private ZoneId resolveLibraryZoneId(AuthenticatedUser currentUser) {
+        SharedLibraryEntity library = sharedLibraryRepository.findById(currentUser.libraryId())
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.NOT_FOUND, "Shared library not found."));
+        String libraryZoneId = library.getZoneId();
+        if (libraryZoneId == null || libraryZoneId.isBlank()) {
+            // 防御性兜底（V46 迁移已回填，但万一 NULL）
+            libraryZoneId = DEFAULT_ZONE_ID;
+        }
+        try {
+            return ZoneId.of(libraryZoneId.trim());
+        } catch (DateTimeException exception) {
+            log.warn("Library zoneId is invalid, fallback to default. libraryId={} zoneId={}", currentUser.libraryId(), libraryZoneId);
+            return ZoneId.of(DEFAULT_ZONE_ID);
+        }
+    }
+
+    /**
+     * R2-F-1/2: 兼容旧客户端 zoneId 参数，但忽略并记录日志（用于兼容性指标）.
+     * 双机时区不同会得到不同"今天"，统一改用 library zoneId。
+     */
+    private ZoneId resolveLibraryZoneId(AuthenticatedUser currentUser, String clientZoneId) {
+        ZoneId libraryZone = resolveLibraryZoneId(currentUser);
+        if (clientZoneId != null && !clientZoneId.isBlank()) {
+            String trimmed = clientZoneId.trim();
+            if (!trimmed.equals(libraryZone.getId())) {
+                log.warn("Client zoneId ignored, using library zoneId. libraryId={}", currentUser.libraryId());
+            }
+        }
+        return libraryZone;
     }
 
     private LocalDate parseDate(String rawDate, ZoneId zone) {

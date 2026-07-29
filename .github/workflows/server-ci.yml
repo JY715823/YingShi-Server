@@ -14,21 +14,8 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: yingshi-test
-          POSTGRES_USER: yingshi
-          POSTGRES_PASSWORD: yingshi_test_password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # R3-F-2: 移除 service container，切换到 Testcontainers 路径
+    # 集成测试通过 AbstractPostgresIntegrationTest 自带的 PostgreSQLContainer 启动 PG
 
     steps:
       - name: Checkout
@@ -43,10 +30,9 @@ jobs:
 
       - name: Build and test
         env:
-          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/yingshi-test
-          SPRING_DATASOURCE_USERNAME: yingshi
-          SPRING_DATASOURCE_PASSWORD: yingshi_test_password
           SPRING_PROFILES_ACTIVE: test
+          # R3-F-2: 显式启用 Testcontainers Ryuk 容器清理
+          TESTCONTAINERS_RYUK_DISABLED: "false"
         run: ./mvnw -B verify
 
       - name: Upload test results
@@ -97,6 +83,230 @@ jobs:
           sleep 30
           curl -sf http://localhost:8080/api/health || exit 1
 
+      - name: Trivy vulnerability scan
+        # R3-F-2: 扫描失败不阻断构建（exit-code 0），但记录报告
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: yingshi-server:test
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          exit-code: '0'
+
+      - name: Record image digest
+        id: image_digest
+        run: |
+          DIGEST=$(docker inspect --format='{{.Id}}' yingshi-server:test)
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          echo "Image digest: $DIGEST"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Push to GHCR
+        run: |
+          docker tag yingshi-server:test ghcr.io/yingshi/yingshi-server:latest
+          docker tag yingshi-server:test ghcr.io/yingshi/yingshi-server:sha-${{ github.sha }}
+          docker push ghcr.io/yingshi/yingshi-server:latest
+          docker push ghcr.io/yingshi/yingshi-server:sha-${{ github.sha }}
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-results.sarif
+          retention-days: 14
+
       - name: Cleanup
         if: always()
         run: docker rm -f yingshi-test || true
+
+  migration-test:
+    name: Migration Tests (Historical Dirty Data)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build-and-test
+    # R3-F-2: 仅在 main 分支 push 或 PR 合并时触发
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Run V24 orphan data migration test
+        # V24OrphanDataMigrationTest 使用真实 PostgreSQL 16 容器，
+        # 通过 Flyway target 版本停在 V23 注入孤儿样本数据后应用 V24，验证 FK 约束行为
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: "false"
+        run: ./mvnw -B test -Dtest=V24OrphanDataMigrationTest
+
+      - name: Run V1→current full migration chain
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: "false"
+        run: ./mvnw -B test -Dtest="*MigrationTest" -DfailIfNoTests=false
+
+      - name: Upload migration test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-test-results
+          path: target/surefire-reports/
+          retention-days: 7
+
+  dependency-scan:
+    name: OWASP Dependency-Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Run OWASP Dependency-Check
+        # R3-F-2: CVSS >= 7 时构建失败
+        run: ./mvnw -B org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=7
+
+      - name: Upload dependency-check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: target/dependency-check-report.html
+          retention-days: 14
+
+  secret-scan:
+    name: Secret Scan (Gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docs-check:
+    name: Docs Link & Requirement ID Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check docs links and requirement IDs
+        run: |
+          set -e
+          echo "=== Docs Link & Requirement ID Check ==="
+          DOCS_DIR="docs/refine3"
+          if [ ! -d "$DOCS_DIR" ]; then
+            echo "docs/refine3/ not found, falling back to docs/"
+            DOCS_DIR="docs"
+          fi
+          if [ ! -d "$DOCS_DIR" ]; then
+            echo "No docs directory found, skipping."
+            exit 0
+          fi
+
+          # 1. 校验 Markdown 本地 .md 链接目标存在
+          BROKEN_LINKS=0
+          while IFS= read -r md_file; do
+            dir=$(dirname "$md_file")
+            while IFS= read -r link; do
+              case "$link" in http*|/*|\#*) continue;; esac
+              target="$dir/$link"
+              if [ ! -f "$target" ]; then
+                echo "ERROR: broken link in $md_file -> $link"
+                BROKEN_LINKS=$((BROKEN_LINKS + 1))
+              fi
+            done < <(grep -oP '\]\(\K[^)]+\.md' "$md_file" 2>/dev/null || true)
+          done < <(find "$DOCS_DIR" -name "*.md" -type f)
+
+          # 2. 需求 ID 引用一致性（R3-* ID 在标题中定义 vs 正文引用）
+          echo "Checking R3-* requirement ID references..."
+          DEFINED=$(grep -rhoP '##\s+\K(R3-[A-Z]+-[A-Z0-9]+)' "$DOCS_DIR" 2>/dev/null | sort -u || true)
+          UNDEFINED=0
+          if [ -n "$DEFINED" ]; then
+            while IFS= read -r ref; do
+              if ! echo "$DEFINED" | grep -qxF "$ref"; then
+                echo "WARN: requirement ID referenced but not defined as heading: $ref"
+                UNDEFINED=$((UNDEFINED + 1))
+              fi
+            done < <(grep -rhoP '\bR3-[A-Z]+-[A-Z0-9]+\b' "$DOCS_DIR" 2>/dev/null | sort -u || true)
+          fi
+
+          echo "Broken links: $BROKEN_LINKS"
+          echo "Undefined requirement IDs: $UNDEFINED"
+          if [ $BROKEN_LINKS -gt 0 ]; then
+            echo "::error::Found $BROKEN_LINKS broken markdown links"
+            exit 1
+          fi
+          echo "Docs check passed."
+
+  restore-drill:
+    name: Restore Drill (Weekly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # R3-F-2: 仅在定时调度时触发
+    if: github.event_name == 'schedule'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Run restore drill on production server
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          set +e
+          # 获取服务器上最新备份文件
+          LATEST_BACKUP=$(ssh ${SSH_USER}@${SSH_HOST} "ls -t /opt/backups/yingshi-backup-*.enc 2>/dev/null | head -1")
+          if [ -z "$LATEST_BACKUP" ]; then
+            echo "No backup found on server, skipping drill."
+            echo "RPO/RTO: skipped (no backup)" > drill-output.log
+            exit 0
+          fi
+          echo "Latest backup: $LATEST_BACKUP"
+          # 上传演练脚本到服务器并执行（服务器具备 Docker 与备份文件）
+          scp scripts/drill-restore.sh ${SSH_USER}@${SSH_HOST}:/tmp/drill-restore.sh
+          ssh ${SSH_USER}@${SSH_HOST} "chmod +x /tmp/drill-restore.sh && bash /tmp/drill-restore.sh '$LATEST_BACKUP' 2>&1" | tee drill-output.log
+
+      - name: Upload RPO/RTO report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-drill-report
+          path: drill-output.log
+          retention-days: 30
+          if-no-files-found: warn

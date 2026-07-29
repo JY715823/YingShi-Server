@@ -114,15 +114,16 @@ public class GlobalExceptionHandler {
             org.springframework.dao.DataIntegrityViolationException exception,
             HttpServletRequest request
     ) {
-        String rootMsg = exception.getMostSpecificCause() != null
-                ? exception.getMostSpecificCause().getMessage()
-                : exception.getMessage();
-        log.warn("Data integrity violation for {} {}: {}", request.getMethod(), request.getRequestURI(), rootMsg, exception);
+        // R0-H: 不向客户端泄露 DB root cause（表名/列名/约束名等会暴露 schema 细节）
+        // root cause 仅记录到服务端日志，客户端只收到稳定错误码 + requestId
+        String requestId = (String) request.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
+        log.warn("Data integrity violation [requestId={}] for {} {}: {}",
+                requestId, request.getMethod(), request.getRequestURI(), exception.getMessage(), exception);
         return buildErrorResponse(
                 request,
                 HttpStatus.CONFLICT,
                 ErrorCode.VALIDATION_ERROR,
-                "Data integrity violation: " + rootMsg,
+                "Data conflict. Please retry or contact support with requestId: " + requestId,
                 null
         );
     }
@@ -132,16 +133,12 @@ public class GlobalExceptionHandler {
             org.springframework.jdbc.BadSqlGrammarException exception,
             HttpServletRequest request
     ) {
-        // 常见原因：H2 ddl-auto=update 未追上实体变更（缺列/列类型不匹配），或 Flyway 迁移未应用
-        String rootMsg = exception.getMostSpecificCause() != null
-                ? exception.getMostSpecificCause().getMessage()
-                : exception.getMessage();
-        log.error("Bad SQL grammar for {} {}: {}", request.getMethod(), request.getRequestURI(), rootMsg, exception);
+        log.error("Bad SQL grammar for {} {}", request.getMethod(), request.getRequestURI(), exception);
         return buildErrorResponse(
                 request,
                 HttpStatus.INTERNAL_SERVER_ERROR,
                 ErrorCode.SERVER_ERROR,
-                "Database schema mismatch: " + exception.getClass().getSimpleName() + " - " + rootMsg,
+                "Internal server error.",
                 null
         );
     }
@@ -156,21 +153,22 @@ public class GlobalExceptionHandler {
         while (root.getCause() != null && root.getCause() != root) {
             root = root.getCause();
         }
-        String rootMsg = root.getMessage();
-        log.error("Persistence error for {} {}: {}", request.getMethod(), request.getRequestURI(), rootMsg, exception);
+        log.error("Persistence error for {} {}", request.getMethod(), request.getRequestURI(), exception);
         // 如果根因是 DataIntegrityViolation，返回 409
         HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
         ErrorCode code = ErrorCode.SERVER_ERROR;
+        String message = "Internal server error.";
         if (root instanceof org.springframework.dao.DataIntegrityViolationException
                 || root instanceof org.hibernate.exception.ConstraintViolationException) {
             status = HttpStatus.CONFLICT;
             code = ErrorCode.VALIDATION_ERROR;
+            message = "Data integrity conflict.";
         }
         return buildErrorResponse(
                 request,
                 status,
                 code,
-                exception.getClass().getSimpleName() + ": " + rootMsg,
+                message,
                 null
         );
     }
@@ -189,26 +187,25 @@ public class GlobalExceptionHandler {
         while (root.getCause() != null && root.getCause() != root) {
             root = root.getCause();
         }
-        String rootMsg = root.getMessage();
-        String rootType = root.getClass().getSimpleName();
-        log.error("Transaction system error for {} {}: {} - {}",
-                request.getMethod(), request.getRequestURI(), rootType, rootMsg, exception);
+        log.error("Transaction system error for {} {}", request.getMethod(), request.getRequestURI(), exception);
 
         HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
         ErrorCode code = ErrorCode.SERVER_ERROR;
+        String message = "Internal server error.";
         // 如果 root cause 是约束违反，返回 409 而非 500，让客户端按 4xx 路径处理
         if (root instanceof org.springframework.dao.DataIntegrityViolationException
                 || root instanceof org.hibernate.exception.ConstraintViolationException
                 || root instanceof java.sql.SQLIntegrityConstraintViolationException) {
             status = HttpStatus.CONFLICT;
             code = ErrorCode.VALIDATION_ERROR;
+            message = "Data integrity conflict.";
             log.warn("TransactionSystemException root cause is constraint violation, returning 409");
         }
         return buildErrorResponse(
                 request,
                 status,
                 code,
-                "Transaction error: " + rootType + " - " + rootMsg,
+                message,
                 null
         );
     }
@@ -219,12 +216,12 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         // Hibernate / JPA 在枚举解析、字段映射失败时会抛出 IAE
-        log.warn("Illegal argument for {} {}: {}", request.getMethod(), request.getRequestURI(), exception.getMessage(), exception);
+        log.warn("Illegal argument for {} {}", request.getMethod(), request.getRequestURI(), exception);
         return buildErrorResponse(
                 request,
                 HttpStatus.BAD_REQUEST,
                 ErrorCode.VALIDATION_ERROR,
-                "Invalid data: " + exception.getClass().getSimpleName() + " - " + exception.getMessage(),
+                "Invalid request data.",
                 null
         );
     }
@@ -234,19 +231,14 @@ public class GlobalExceptionHandler {
             Exception exception,
             HttpServletRequest request
     ) {
-        // 深入到根因，避免只看到 Spring 事务包装层
-        Throwable root = exception;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        String rootMsg = root.getMessage();
-        String rootType = root.getClass().getSimpleName();
-        log.error("Unexpected server error for {} {}: {} - {}", request.getMethod(), request.getRequestURI(), rootType, rootMsg, exception);
+        // R0-H: 5xx 返回稳定错误码 + requestId，不泄露 root cause 到客户端
+        String requestId = (String) request.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
+        log.error("Unexpected server error [requestId={}] for {} {}", requestId, request.getMethod(), request.getRequestURI(), exception);
         return buildErrorResponse(
                 request,
                 HttpStatus.INTERNAL_SERVER_ERROR,
                 ErrorCode.SERVER_ERROR,
-                "Server error: " + rootType + " - " + rootMsg,
+                "Internal server error. Contact support with requestId: " + requestId,
                 null
         );
     }

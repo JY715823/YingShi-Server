@@ -72,7 +72,7 @@ public class AmapGeocodingService implements GeocodingService {
 
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) {
-                log.warn("Amap geocoding HTTP {} for lat={},lng={}", resp.statusCode(), latitude, longitude);
+                log.warn("Amap geocoding HTTP {} for lat=***,lng=***", resp.statusCode());
                 return null;
             }
 
@@ -92,7 +92,8 @@ public class AmapGeocodingService implements GeocodingService {
             cache.put(cacheKey, formatted);
             return formatted;
         } catch (Exception e) {
-            log.warn("Amap geocoding error for lat={},lng={}: {}", latitude, longitude, e.getMessage());
+            // R0-H: 不在日志中输出经纬度，防止位置信息泄露
+            log.warn("Amap geocoding error for lat=***,lng=***: {}", e.getMessage());
             return null;
         }
     }

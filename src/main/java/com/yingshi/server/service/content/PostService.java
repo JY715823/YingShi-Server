@@ -2,6 +2,7 @@ package com.yingshi.server.service.content;
 
 import com.yingshi.server.common.IdGenerator;
 import com.yingshi.server.common.auth.AuthenticatedUser;
+import com.yingshi.server.common.cursor.CursorCodec;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.domain.AlbumEntity;
@@ -11,6 +12,7 @@ import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.dto.content.AddPostMediaRequest;
 import com.yingshi.server.dto.content.MediaDto;
 import com.yingshi.server.dto.content.CreatePostRequest;
+import com.yingshi.server.dto.content.CursorPage;
 import com.yingshi.server.dto.content.PostDetailDto;
 import com.yingshi.server.dto.content.PostMediaDto;
 import com.yingshi.server.dto.content.PostSummaryDto;
@@ -25,6 +27,8 @@ import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.service.push.PushDispatchSupport;
 import com.yingshi.server.service.push.PushNotificationService;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +48,9 @@ import java.util.stream.Collectors;
 public class PostService {
 
     private static final String DEFAULT_CONTRIBUTOR_LABEL = "You and Me";
+    private static final int DEFAULT_LIST_PAGE_SIZE = 30;
+    private static final int MAX_LIST_PAGE_SIZE = 100;
+    private static final int LIST_OVER_FETCH_MARGIN = 1;
 
     private final PostRepository postRepository;
     private final MediaRepository mediaRepository;
@@ -51,6 +58,7 @@ public class PostService {
     private final PostMediaRepository postMediaRepository;
     private final ContentMapper contentMapper;
     private final PushNotificationService pushNotificationService;
+    private final CursorCodec cursorCodec;
 
     public PostService(
             PostRepository postRepository,
@@ -58,7 +66,8 @@ public class PostService {
             AlbumRepository albumRepository,
             PostMediaRepository postMediaRepository,
             ContentMapper contentMapper,
-            PushNotificationService pushNotificationService
+            PushNotificationService pushNotificationService,
+            CursorCodec cursorCodec
     ) {
         this.postRepository = postRepository;
         this.mediaRepository = mediaRepository;
@@ -66,13 +75,43 @@ public class PostService {
         this.postMediaRepository = postMediaRepository;
         this.contentMapper = contentMapper;
         this.pushNotificationService = pushNotificationService;
+        this.cursorCodec = cursorCodec;
     }
 
     @Transactional(readOnly = true)
-    public List<PostSummaryDto> listPosts(AuthenticatedUser currentUser) {
+    public CursorPage<PostSummaryDto> listPosts(AuthenticatedUser currentUser, String cursor, Integer pageSize) {
         String libraryId = currentUser.libraryId();
-        List<PostEntity> posts = postRepository.findByLibraryIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(libraryId);
-        return buildPostSummaries(posts);
+        int normalizedPageSize = normalizeListPageSize(pageSize);
+        String[] cursorParts = decodeListCursor(cursor);
+        Instant cursorUpdatedAt = cursorParts != null ? Instant.ofEpochMilli(Long.parseLong(cursorParts[0])) : null;
+        String cursorId = cursorParts != null ? cursorParts[1] : null;
+
+        int fetchLimit = normalizedPageSize + LIST_OVER_FETCH_MARGIN;
+        List<PostEntity> posts = postRepository.findPostPage(
+                libraryId,
+                cursorUpdatedAt,
+                cursorId,
+                PageRequest.of(0, fetchLimit, Sort.by(
+                        Sort.Order.desc("updatedAt"),
+                        Sort.Order.desc("id")
+                ))
+        );
+        if (posts.isEmpty()) {
+            return new CursorPage<>(List.of(), null, false, normalizedPageSize);
+        }
+
+        boolean hasMore = posts.size() > normalizedPageSize;
+        List<PostEntity> pagePosts = hasMore ? posts.subList(0, normalizedPageSize) : posts;
+
+        List<PostSummaryDto> results = new ArrayList<>(buildPostSummaries(pagePosts));
+
+        String nextCursor = null;
+        if (hasMore && !pagePosts.isEmpty()) {
+            PostEntity last = pagePosts.get(pagePosts.size() - 1);
+            nextCursor = encodeListCursor(last.getUpdatedAt(), last.getId());
+        }
+
+        return new CursorPage<>(results, nextCursor, hasMore, normalizedPageSize);
     }
 
     @Transactional(readOnly = true)
@@ -479,5 +518,34 @@ public class PostService {
             case "ORIGINAL", "IMPORTED", "MANUAL" -> normalized;
             default -> fallback == null || fallback.isBlank() ? "MANUAL" : fallback;
         };
+    }
+
+    private int normalizeListPageSize(Integer pageSize) {
+        if (pageSize == null || pageSize <= 0) {
+            return DEFAULT_LIST_PAGE_SIZE;
+        }
+        return Math.min(pageSize, MAX_LIST_PAGE_SIZE);
+    }
+
+    private String encodeListCursor(Instant updatedAt, String id) {
+        String payload = updatedAt.toEpochMilli() + "|" + id;
+        return cursorCodec.encode(payload);
+    }
+
+    private String[] decodeListCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            return null;
+        }
+        try {
+            String payload = cursorCodec.decode(cursor);
+            String[] parts = payload.split("\\|", 2);
+            if (parts.length != 2 || parts[1].isBlank()) {
+                return null;
+            }
+            Long.parseLong(parts[0]);
+            return parts;
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
     }
 }

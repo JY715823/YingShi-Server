@@ -1,6 +1,7 @@
 package com.yingshi.server.service;
 
 import com.yingshi.server.dto.health.HealthResponse;
+import com.yingshi.server.dto.health.PublicHealthResponse;
 import com.yingshi.server.service.storage.ObjectStorageService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.info.BuildProperties;
@@ -33,6 +34,10 @@ public class HealthService {
         this.dataSource = dataSource;
         this.objectStorageService = objectStorageService;
         this.buildProperties = buildPropertiesProvider.getIfAvailable();
+    }
+
+    public PublicHealthResponse getPublicHealth() {
+        return new PublicHealthResponse("UP");
     }
 
     public HealthResponse getHealth() {

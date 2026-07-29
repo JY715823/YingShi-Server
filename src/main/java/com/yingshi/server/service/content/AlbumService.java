@@ -2,6 +2,7 @@ package com.yingshi.server.service.content;
 
 import com.yingshi.server.common.IdGenerator;
 import com.yingshi.server.common.auth.AuthenticatedUser;
+import com.yingshi.server.common.cursor.CursorCodec;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.domain.AlbumEntity;
@@ -9,6 +10,7 @@ import com.yingshi.server.domain.PostEntity;
 import com.yingshi.server.domain.PostMediaEntity;
 import com.yingshi.server.dto.content.AlbumDto;
 import com.yingshi.server.dto.content.CreateAlbumRequest;
+import com.yingshi.server.dto.content.CursorPage;
 import com.yingshi.server.dto.content.MoveSmallAlbumsRequest;
 import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.dto.content.UpdateAlbumRequest;
@@ -18,10 +20,13 @@ import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
 import com.yingshi.server.service.trash.TrashService;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -30,24 +35,31 @@ import java.util.stream.Collectors;
 @Service
 public class AlbumService {
 
+    private static final int DEFAULT_LIST_PAGE_SIZE = 30;
+    private static final int MAX_LIST_PAGE_SIZE = 100;
+    private static final int LIST_OVER_FETCH_MARGIN = 1;
+
     private final AlbumRepository albumRepository;
     private final PostRepository postRepository;
     private final PostMediaRepository postMediaRepository;
     private final ContentMapper contentMapper;
     private final TrashService trashService;
+    private final CursorCodec cursorCodec;
 
     public AlbumService(
             AlbumRepository albumRepository,
             PostRepository postRepository,
             PostMediaRepository postMediaRepository,
             ContentMapper contentMapper,
-            TrashService trashService
+            TrashService trashService,
+            CursorCodec cursorCodec
     ) {
         this.albumRepository = albumRepository;
         this.postRepository = postRepository;
         this.postMediaRepository = postMediaRepository;
         this.contentMapper = contentMapper;
         this.trashService = trashService;
+        this.cursorCodec = cursorCodec;
     }
 
     @Transactional
@@ -63,9 +75,25 @@ public class AlbumService {
     }
 
     @Transactional(readOnly = true)
-    public List<AlbumDto> listAlbums(AuthenticatedUser currentUser) {
+    public CursorPage<AlbumDto> listAlbums(AuthenticatedUser currentUser, String cursor, Integer pageSize) {
         String libraryId = currentUser.libraryId();
-        List<AlbumEntity> albums = albumRepository.findByLibraryIdAndDeletedAtIsNullOrderByTitleAsc(libraryId);
+        int normalizedPageSize = normalizeListPageSize(pageSize);
+        String[] cursorParts = decodeListCursor(cursor);
+        Instant cursorUpdatedAt = cursorParts != null ? Instant.ofEpochMilli(Long.parseLong(cursorParts[0])) : null;
+        String cursorId = cursorParts != null ? cursorParts[1] : null;
+
+        int fetchLimit = normalizedPageSize + LIST_OVER_FETCH_MARGIN;
+        org.springframework.data.domain.Pageable pageRequest = PageRequest.of(0, fetchLimit, Sort.by(
+                Sort.Order.desc("updatedAt"),
+                Sort.Order.desc("id")
+        ));
+        List<AlbumEntity> albums = cursorUpdatedAt != null
+                ? albumRepository.findAlbumPage(libraryId, cursorUpdatedAt, cursorId, pageRequest)
+                : albumRepository.findAlbumFirstPage(libraryId, pageRequest);
+
+        if (albums.isEmpty()) {
+            return new CursorPage<>(List.of(), null, false, normalizedPageSize);
+        }
 
         Map<String, Long> postCountByAlbumId = postRepository.countActivePostsGroupByAlbumId(libraryId)
                 .stream()
@@ -74,33 +102,57 @@ public class AlbumService {
                         row -> (Long) row[1]
                 ));
 
+        boolean hasMore = albums.size() > normalizedPageSize;
+        List<AlbumEntity> pageAlbums = hasMore ? albums.subList(0, normalizedPageSize) : albums;
+
         List<AlbumDto> results = new ArrayList<>();
-        for (AlbumEntity album : albums) {
+        for (AlbumEntity album : pageAlbums) {
             results.add(contentMapper.toAlbumDto(album, postCountByAlbumId.getOrDefault(album.getId(), 0L)));
         }
-        return results;
+
+        String nextCursor = null;
+        if (hasMore && !pageAlbums.isEmpty()) {
+            AlbumEntity last = pageAlbums.get(pageAlbums.size() - 1);
+            nextCursor = encodeListCursor(last.getUpdatedAt(), last.getId());
+        }
+
+        return new CursorPage<>(results, nextCursor, hasMore, normalizedPageSize);
     }
 
     @Transactional(readOnly = true)
-    public List<PostSummaryDto> listAlbumPosts(String albumId, AuthenticatedUser currentUser) {
+    public CursorPage<PostSummaryDto> listAlbumPosts(String albumId, AuthenticatedUser currentUser, String cursor, Integer pageSize) {
         String libraryId = currentUser.libraryId();
         requireAlbum(albumId, libraryId);
+        int normalizedPageSize = normalizeListPageSize(pageSize);
+        String[] cursorParts = decodeListCursor(cursor);
+        Instant cursorUpdatedAt = cursorParts != null ? Instant.ofEpochMilli(Long.parseLong(cursorParts[0])) : null;
+        String cursorId = cursorParts != null ? cursorParts[1] : null;
 
-        List<PostEntity> posts = postRepository.findByLibraryIdAndAlbumIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(
+        int fetchLimit = normalizedPageSize + LIST_OVER_FETCH_MARGIN;
+        List<PostEntity> posts = postRepository.findPostPageByAlbum(
                 libraryId,
-                albumId
+                albumId,
+                cursorUpdatedAt,
+                cursorId,
+                PageRequest.of(0, fetchLimit, Sort.by(
+                        Sort.Order.desc("updatedAt"),
+                        Sort.Order.desc("id")
+                ))
         );
         if (posts.isEmpty()) {
-            return List.of();
+            return new CursorPage<>(List.of(), null, false, normalizedPageSize);
         }
 
-        List<String> postIds = posts.stream().map(PostEntity::getId).toList();
+        boolean hasMore = posts.size() > normalizedPageSize;
+        List<PostEntity> pagePosts = hasMore ? posts.subList(0, normalizedPageSize) : posts;
+
+        List<String> postIds = pagePosts.stream().map(PostEntity::getId).toList();
         Map<String, Long> mediaCountByPostId = postMediaRepository.findByLibraryIdAndPostIdIn(libraryId, postIds)
                 .stream()
                 .collect(Collectors.groupingBy(PostMediaEntity::getPostId, Collectors.counting()));
 
         List<PostSummaryDto> results = new ArrayList<>();
-        for (PostEntity post : posts) {
+        for (PostEntity post : pagePosts) {
             results.add(contentMapper.toPostSummaryDto(
                     post,
                     post.getAlbumId(),
@@ -108,7 +160,14 @@ public class AlbumService {
                     mediaCountByPostId.getOrDefault(post.getId(), 0L)
             ));
         }
-        return results;
+
+        String nextCursor = null;
+        if (hasMore && !pagePosts.isEmpty()) {
+            PostEntity last = pagePosts.get(pagePosts.size() - 1);
+            nextCursor = encodeListCursor(last.getUpdatedAt(), last.getId());
+        }
+
+        return new CursorPage<>(results, nextCursor, hasMore, normalizedPageSize);
     }
 
     @Transactional
@@ -193,5 +252,34 @@ public class AlbumService {
     private AlbumEntity requireAlbum(String albumId, String libraryId) {
         return albumRepository.findByIdAndLibraryIdAndDeletedAtIsNull(albumId, libraryId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, ErrorCode.ALBUM_NOT_FOUND, "Album was not found."));
+    }
+
+    private int normalizeListPageSize(Integer pageSize) {
+        if (pageSize == null || pageSize <= 0) {
+            return DEFAULT_LIST_PAGE_SIZE;
+        }
+        return Math.min(pageSize, MAX_LIST_PAGE_SIZE);
+    }
+
+    private String encodeListCursor(Instant updatedAt, String id) {
+        String payload = updatedAt.toEpochMilli() + "|" + id;
+        return cursorCodec.encode(payload);
+    }
+
+    private String[] decodeListCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            return null;
+        }
+        try {
+            String payload = cursorCodec.decode(cursor);
+            String[] parts = payload.split("\\|", 2);
+            if (parts.length != 2 || parts[1].isBlank()) {
+                return null;
+            }
+            Long.parseLong(parts[0]);
+            return parts;
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
     }
 }

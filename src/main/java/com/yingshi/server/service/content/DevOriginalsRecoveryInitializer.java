@@ -151,7 +151,7 @@ public class DevOriginalsRecoveryInitializer {
         media.setLibraryId(libraryId);
         media.setMediaType(mediaType);
         media.setUrl(mediaUrl);
-        media.setPreviewUrl(mediaType == MediaType.IMAGE ? mediaUrl + "?variant=preview" : null);
+        media.setPreviewUrl(mediaType == MediaType.IMAGE ? mediaUrl + "?variant=preview" : mediaUrl);
         media.setOriginalUrl(mediaType == MediaType.IMAGE ? mediaUrl : null);
         media.setVideoUrl(mediaType == MediaType.VIDEO ? mediaUrl : null);
         media.setCoverUrl(null);

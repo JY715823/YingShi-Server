@@ -39,19 +39,22 @@ public class UploadTokenService {
     private final LocalMediaStorageService localMediaStorageService;
     private final ObjectStorageService objectStorageService;
     private final StorageProperties storageProperties;
+    private final UploadQuotaService uploadQuotaService;
 
     public UploadTokenService(
             UploadTaskRepository uploadTaskRepository,
             SharedLibraryRepository sharedLibraryRepository,
             LocalMediaStorageService localMediaStorageService,
             ObjectStorageService objectStorageService,
-            StorageProperties storageProperties
+            StorageProperties storageProperties,
+            UploadQuotaService uploadQuotaService
     ) {
         this.uploadTaskRepository = uploadTaskRepository;
         this.sharedLibraryRepository = sharedLibraryRepository;
         this.localMediaStorageService = localMediaStorageService;
         this.objectStorageService = objectStorageService;
         this.storageProperties = storageProperties;
+        this.uploadQuotaService = uploadQuotaService;
     }
 
     @Transactional
@@ -89,6 +92,8 @@ public class UploadTokenService {
         );
 
         MediaType mediaType = UploadSupport.parseMediaType(request.mediaType());
+        // R1-H-3: 配额校验（单文件大小 + library 总量）
+        uploadQuotaService.checkQuota(currentUser.libraryId(), mediaType.name(), request.fileSizeBytes());
         String mediaId = IdGenerator.newId("media");
         String domain = request.domain() != null && !request.domain().isBlank() ? request.domain().trim() : "photo";
         String objectKey = localMediaStorageService.originalObjectKeyForUpload(

@@ -7,6 +7,7 @@ public record TrashPageResponse(
         int page,
         int size,
         long totalElements,
-        boolean hasMore
+        boolean hasMore,
+        String nextCursor
 ) {
 }

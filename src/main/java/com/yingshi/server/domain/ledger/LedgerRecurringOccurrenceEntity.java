@@ -5,9 +5,16 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "ledger_recurring_occurrences")
+@Table(
+    name = "ledger_recurring_occurrences",
+    uniqueConstraints = {
+        @UniqueConstraint(name = "uk_recurring_occurrences_rule_time", columnNames = {"rule_id", "occurrence_at_millis"}),
+        @UniqueConstraint(name = "uk_recurring_occurrences_tx", columnNames = {"transaction_id"})
+    }
+)
 public class LedgerRecurringOccurrenceEntity extends LibraryScopedEntity {
 
     @Id

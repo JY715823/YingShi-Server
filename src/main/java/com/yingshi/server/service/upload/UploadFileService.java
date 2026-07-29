@@ -29,6 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -102,6 +104,21 @@ public class UploadFileService {
         String actualContentType = UploadSupport.normalizeMimeType(file.getContentType());
         if (actualContentType != null && !"application/octet-stream".equals(actualContentType)) {
             task.setMimeType(actualContentType);
+        }
+
+        // R1-H-1: magic bytes 校验，防止伪造扩展名上传任意文件
+        try {
+            MagicBytesDetector.FileType detectedType = MagicBytesDetector.detect(file);
+            if (!MagicBytesDetector.isAcceptable(detectedType, file.getContentType())) {
+                markFailedInNewTransaction(task,
+                        "File type mismatch: declared=" + file.getContentType() + " detected=" + detectedType);
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.UPLOAD_OBJECT_INVALID,
+                        "File type not allowed or magic bytes mismatch");
+            }
+        } catch (IOException ioException) {
+            markFailedInNewTransaction(task, "Failed to read magic bytes: " + ioException.getMessage());
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.UPLOAD_OBJECT_INVALID,
+                    "Failed to read file header for magic bytes verification");
         }
 
         MediaEntity duplicateMedia = findDuplicateMedia(task);
@@ -393,6 +410,26 @@ public class UploadFileService {
         media.setLatitude(lat);
         media.setLongitude(lng);
         media.setLocationLabel(label);
+        // R1-H-2: 真实图片尺寸/像素校验，防止解压炸弹和元数据造假
+        if (task.getMediaType() == MediaType.IMAGE) {
+            try {
+                int declaredWidth = task.getWidth() == null ? 0 : task.getWidth();
+                int declaredHeight = task.getHeight() == null ? 0 : task.getHeight();
+                if ("local".equals(storedFile.storageProvider())) {
+                    MediaMetadataProbe.verifyImage(Paths.get(storedFile.storagePath()),
+                            declaredWidth, declaredHeight);
+                } else {
+                    // S3/COS: download from object storage and verify via InputStream
+                    try (java.io.InputStream is = localMediaStorageService
+                            .loadObject(storedFile.objectKey()).getInputStream()) {
+                        MediaMetadataProbe.verifyImage(is, declaredWidth, declaredHeight);
+                    }
+                }
+            } catch (IOException e) {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.UPLOAD_OBJECT_INVALID,
+                        "Image metadata verification failed: " + e.getMessage());
+            }
+        }
         return media;
     }
 

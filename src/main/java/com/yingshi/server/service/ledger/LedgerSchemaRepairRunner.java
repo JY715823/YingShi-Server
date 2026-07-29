@@ -28,7 +28,7 @@ public class LedgerSchemaRepairRunner {
 
     @Bean
     @Order(20)
-    ApplicationRunner ledgerSchemaRepairRunner(DataSource dataSource) {
+    ApplicationRunner ledgerSchemaRepairApplicationRunner(DataSource dataSource) {
         return args -> {
             JdbcTemplate jdbc = new JdbcTemplate(dataSource);
             try {

@@ -39,25 +39,29 @@ public class TrashController {
     @GetMapping("/items")
     public ApiResponse<TrashPageResponse> listTrash(
             @RequestParam(required = false) String itemType,
+            @RequestParam(required = false) String cursor,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), trashService.listTrash(itemType, page, size, currentUser));
+        return ApiResponse.success(requestId(request), trashService.listTrash(itemType, cursor, page, size, currentUser));
     }
 
     /**
      * P1-2 改造: life 回收站列表（按 category 过滤，PERSON/MEAL/null=所有 life）。
+     * R2-C-5/6: 增加 cursor/size 分页参数（向后兼容，旧客户端不传则取首页默认大小）。
      */
     @Operation(summary = "List life trash items by category", security = @SecurityRequirement(name = "bearerAuth"))
     @GetMapping("/life-items")
     public ApiResponse<List<TrashItemDto>> listLifeTrash(
             @RequestParam(required = false) String category,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) Integer size,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), trashService.listLifeTrash(category, currentUser));
+        return ApiResponse.success(requestId(request), trashService.listLifeTrash(category, cursor, size, currentUser));
     }
 
     @Operation(summary = "Get trash item detail", security = @SecurityRequirement(name = "bearerAuth"))
@@ -113,23 +117,28 @@ public class TrashController {
     @Operation(summary = "List pending cleanup items", security = @SecurityRequirement(name = "bearerAuth"))
     @GetMapping("/pending-cleanup")
     public ApiResponse<List<PendingCleanupDto>> getPendingCleanup(
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) Integer size,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), trashService.getPendingCleanup(currentUser));
+        return ApiResponse.success(requestId(request), trashService.getPendingCleanup(cursor, size, currentUser));
     }
 
     /**
      * P1-2 改造: life 回收站 24h 撤回中心（pending cleanup by category）。
+     * R2-C-7: 增加 cursor/size 分页参数（向后兼容）。
      */
     @Operation(summary = "List life pending cleanup items by category", security = @SecurityRequirement(name = "bearerAuth"))
     @GetMapping("/life-pending-cleanup")
     public ApiResponse<List<PendingCleanupDto>> getLifePendingCleanup(
             @RequestParam(required = false) String category,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) Integer size,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), trashService.getLifePendingCleanup(category, currentUser));
+        return ApiResponse.success(requestId(request), trashService.getLifePendingCleanup(category, cursor, size, currentUser));
     }
 
     private String requestId(HttpServletRequest request) {

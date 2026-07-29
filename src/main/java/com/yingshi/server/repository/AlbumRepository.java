@@ -23,6 +23,34 @@ public interface AlbumRepository extends JpaRepository<AlbumEntity, String> {
     @Query("SELECT a FROM AlbumEntity a WHERE a.libraryId = :libraryId AND a.deletedAt IS NULL ORDER BY a.title ASC")
     List<AlbumEntity> findByLibraryIdAndDeletedAtIsNullOrderByTitleAsc(@Param("libraryId") String libraryId);
 
+    // R2-E-3: keyset pagination for album list — split to avoid PostgreSQL
+    // "could not determine data type of parameter" on (:cursor IS NULL OR ...) pattern.
+    @Query("""
+            SELECT a FROM AlbumEntity a
+            WHERE a.libraryId = :libraryId
+              AND a.deletedAt IS NULL
+            ORDER BY a.updatedAt DESC, a.id DESC
+            """)
+    List<AlbumEntity> findAlbumFirstPage(
+            @Param("libraryId") String libraryId,
+            org.springframework.data.domain.Pageable pageable
+    );
+
+    @Query("""
+            SELECT a FROM AlbumEntity a
+            WHERE a.libraryId = :libraryId
+              AND a.deletedAt IS NULL
+              AND (a.updatedAt < :cursorUpdatedAt
+                   OR (a.updatedAt = :cursorUpdatedAt AND a.id < :cursorId))
+            ORDER BY a.updatedAt DESC, a.id DESC
+            """)
+    List<AlbumEntity> findAlbumPage(
+            @Param("libraryId") String libraryId,
+            @Param("cursorUpdatedAt") Instant cursorUpdatedAt,
+            @Param("cursorId") String cursorId,
+            org.springframework.data.domain.Pageable pageable
+    );
+
     @Query("SELECT a FROM AlbumEntity a WHERE a.libraryId = :libraryId AND a.id = :id AND a.deletedAt IS NULL")
     Optional<AlbumEntity> findByIdAndLibraryIdAndDeletedAtIsNull(@Param("id") String id, @Param("libraryId") String libraryId);
 

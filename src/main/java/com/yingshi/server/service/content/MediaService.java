@@ -1,6 +1,7 @@
 package com.yingshi.server.service.content;
 
 import com.yingshi.server.common.auth.AuthenticatedUser;
+import com.yingshi.server.common.cursor.CursorCodec;
 import com.yingshi.server.common.exception.ApiException;
 import com.yingshi.server.common.exception.ErrorCode;
 import com.yingshi.server.domain.AlbumEntity;
@@ -38,8 +39,9 @@ import java.util.stream.Collectors;
 @Service
 public class MediaService {
 
-    private static final int DEFAULT_FEED_PAGE_SIZE = 60;
-    private static final int MAX_FEED_PAGE_SIZE = 120;
+    // R2-E-7: pageSize 规格对齐 - DEFAULT 30 / MAX 100 (与 MediaController defaultValue="30" 一致)
+    private static final int DEFAULT_FEED_PAGE_SIZE = 30;
+    private static final int MAX_FEED_PAGE_SIZE = 100;
     private static final int FEED_OVER_FETCH_MARGIN = 60;
     private final MediaRepository mediaRepository;
     private final PostMediaRepository postMediaRepository;
@@ -48,8 +50,10 @@ public class MediaService {
     private final ContentMapper contentMapper;
     private final LocalMediaStorageService localMediaStorageService;
     private final MediaStorageFieldService mediaStorageFieldService;
+    private final CursorCodec cursorCodec;
     private static final int PREVIEW_MAX_DIMENSION = 1280;
     private static final int VIDEO_COVER_MAX_DIMENSION = 1280;
+    private static final int MAX_SEEN_DEDUP_KEYS = 300;
 
     public MediaService(
             MediaRepository mediaRepository,
@@ -58,7 +62,8 @@ public class MediaService {
             AlbumRepository albumRepository,
             ContentMapper contentMapper,
             LocalMediaStorageService localMediaStorageService,
-            MediaStorageFieldService mediaStorageFieldService
+            MediaStorageFieldService mediaStorageFieldService,
+            CursorCodec cursorCodec
     ) {
         this.mediaRepository = mediaRepository;
         this.postMediaRepository = postMediaRepository;
@@ -67,6 +72,7 @@ public class MediaService {
         this.contentMapper = contentMapper;
         this.localMediaStorageService = localMediaStorageService;
         this.mediaStorageFieldService = mediaStorageFieldService;
+        this.cursorCodec = cursorCodec;
     }
 
     public List<MediaDto> getMediaFeed(AuthenticatedUser currentUser) {
@@ -144,6 +150,7 @@ public class MediaService {
 
         Long cursorDisplayTime = decodedCursor != null ? decodedCursor.displayTimeMillis() : null;
         String cursorMediaId = decodedCursor != null ? decodedCursor.mediaId() : null;
+        Set<String> seenDedupKeys = decodedCursor != null ? decodedCursor.seenDedupKeys() : new LinkedHashSet<>();
 
         int fetchLimit = normalizedPageSize + FEED_OVER_FETCH_MARGIN;
         List<MediaEntity> mediaBatch = mediaRepository.findFeedPage(
@@ -207,22 +214,35 @@ public class MediaService {
                     .merge(media, postIds, hasAnyActivePostRelation);
         }
 
-        List<DeduplicatedFeedEntry> allDedupEntries = new ArrayList<>(deduplicatedEntries.values());
+        // R2-E-1: 跨页去重 - 跳过已展示的 deduplicationKey
+        List<DeduplicatedFeedEntry> allDedupEntries = new ArrayList<>();
+        for (DeduplicatedFeedEntry entry : deduplicatedEntries.values()) {
+            String deduplicationKey = feedDeduplicationKey(entry.representativeMedia());
+            if (seenDedupKeys.contains(deduplicationKey)) {
+                continue;
+            }
+            allDedupEntries.add(entry);
+        }
+
         boolean hasMoreInBatch = allDedupEntries.size() > normalizedPageSize;
         List<DeduplicatedFeedEntry> pageEntries = hasMoreInBatch
                 ? allDedupEntries.subList(0, normalizedPageSize)
                 : allDedupEntries;
 
         List<MediaDto> results = new ArrayList<>();
+        Set<String> returnedDedupKeys = new LinkedHashSet<>();
         for (DeduplicatedFeedEntry entry : pageEntries) {
             results.add(contentMapper.toMediaDto(entry.representativeMedia(), entry.visiblePostIds()));
+            returnedDedupKeys.add(feedDeduplicationKey(entry.representativeMedia()));
         }
 
         boolean hasMore = hasMoreInBatch || mediaBatch.size() >= fetchLimit;
         String nextCursor = null;
         if (hasMore && !results.isEmpty()) {
             MediaDto lastItem = results.get(results.size() - 1);
-            nextCursor = encodeCursor(lastItem.displayTimeMillis(), lastItem.mediaId());
+            // R2-E-1: nextCursor 携带已展示的 deduplicationKey, 用于下一页跨页去重
+            Set<String> mergedSeenKeys = mergeSeenDedupKeys(seenDedupKeys, returnedDedupKeys);
+            nextCursor = encodeCursor(lastItem.displayTimeMillis(), lastItem.mediaId(), mergedSeenKeys);
         }
 
         return new MediaFeedPage(results, nextCursor, hasMore, normalizedPageSize);
@@ -486,18 +506,15 @@ public class MediaService {
         return Math.min(pageSize, MAX_FEED_PAGE_SIZE);
     }
 
-    private String encodeCursor(MediaDto item) {
-        String rawCursor = item.displayTimeMillis() + "|" + item.mediaId();
-        return Base64.getUrlEncoder()
-                .withoutPadding()
-                .encodeToString(rawCursor.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private String encodeCursor(long displayTimeMillis, String mediaId) {
-        String rawCursor = displayTimeMillis + "|" + mediaId;
-        return Base64.getUrlEncoder()
-                .withoutPadding()
-                .encodeToString(rawCursor.getBytes(StandardCharsets.UTF_8));
+    private String encodeCursor(long displayTimeMillis, String mediaId, Set<String> seenDedupKeys) {
+        StringBuilder payload = new StringBuilder();
+        payload.append(displayTimeMillis).append('|').append(mediaId);
+        if (seenDedupKeys != null && !seenDedupKeys.isEmpty()) {
+            for (String key : seenDedupKeys) {
+                payload.append('\n').append(key);
+            }
+        }
+        return cursorCodec.encode(payload.toString());
     }
 
     private Cursor decodeCursor(String cursor) {
@@ -505,18 +522,48 @@ public class MediaService {
             return null;
         }
         try {
-            String rawCursor = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
-            String[] parts = rawCursor.split("\\|", 2);
-            if (parts.length != 2 || parts[1].isBlank()) {
+            String payload = cursorCodec.decode(cursor);
+            String[] lines = payload.split("\n", -1);
+            if (lines.length == 0) {
                 return null;
             }
-            return new Cursor(Long.parseLong(parts[0]), parts[1]);
+            String[] head = lines[0].split("\\|", 2);
+            if (head.length != 2 || head[1].isBlank()) {
+                return null;
+            }
+            long displayTime = Long.parseLong(head[0]);
+            String mediaId = head[1];
+            Set<String> seenDedupKeys = new LinkedHashSet<>();
+            for (int i = 1; i < lines.length; i++) {
+                if (!lines[i].isEmpty()) {
+                    seenDedupKeys.add(lines[i]);
+                }
+            }
+            return new Cursor(displayTime, mediaId, seenDedupKeys);
         } catch (IllegalArgumentException exception) {
             return null;
         }
     }
 
-    private record Cursor(long displayTimeMillis, String mediaId) {
+    private Set<String> mergeSeenDedupKeys(Set<String> previous, Set<String> current) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        merged.addAll(current);
+        merged.addAll(previous);
+        if (merged.size() <= MAX_SEEN_DEDUP_KEYS) {
+            return merged;
+        }
+        // Keep most recent keys (current page first, then previous), cap at MAX_SEEN_DEDUP_KEYS
+        LinkedHashSet<String> capped = new LinkedHashSet<>();
+        for (String key : merged) {
+            if (capped.size() >= MAX_SEEN_DEDUP_KEYS) {
+                break;
+            }
+            capped.add(key);
+        }
+        return capped;
+    }
+
+    private record Cursor(long displayTimeMillis, String mediaId, Set<String> seenDedupKeys) {
     }
 
     private record MediaResourceResolution(

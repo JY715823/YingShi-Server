@@ -21,20 +21,21 @@ echo "=== YingShi SSL Certificate Renewal ==="
 
 # Step 1: Renew certificates
 echo "Step 1: Renewing certificates..."
+DOCKER_CERTBOT="docker run --rm -v ${PROJECT_DIR}/nginx/certs:/etc/letsencrypt -v ${PROJECT_DIR}/nginx/www:/var/www/certbot certbot/certbot"
 if [ "$DRY_RUN" = "--dry-run" ]; then
     echo "  [DRY RUN] certbot renew --dry-run"
-    certbot renew --dry-run
+    $DOCKER_CERTBOT renew --dry-run
 else
-    certbot renew --quiet --no-random-sleep-on-renew
+    $DOCKER_CERTBOT renew --quiet --no-random-sleep-on-renew
     echo "  Certificates renewed."
 fi
 
 # Step 2: Reload nginx container
 echo "Step 2: Reloading nginx..."
 cd "$PROJECT_DIR"
-docker compose -f docker-compose.yml -f docker-compose.prod.yml exec nginx nginx -s reload 2>/dev/null || {
+docker compose -f docker-compose.prod.yml exec nginx nginx -s reload 2>/dev/null || {
     echo "  Warning: Could not reload nginx via docker exec, trying docker restart..."
-    docker compose -f docker-compose.yml -f docker-compose.prod.yml restart nginx
+    docker compose -f docker-compose.prod.yml restart nginx
 }
 echo "  Nginx reloaded."
 

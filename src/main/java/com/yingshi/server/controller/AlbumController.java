@@ -4,9 +4,11 @@ import com.yingshi.server.common.auth.AuthRequired;
 import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.auth.CurrentUser;
 import com.yingshi.server.common.response.ApiResponse;
+import com.yingshi.server.common.response.PageInfo;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.content.AlbumDto;
 import com.yingshi.server.dto.content.CreateAlbumRequest;
+import com.yingshi.server.dto.content.CursorPage;
 import com.yingshi.server.dto.content.MoveSmallAlbumsRequest;
 import com.yingshi.server.dto.content.PostSummaryDto;
 import com.yingshi.server.dto.content.UpdateAlbumRequest;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -53,20 +56,34 @@ public class AlbumController {
     @Operation(summary = "List albums in the shared library", security = @SecurityRequirement(name = "bearerAuth"))
     @GetMapping
     public ApiResponse<List<AlbumDto>> listAlbums(
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false, defaultValue = "30") Integer pageSize,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), albumService.listAlbums(currentUser));
+        CursorPage<AlbumDto> page = albumService.listAlbums(currentUser, cursor, pageSize);
+        return ApiResponse.success(
+                requestId(request),
+                page.items(),
+                new PageInfo(1, page.pageSize(), page.nextCursor(), page.hasMore())
+        );
     }
 
     @Operation(summary = "List small albums under an album", security = @SecurityRequirement(name = "bearerAuth"))
     @GetMapping("/{albumId}/small-albums")
     public ApiResponse<List<PostSummaryDto>> listAlbumPosts(
             @PathVariable String albumId,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false, defaultValue = "30") Integer pageSize,
             @CurrentUser AuthenticatedUser currentUser,
             HttpServletRequest request
     ) {
-        return ApiResponse.success(requestId(request), albumService.listAlbumPosts(albumId, currentUser));
+        CursorPage<PostSummaryDto> page = albumService.listAlbumPosts(albumId, currentUser, cursor, pageSize);
+        return ApiResponse.success(
+                requestId(request),
+                page.items(),
+                new PageInfo(1, page.pageSize(), page.nextCursor(), page.hasMore())
+        );
     }
 
     @Operation(summary = "Rename large album", security = @SecurityRequirement(name = "bearerAuth"))

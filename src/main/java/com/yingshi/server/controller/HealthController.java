@@ -1,8 +1,10 @@
 package com.yingshi.server.controller;
 
+import com.yingshi.server.common.auth.AuthRequired;
 import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
 import com.yingshi.server.dto.health.HealthResponse;
+import com.yingshi.server.dto.health.PublicHealthResponse;
 import com.yingshi.server.service.HealthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,9 +24,17 @@ public class HealthController {
         this.healthService = healthService;
     }
 
-    @Operation(summary = "Health check")
+    @Operation(summary = "Public health check (minimal, no dependencies probed)")
     @GetMapping
-    public ApiResponse<HealthResponse> health(HttpServletRequest request) {
+    public ApiResponse<PublicHealthResponse> health(HttpServletRequest request) {
+        String requestId = (String) request.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
+        return ApiResponse.success(requestId, healthService.getPublicHealth());
+    }
+
+    @Operation(summary = "Detailed health check (requires authentication)")
+    @AuthRequired
+    @GetMapping("/detailed")
+    public ApiResponse<HealthResponse> healthDetailed(HttpServletRequest request) {
         String requestId = (String) request.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
         return ApiResponse.success(requestId, healthService.getHealth());
     }

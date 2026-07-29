@@ -7,6 +7,8 @@ import com.yingshi.server.domain.UserEntity;
 import com.yingshi.server.repository.SharedLibraryMemberRepository;
 import com.yingshi.server.repository.SharedLibraryRepository;
 import com.yingshi.server.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -20,6 +22,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 @ConditionalOnProperty(name = "app.dev-seed.enabled", havingValue = "true", matchIfMissing = true)
 public class DevAuthSeedDataInitializer {
 
+    private static final Logger log = LoggerFactory.getLogger(DevAuthSeedDataInitializer.class);
+
     public static final String DEMO_LIBRARY_ID = "library_shared";
     private static final String DEMO_PASSWORD = "123456";
 
@@ -32,6 +36,7 @@ public class DevAuthSeedDataInitializer {
             PasswordEncoder passwordEncoder
     ) {
         return args -> {
+            log.info("DevAuthSeedDataInitializer: starting seed data initialization");
             SharedLibraryEntity library = libraryRepository.findById(DEMO_LIBRARY_ID)
                     .orElseGet(() -> {
                         SharedLibraryEntity created = new SharedLibraryEntity();
@@ -41,6 +46,7 @@ public class DevAuthSeedDataInitializer {
             library.setDisplayName("\u6211\u4eec\u7684\u5c0f\u7a7a\u95f4");
             libraryRepository.save(library);
 
+            // 用户选择: 直接使用个人真实邮箱作为登录账号, 与 Android BuildConfig 一致.
             UserEntity demoA = upsertUser(
                     userRepository,
                     passwordEncoder,
@@ -57,6 +63,8 @@ public class DevAuthSeedDataInitializer {
                     "\u53e6\u4e00\u534a",
                     "\u628a\u751f\u6d3b\u91cc\u7684\u95ea\u5149\u7247\u6bb5\uff0c\u4e5f\u628a\u5b89\u9759\u548c\u60f3\u5ff5\u4e00\u8d77\u7559\u4e0b\u6765\u3002"
             );
+            log.info("DevAuthSeedDataInitializer: seed users created - demoA(id={}, account={}), demoB(id={}, account={})",
+                    demoA.getId(), demoA.getAccount(), demoB.getId(), demoB.getAccount());
 
             upsertMember(libraryMemberRepository, "member_demo_a", DEMO_LIBRARY_ID, demoA.getId(), SharedLibraryRole.OWNER);
             upsertMember(libraryMemberRepository, "member_demo_b", DEMO_LIBRARY_ID, demoB.getId(), SharedLibraryRole.MEMBER);
@@ -72,13 +80,15 @@ public class DevAuthSeedDataInitializer {
             String bio
     ) {
         String normalizedAccount = account.trim().toLowerCase();
+        // Migration-safe lookup: first by account, then by ID.
+        // Handles legacy seed data where id="user_demo_a" but account="old_email@qq.com".
         UserEntity user = userRepository.findByAccount(normalizedAccount)
-                .orElseGet(() -> {
-                    UserEntity created = new UserEntity();
-                    created.setId(id);
-                    created.setAccount(normalizedAccount);
-                    return created;
-        });
+                .orElseGet(() -> userRepository.findById(id)
+                        .orElseGet(() -> {
+                            UserEntity created = new UserEntity();
+                            created.setId(id);
+                            return created;
+                        }));
         user.setAccount(normalizedAccount);
         user.setDisplayName(displayName);
         user.setBio(bio);

@@ -50,9 +50,11 @@ app:
       enabled: ${AUTH_MAIL_ENABLED:true}
       host: ${AUTH_MAIL_HOST:smtp.qq.com}
       port: ${AUTH_MAIL_PORT:587}
-      username: ${AUTH_MAIL_USERNAME:1085060329@qq.com}
+      # H1 修复: dev 环境不再硬编码个人邮箱. 开发者本地通过环境变量 AUTH_MAIL_USERNAME 注入,
+      # 缺失时为空字符串, 启用 SMTP 时由 fail-fast 校验抛出明确错误 (而非泄露个人邮箱到代码库).
+      username: ${AUTH_MAIL_USERNAME:}
       password: ${AUTH_MAIL_PASSWORD:}
-      from-address: ${AUTH_MAIL_FROM_ADDRESS:1085060329@qq.com}
+      from-address: ${AUTH_MAIL_FROM_ADDRESS:}
       from-name: ${AUTH_MAIL_FROM_NAME:映世}
       auth: ${AUTH_MAIL_AUTH:true}
       starttls: ${AUTH_MAIL_STARTTLS:true}

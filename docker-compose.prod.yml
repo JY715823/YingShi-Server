@@ -1,21 +1,22 @@
 # ============================================================
-# YingShi Production Docker Compose (8443 端口方案)
+# YingShi Production Docker Compose (标准 443 端口方案)
 # ============================================================
-# 免备案：使用 8443 端口提供 HTTPS 服务，避开 80/443 端口的备案拦截
+# ICP 备案已通过（蜀ICP备2026042518号），使用标准端口
 #
 # 端口规划：
-#   80   → Let's Encrypt 证书验证 + HTTP→HTTPS 跳转
-#   8443 → HTTPS 主服务（API + 下载页 + APK 下载）
+#   80  → Let's Encrypt 证书验证 + HTTP→HTTPS 跳转
+#   443 → HTTPS 主服务（API + 下载页 + APK 下载）
+#
+# 安全策略：
+#   - postgres / minio 不暴露端口到宿主机（仅容器网络可达）
+#   - nginx 仅暴露 80 / 443
+#   - server 仅绑定 127.0.0.1（由 nginx 反代）
+#   - 所有密钥强制从环境变量读取（缺失时 fail-fast）
+#   - SPRING_PROFILES_ACTIVE=prod, dev seed 关闭, 生产安全开关开启
 #
 # 使用方法：
-#   1. cp .env.example .env 并配置所有变量
-#   2. SSL 证书申请（首次）：
-#      docker run --rm \
-#        -v /opt/yingshi/nginx/certs:/etc/letsencrypt \
-#        -v /opt/yingshi/nginx/www:/var/www/certbot \
-#        certbot/certbot certonly --webroot -w /var/www/certbot \
-#        -d yingshi92.xyz --email 1085060329@qq.com --agree-tos --no-eff-email
-#   3. docker compose -f docker-compose.prod.yml up -d
+#   1. cp .env.prod .env 并配置所有变量（缺失密钥会报错）
+#   2. docker compose -f docker-compose.prod.yml up -d
 # ============================================================
 
 services:
@@ -26,7 +27,7 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      - "8443:8443"
+      - "443:443"
     volumes:
       - ./nginx/nginx-8443.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/certs:/etc/letsencrypt:ro
@@ -36,7 +37,7 @@ services:
       server:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:80/ || exit 1"]
+      test: ["CMD-SHELL", "curl -skf https://localhost:443/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -48,13 +49,23 @@ services:
     networks:
       - yingshi-net
 
-  # ---- PostgreSQL ----
+  # ---- PostgreSQL (生产：不暴露端口) ----
   postgres:
-    extends:
-      file: docker-compose.yml
-      service: postgres
-    # 生产环境：不暴露端口到宿主机，仅容器网络可达
+    image: postgres:16-alpine
+    container_name: yingshi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-yingshi}
+      POSTGRES_USER: ${POSTGRES_USER:-yingshi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for production}
     ports: []
+    volumes:
+      - ${STORAGE_HOST_PATH:-/opt/yingshi/storage}/postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-yingshi} -d ${POSTGRES_DB:-yingshi}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     deploy:
       resources:
         limits:
@@ -63,13 +74,23 @@ services:
     networks:
       - yingshi-net
 
-  # ---- MinIO 对象存储 ----
+  # ---- MinIO 对象存储 (生产：不暴露端口) ----
   minio:
-    extends:
-      file: docker-compose.yml
-      service: minio
-    # 生产环境：不暴露端口到宿主机，仅容器网络可达
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: yingshi-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required for production}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required for production}
     ports: []
+    volumes:
+      - ${STORAGE_HOST_PATH:-/opt/yingshi/storage}/minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     deploy:
       resources:
         limits:
@@ -78,35 +99,121 @@ services:
     networks:
       - yingshi-net
 
+  # ---- MinIO 初始化 (创建 bucket) ----
   minio-init:
-    extends:
-      file: docker-compose.yml
-      service: minio-init
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    container_name: yingshi-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required for production}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required for production}
+      MINIO_BUCKET: ${MINIO_BUCKET:-yingshi-media}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      mc mb --ignore-existing local/$$MINIO_BUCKET &&
+      mc anonymous set none local/$$MINIO_BUCKET
+      "
     networks:
       - yingshi-net
 
-  # ---- Spring Boot 应用 ----
+  # ---- Spring Boot 应用 (生产配置) ----
   server:
-    extends:
-      file: docker-compose.yml
-      service: server
-    # 生产环境：仅绑定 localhost，由 Nginx 处理外部访问
+    image: yingshi-server:${SERVER_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yingshi-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      # 生产 profile 与安全开关（固定值，不从 env 读取）
+      SPRING_PROFILES_ACTIVE: prod
+      APP_PRODUCTION_SAFETY_ENABLED: "true"
+      APP_DEV_SEED_ENABLED: "false"
+      # 数据库（密码强制从 env 读取）
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://postgres:5432/yingshi}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-yingshi}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?SPRING_DATASOURCE_PASSWORD is required for production}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: ${SPRING_JPA_HIBERNATE_DDL_AUTO:-validate}
+      SPRING_FLYWAY_ENABLED: ${SPRING_FLYWAY_ENABLED:-true}
+      SPRING_FLYWAY_BASELINE_ON_MIGRATE: ${SPRING_FLYWAY_BASELINE_ON_MIGRATE:-false}
+      SPRING_FLYWAY_BASELINE_VERSION: ${SPRING_FLYWAY_BASELINE_VERSION:-1}
+      # 对象存储（密钥强制从 env 读取）
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-s3}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-yingshi-media}
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-http://minio:9000}
+      STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?STORAGE_ACCESS_KEY is required for production}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?STORAGE_SECRET_KEY is required for production}
+      STORAGE_CDN_DOMAIN: ${STORAGE_CDN_DOMAIN:-}
+      STORAGE_CDN_AUTH_KEY: ${STORAGE_CDN_AUTH_KEY:-}
+      STORAGE_CDN_SIGN_PARAM: ${STORAGE_CDN_SIGN_PARAM:-sign}
+      STORAGE_CDN_TIMESTAMP_PARAM: ${STORAGE_CDN_TIMESTAMP_PARAM:-t}
+      STORAGE_SIGNED_URL_TTL: ${STORAGE_SIGNED_URL_TTL:-PT15M}
+      STORAGE_DIRECT_UPLOAD_ENABLED: ${STORAGE_DIRECT_UPLOAD_ENABLED:-true}
+      STORAGE_DIRECT_UPLOAD_PUBLIC_ENDPOINT: ${STORAGE_DIRECT_UPLOAD_PUBLIC_ENDPOINT:-}
+      STORAGE_FORCE_PATH_STYLE: ${STORAGE_FORCE_PATH_STYLE:-true}
+      # JWT 密钥（强制从 env 读取）
+      APP_AUTH_JWT_SECRET: ${APP_AUTH_JWT_SECRET:?APP_AUTH_JWT_SECRET is required for production}
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-}
+      # 邮件
+      AUTH_MAIL_ENABLED: ${AUTH_MAIL_ENABLED:-true}
+      AUTH_MAIL_HOST: ${AUTH_MAIL_HOST:-smtp.qq.com}
+      AUTH_MAIL_PORT: ${AUTH_MAIL_PORT:-587}
+      AUTH_MAIL_USERNAME: ${AUTH_MAIL_USERNAME:-}
+      AUTH_MAIL_PASSWORD: ${AUTH_MAIL_PASSWORD:-}
+      AUTH_MAIL_FROM_ADDRESS: ${AUTH_MAIL_FROM_ADDRESS:-}
+      AUTH_MAIL_FROM_NAME: ${AUTH_MAIL_FROM_NAME:-映世}
+      AUTH_MAIL_AUTH: ${AUTH_MAIL_AUTH:-true}
+      AUTH_MAIL_STARTTLS: ${AUTH_MAIL_STARTTLS:-true}
+      AUTH_LOGIN_CODE_LENGTH: ${AUTH_LOGIN_CODE_LENGTH:-6}
+      AUTH_LOGIN_CODE_TTL: ${AUTH_LOGIN_CODE_TTL:-PT5M}
+      AUTH_LOGIN_CODE_RESEND_COOLDOWN: ${AUTH_LOGIN_CODE_RESEND_COOLDOWN:-PT60S}
+      AUTH_LOGIN_CODE_RATE_LIMIT_WINDOW: ${AUTH_LOGIN_CODE_RATE_LIMIT_WINDOW:-PT30M}
+      AUTH_LOGIN_CODE_MAX_SENDS_PER_WINDOW: ${AUTH_LOGIN_CODE_MAX_SENDS_PER_WINDOW:-5}
+      AUTH_LOGIN_CODE_MAX_ATTEMPTS_PER_CHALLENGE: ${AUTH_LOGIN_CODE_MAX_ATTEMPTS_PER_CHALLENGE:-5}
+      # FCM 推送
+      FCM_ENABLED: ${FCM_ENABLED:-false}
+      FCM_DRY_RUN: ${FCM_DRY_RUN:-false}
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID:-}
+      FCM_SERVICE_ACCOUNT_PATH: ${FCM_SERVICE_ACCOUNT_PATH:-}
+      FCM_SERVICE_ACCOUNT_JSON_BASE64: ${FCM_SERVICE_ACCOUNT_JSON_BASE64:-}
+      # 高德反向地理编码
+      AMAP_GEOCODING_ENABLED: ${AMAP_GEOCODING_ENABLED:-true}
+      AMAP_GEOCODING_KEY: ${AMAP_GEOCODING_KEY:-}
+      AMAP_GEOCODING_ENDPOINT: ${AMAP_GEOCODING_ENDPOINT:-https://restapi.amap.com/v3/geocode/regeo}
+      AMAP_GEOCODING_TIMEOUT_MILLIS: ${AMAP_GEOCODING_TIMEOUT_MILLIS:-3000}
+      # 代理
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres,minio}
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:-}
+      SERVER_PORT: ${SERVER_PORT:-8080}
+      YINGSHI_FFMPEG_PATH: ${YINGSHI_FFMPEG_PATH:-/usr/bin/ffmpeg}
     ports:
       - "127.0.0.1:${SERVER_HOST_PORT:-8080}:8080"
-    # 健康检查：Nginx 依赖 server 健康才启动
+    volumes:
+      - ${FCM_SERVICE_ACCOUNT_HOST_PATH:-/opt/yingshi/.missing-firebase-service-account.json}:/run/secrets/firebase-service-account.json:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health/liveness || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
       start_period: 40s
-    networks:
-      - yingshi-net
     deploy:
       resources:
         limits:
           memory: 1G
           cpus: '1.00'
+    networks:
+      - yingshi-net
 
 networks:
   yingshi-net:

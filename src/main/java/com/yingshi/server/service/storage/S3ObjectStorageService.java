@@ -28,35 +28,47 @@ import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
-import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
-import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.io.InputStream;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 
 @Service
 @ConditionalOnExpression("'${app.storage.provider:local}' == 's3' || '${app.storage.provider:local}' == 'minio' || '${app.storage.provider:local}' == 'cos'")
 public class S3ObjectStorageService implements ObjectStorageService {
 
     private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
+    private static final DateTimeFormatter DATE_STAMP_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final DateTimeFormatter AMZ_DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'");
 
     private final StorageProperties storageProperties;
     private final S3Client s3Client;
     private final S3Presigner s3Presigner;
     private final S3Presigner publicPresigner;
+    private final URI publicPresignerEndpoint;
 
     public S3ObjectStorageService(StorageProperties storageProperties) {
         this.storageProperties = storageProperties;
         this.s3Client = buildClient(storageProperties);
         this.s3Presigner = buildPresigner(storageProperties);
         this.publicPresigner = buildPublicPresigner(storageProperties);
+        String pubEndpoint = storageProperties.directUploadPublicEndpoint();
+        this.publicPresignerEndpoint = pubEndpoint != null ? URI.create(pubEndpoint) : null;
     }
 
     @Override
@@ -243,26 +255,91 @@ public class S3ObjectStorageService implements ObjectStorageService {
             Long sizeBytes,
             Duration ttl
     ) {
-        String normalizedObjectKey = normalizeObjectKey(objectKey);
-        PutObjectRequest putObjectRequest = PutObjectRequest.builder()
-                .bucket(bucket())
-                .key(normalizedObjectKey)
-                .contentType(normalizeContentType(contentType))
-                .contentLength(requireSize(sizeBytes))
-                .build();
-        PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
-                .signatureDuration(ttl)
-                .putObjectRequest(putObjectRequest)
-                .build();
-        S3Presigner presigner = publicPresigner != null ? publicPresigner : s3Presigner;
-        PresignedPutObjectRequest presignedRequest = presigner.presignPutObject(presignRequest);
-        Map<String, String> headers = flattenHeaders(presignedRequest.signedHeaders());
-        headers.putIfAbsent("Content-Type", normalizeContentType(contentType));
-        return Optional.of(new PresignedObjectUrl(
-                presignedRequest.url().toString(),
-                presignedRequest.expiration().toEpochMilli(),
-                headers
-        ));
+        // Custom SigV4 presigned URL that only signs host + content-type, NOT content-length.
+        // AWS SDK v2 S3Presigner always signs content-length, which causes SignatureDoesNotMatch
+        // on COS when the client's actual Content-Length differs from the pre-signed value.
+        URI endpoint = publicPresignerEndpoint != null ? publicPresignerEndpoint : URI.create(storageProperties.endpoint());
+        String normalizedContentType = normalizeContentType(contentType);
+        String normalizedKey = normalizeObjectKey(objectKey);
+        long expiresSeconds = Math.max(1, ttl.getSeconds());
+
+        try {
+            // Virtual-hosted style (default for COS/S3): bucket name as subdomain
+            String host = storageProperties.forcePathStyle()
+                    ? endpoint.getHost()
+                    : bucket() + "." + endpoint.getHost();
+            String path = storageProperties.forcePathStyle()
+                    ? "/" + bucket() + "/" + normalizedKey
+                    : "/" + normalizedKey;
+            String dateStamp = ZonedDateTime.now(ZoneOffset.UTC).format(DATE_STAMP_FMT);
+            String amzDate = ZonedDateTime.now(ZoneOffset.UTC).format(AMZ_DATE_FMT);
+            String credentialScope = dateStamp + "/" + storageProperties.region() + "/s3/aws4_request";
+            String credential = storageProperties.accessKey() + "/" + credentialScope;
+
+            // Canonical headers: only host + content-type (NO content-length)
+            TreeMap<String, String> canonicalHeaders = new TreeMap<>();
+            canonicalHeaders.put("content-type", normalizedContentType);
+            canonicalHeaders.put("host", host);
+            String signedHeadersStr = "content-type;host";
+
+            StringBuilder canonicalHeadersBlock = new StringBuilder();
+            for (Map.Entry<String, String> e : canonicalHeaders.entrySet()) {
+                canonicalHeadersBlock.append(e.getKey()).append(':').append(e.getValue()).append('\n');
+            }
+
+            // Query parameters for presigned URL
+            TreeMap<String, String> queryParams = new TreeMap<>();
+            queryParams.put("X-Amz-Algorithm", "AWS4-HMAC-SHA256");
+            queryParams.put("X-Amz-Credential", credential);
+            queryParams.put("X-Amz-Date", amzDate);
+            queryParams.put("X-Amz-Expires", String.valueOf(expiresSeconds));
+            queryParams.put("X-Amz-SignedHeaders", signedHeadersStr);
+
+            StringBuilder canonicalQueryString = new StringBuilder();
+            for (Map.Entry<String, String> e : queryParams.entrySet()) {
+                if (canonicalQueryString.length() > 0) canonicalQueryString.append('&');
+                canonicalQueryString.append(uriEncode(e.getKey())).append('=').append(uriEncode(e.getValue()));
+            }
+
+            // Canonical request
+            String canonicalRequest = "PUT\n"
+                    + path + "\n"
+                    + canonicalQueryString + "\n"
+                    + canonicalHeadersBlock + "\n"
+                    + signedHeadersStr + "\n"
+                    + "UNSIGNED-PAYLOAD";
+
+            // String to sign
+            String hashedCanonicalRequest = sha256Hex(canonicalRequest);
+            String stringToSign = "AWS4-HMAC-SHA256\n"
+                    + amzDate + "\n"
+                    + credentialScope + "\n"
+                    + hashedCanonicalRequest;
+
+            // Signing key
+            byte[] kDate = hmacSha256(("AWS4" + storageProperties.secretKey()).getBytes(StandardCharsets.UTF_8), dateStamp);
+            byte[] kRegion = hmacSha256(kDate, storageProperties.region());
+            byte[] kService = hmacSha256(kRegion, "s3");
+            byte[] kSigning = hmacSha256(kService, "aws4_request");
+
+            // Signature
+            String signature = bytesToHex(hmacSha256(kSigning, stringToSign));
+
+            // Build presigned URL
+            String presignedUrl = endpoint.getScheme() + "://" + host + path
+                    + "?" + canonicalQueryString
+                    + "&X-Amz-Signature=" + signature;
+
+            // Headers for client (only content-type, no content-length)
+            Map<String, String> headers = new LinkedHashMap<>();
+            headers.put("Content-Type", normalizedContentType);
+
+            long expirationMillis = System.currentTimeMillis() + (expiresSeconds * 1000);
+            return Optional.of(new PresignedObjectUrl(presignedUrl, expirationMillis, headers));
+        } catch (Exception e) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.UPLOAD_STORAGE_ERROR,
+                    "Failed to generate presigned upload URL: " + e.getMessage());
+        }
     }
 
     @Override
@@ -377,6 +454,34 @@ public class S3ObjectStorageService implements ObjectStorageService {
             }
         });
         return headers;
+    }
+
+    // ---- Manual SigV4 presigned URL helpers (bypasses SDK's mandatory content-length signing) ----
+
+    private static String sha256Hex(String data) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        return bytesToHex(digest.digest(data.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static byte[] hmacSha256(byte[] key, String data) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(key, "HmacSHA256"));
+        return mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
+    private static String uriEncode(String input) {
+        return URLEncoder.encode(input, StandardCharsets.UTF_8)
+                .replace("+", "%20")
+                .replace("*", "%2A")
+                .replace("%7E", "~");
     }
 
     private static final class S3ObjectResource extends AbstractResource {

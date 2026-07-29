@@ -66,7 +66,11 @@ public final class LedgerChangeRows {
             Integer sortOrder,
             Long deletedAtMillis,
             Long createdAtMillis,
-            Long updatedAtMillis
+            Long updatedAtMillis,
+            String ownerUserId,
+            String bankKey,
+            String bankName,
+            String cardNumberTail
     ) {
     }
 

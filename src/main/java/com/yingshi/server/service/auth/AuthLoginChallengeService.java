@@ -26,6 +26,7 @@ public class AuthLoginChallengeService {
     private final PasswordEncoder passwordEncoder;
     private final AuthLoginCodeSender authLoginCodeSender;
     private final AuthLoginCodeProperties properties;
+    private final AuthFailurePersistenceService authFailurePersistenceService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AuthLoginChallengeService(
@@ -33,13 +34,15 @@ public class AuthLoginChallengeService {
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             AuthLoginCodeSender authLoginCodeSender,
-            AuthLoginCodeProperties properties
+            AuthLoginCodeProperties properties,
+            AuthFailurePersistenceService authFailurePersistenceService
     ) {
         this.challengeRepository = challengeRepository;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authLoginCodeSender = authLoginCodeSender;
         this.properties = properties;
+        this.authFailurePersistenceService = authFailurePersistenceService;
     }
 
     @Transactional
@@ -104,8 +107,9 @@ public class AuthLoginChallengeService {
             throw invalidChallenge("登录验证码已失效，请重新获取验证码。");
         }
         if (challenge.getExpireAt().isBefore(now)) {
-            challenge.setInvalidatedAt(now);
-            challengeRepository.save(challenge);
+            // 过期失效：调用 AuthFailurePersistenceService（REQUIRES_NEW 独立事务），
+            // 确保失效标记在外层事务回滚后仍持久化，防止过期验证码被重放。
+            authFailurePersistenceService.recordChallengeFailure(challenge, null, now);
             throw new ApiException(
                     HttpStatus.GONE,
                     ErrorCode.AUTH_LOGIN_CODE_EXPIRED,
@@ -116,11 +120,10 @@ public class AuthLoginChallengeService {
         String normalizedCode = normalizeCode(rawCode);
         if (!passwordEncoder.matches(normalizedCode, challenge.getCodeHash())) {
             int nextFailedAttempts = challenge.getFailedAttempts() + 1;
-            challenge.setFailedAttempts(nextFailedAttempts);
-            if (nextFailedAttempts >= properties.maxAttemptsPerChallenge()) {
-                challenge.setInvalidatedAt(now);
-            }
-            challengeRepository.save(challenge);
+            Instant invalidateAt = nextFailedAttempts >= properties.maxAttemptsPerChallenge() ? now : null;
+            // 验证失败：调用 AuthFailurePersistenceService（REQUIRES_NEW 独立事务），
+            // 确保失败计数/失效标记在外层事务回滚后仍持久化，防止暴力破解。
+            authFailurePersistenceService.recordChallengeFailure(challenge, nextFailedAttempts, invalidateAt);
             throw new ApiException(
                     HttpStatus.BAD_REQUEST,
                     ErrorCode.AUTH_LOGIN_CODE_INVALID,
@@ -166,8 +169,9 @@ public class AuthLoginChallengeService {
             throw invalidChallenge("登录验证码已失效，请重新获取验证码。");
         }
         if (challenge.getExpireAt().isBefore(now)) {
-            challenge.setInvalidatedAt(now);
-            challengeRepository.save(challenge);
+            // 过期失效：调用 AuthFailurePersistenceService（REQUIRES_NEW 独立事务），
+            // 确保失效标记在外层事务回滚后仍持久化，防止过期验证码被重放。
+            authFailurePersistenceService.recordChallengeFailure(challenge, null, now);
             throw new ApiException(
                     HttpStatus.GONE,
                     ErrorCode.AUTH_LOGIN_CODE_EXPIRED,
