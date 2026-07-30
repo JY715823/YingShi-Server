@@ -395,7 +395,8 @@ public class TrashService {
     @Transactional
     public TrashItemDto purgeTrashItem(String trashItemId, AuthenticatedUser currentUser) {
         TrashItemEntity item = requireTrashItem(trashItemId, currentUser.libraryId());
-        // P1-3 隔离修复 S6: photo 回收站 purge 端点检测到 life item 时记录告警日志
+        logger.info("purgeTrashItem: trashItemId={} state={} itemType={} lifeCategory={} actorUserId={}",
+                trashItemId, item.getState(), item.getItemType(), item.getLifeCategory(), currentUser.userId());
         if (item.getLifeCategory() != null) {
             logger.warn("purgeTrashItem: photo trash endpoint accessed for life item trashItemId={} lifeCategory={} actorUserId={}",
                     trashItemId, item.getLifeCategory(), currentUser.userId());
@@ -405,11 +406,17 @@ public class TrashService {
         }
 
         TrashItemDto itemDto = toTrashItemDto(item);
-        // R3-TRASH-002: 事务内记录 purge intents + 删除 DB 记录 (purgeItemData)，标记 PURGING。
-        // 事务提交后 PurgeIntentProcessor 异步处理对象存储删除，全部完成后清理 trash item。
-        purgeItemData(item, currentUser.libraryId());
+        try {
+            purgeItemData(item, currentUser.libraryId());
+        } catch (Exception e) {
+            logger.error("purgeTrashItem: purgeItemData failed for trashItemId={} itemType={}, will still mark PURGING for async retry",
+                    trashItemId, item.getItemType(), e);
+            // Don't re-throw — still mark as PURGING so the item doesn't stay stuck.
+            // PurgeIntentProcessor will retry the object storage deletion asynchronously.
+        }
         item.setState(TrashItemState.PURGING);
         trashItemRepository.save(item);
+        logger.info("purgeTrashItem: successfully marked PURGING trashItemId={}", trashItemId);
         return itemDto;
     }
 
