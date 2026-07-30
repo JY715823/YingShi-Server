@@ -146,7 +146,8 @@ public class ContentMapper {
                 access(media, localMediaUrl, previewMediaUrl, originalUrl, videoUrl, coverUrl),
                 media.getLatitude(),
                 media.getLongitude(),
-                media.getLocationLabel()
+                media.getLocationLabel(),
+                media.getExifMetadata()
         );
     }
 

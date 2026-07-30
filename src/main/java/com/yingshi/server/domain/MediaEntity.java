@@ -116,6 +116,10 @@ public class MediaEntity extends LibraryScopedEntity {
     @Column(name = "location_label", length = 255)
     private String locationLabel;
 
+    @Column(name = "exif_metadata", columnDefinition = "jsonb")
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    private java.util.Map<String, Object> exifMetadata;
+
     public String getId() {
         return id;
     }
@@ -378,5 +382,13 @@ public class MediaEntity extends LibraryScopedEntity {
 
     public void setLocationLabel(String locationLabel) {
         this.locationLabel = locationLabel;
+    }
+
+    public java.util.Map<String, Object> getExifMetadata() {
+        return exifMetadata;
+    }
+
+    public void setExifMetadata(java.util.Map<String, Object> exifMetadata) {
+        this.exifMetadata = exifMetadata;
     }
 }

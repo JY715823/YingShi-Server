@@ -31,7 +31,9 @@ public record MediaDto(
         // FR-18: Location tracking (nullable, optional)
         Double latitude,
         Double longitude,
-        String locationLabel
+        String locationLabel,
+        // V49: EXIF拍摄参数(JSONB, 灵活扩展)
+        java.util.Map<String, Object> exifMetadata
 ) {
     @JsonIgnore
     public List<String> postIds() {
