@@ -568,7 +568,8 @@ public class LifeConsoleService {
                 source.access(),
                 source.latitude(),
                 source.longitude(),
-                source.locationLabel()
+                source.locationLabel(),
+                source.exifMetadata()
         );
     }
 
