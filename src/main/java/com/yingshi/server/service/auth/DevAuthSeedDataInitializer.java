@@ -18,7 +18,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 @Configuration
-@Profile({"dev", "docker-local"})
+@Profile({"dev", "docker-local", "docker"})
 @ConditionalOnProperty(name = "app.dev-seed.enabled", havingValue = "true", matchIfMissing = true)
 public class DevAuthSeedDataInitializer {
 
