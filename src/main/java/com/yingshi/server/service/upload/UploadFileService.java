@@ -138,6 +138,16 @@ public class UploadFileService {
             mediaId = IdGenerator.newId("media");
         }
         try {
+            // V49: 在存储前提取EXIF, 避免存储到COS后再下载回来的浪费
+            java.util.Map<String, Object> preExtractedExif = null;
+            if (task.getMediaType() == MediaType.IMAGE) {
+                try {
+                    preExtractedExif = exifExtractionService.extractExifMetadata(file.getInputStream());
+                } catch (Exception exifEx) {
+                    logger.warn("Pre-upload EXIF extraction failed for {}: {}", task.getFileName(), exifEx.getMessage());
+                }
+            }
+
             LocalMediaStorageService.StoredFile storedFile = localMediaStorageService.storeOriginal(
                     mediaId,
                     task.getDisplayTimeMillis(),
@@ -150,7 +160,7 @@ public class UploadFileService {
 
             MediaEntity media = null;
             try {
-                media = buildMediaFromTask(mediaId, task, storedFile);
+                media = buildMediaFromTask(mediaId, task, storedFile, preExtractedExif);
                 warmPreviewIfPossible(media);
                 ensureUploadCanComplete(task, storedFile.storagePath(), null);
                 mediaRepository.save(media);
@@ -220,7 +230,7 @@ public class UploadFileService {
                 ensureUploadCanComplete(task, objectKey, null);
                 MediaEntity media = null;
                 try {
-                    media = buildMediaFromTask(mediaId, task, storedFile);
+                    media = buildMediaFromTask(mediaId, task, storedFile, null);
                     warmPreviewIfPossible(media);
                     ensureUploadCanComplete(task, objectKey, null);
                     mediaRepository.save(media);
@@ -365,7 +375,9 @@ public class UploadFileService {
         }
     }
 
-    private MediaEntity buildMediaFromTask(String mediaId, UploadTaskEntity task, LocalMediaStorageService.StoredFile storedFile) {
+    private MediaEntity buildMediaFromTask(String mediaId, UploadTaskEntity task,
+                                           LocalMediaStorageService.StoredFile storedFile,
+                                           java.util.Map<String, Object> preExtractedExif) {
         String mediaUrl = "/api/media/files/" + mediaId;
 
         MediaEntity media = new MediaEntity();
@@ -433,29 +445,33 @@ public class UploadFileService {
                         "Image metadata verification failed: " + e.getMessage());
             }
         }
-        // V49: 提取EXIF拍摄参数(光圈/快门/ISO/焦距/相机/镜头), 失败不阻塞上传
+        // V49: EXIF拍摄参数 — 优先使用上传前预提取的结果, 仅direct-upload回退到COS下载
         if (task.getMediaType() == MediaType.IMAGE) {
-            try {
-                java.util.Map<String, Object> exif;
-                if ("local".equals(storedFile.storageProvider())) {
-                    exif = exifExtractionService.extractExifMetadata(new java.io.File(storedFile.storagePath()));
-                } else {
-                    // S3/COS: 下载临时文件提取EXIF后删除
-                    java.io.File tmpFile = java.io.File.createTempFile("exif-", ".tmp");
-                    try {
-                        try (java.io.InputStream is = localMediaStorageService
-                                .loadObject(storedFile.objectKey()).getInputStream();
-                             java.io.OutputStream os = new java.io.FileOutputStream(tmpFile)) {
-                            is.transferTo(os);
+            if (preExtractedExif != null) {
+                media.setExifMetadata(preExtractedExif);
+            } else {
+                try {
+                    java.util.Map<String, Object> exif;
+                    if ("local".equals(storedFile.storageProvider())) {
+                        exif = exifExtractionService.extractExifMetadata(new java.io.File(storedFile.storagePath()));
+                    } else {
+                        // S3/COS direct-upload回退: 下载临时文件提取EXIF后删除
+                        java.io.File tmpFile = java.io.File.createTempFile("exif-", ".tmp");
+                        try {
+                            try (java.io.InputStream is = localMediaStorageService
+                                    .loadObject(storedFile.objectKey()).getInputStream();
+                                 java.io.OutputStream os = new java.io.FileOutputStream(tmpFile)) {
+                                is.transferTo(os);
+                            }
+                            exif = exifExtractionService.extractExifMetadata(tmpFile);
+                        } finally {
+                            tmpFile.delete();
                         }
-                        exif = exifExtractionService.extractExifMetadata(tmpFile);
-                    } finally {
-                        tmpFile.delete();
                     }
+                    media.setExifMetadata(exif);
+                } catch (Exception ex) {
+                    logger.warn("EXIF extraction failed for media {}: {}", mediaId, ex.getMessage());
                 }
-                media.setExifMetadata(exif);
-            } catch (Exception ex) {
-                logger.warn("EXIF extraction failed for media {}: {}", mediaId, ex.getMessage());
             }
         }
         return media;

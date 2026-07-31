@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.io.InputStream;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -27,17 +28,37 @@ public class ExifExtractionService {
 
     /**
      * 从图片文件中提取EXIF拍摄参数。
-     *
-     * @param sourceFile 原始图片文件
-     * @return EXIF参数Map，提取失败返回null
      */
     public Map<String, Object> extractExifMetadata(File sourceFile) {
         if (sourceFile == null || !sourceFile.exists() || !sourceFile.isFile()) {
             return null;
         }
         try {
-            Metadata metadata = ImageMetadataReader.readMetadata(sourceFile);
-            Map<String, Object> exif = new LinkedHashMap<>();
+            return buildExifMap(ImageMetadataReader.readMetadata(sourceFile));
+        } catch (Exception e) {
+            log.warn("Failed to extract EXIF metadata from {}: {}", sourceFile.getName(), e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 从InputStream提取EXIF拍摄参数。
+     * 用于上传流程中直接从MultipartFile提取，避免存储到COS后再下载回来的浪费。
+     */
+    public Map<String, Object> extractExifMetadata(InputStream inputStream) {
+        if (inputStream == null) {
+            return null;
+        }
+        try {
+            return buildExifMap(ImageMetadataReader.readMetadata(inputStream));
+        } catch (Exception e) {
+            log.warn("Failed to extract EXIF metadata from stream: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private Map<String, Object> buildExifMap(Metadata metadata) {
+        Map<String, Object> exif = new LinkedHashMap<>();
 
             // --- ExifIFD0: 相机品牌/型号 ---
             ExifIFD0Directory ifd0 = metadata.getFirstDirectoryOfType(ExifIFD0Directory.class);
@@ -95,11 +116,7 @@ public class ExifExtractionService {
                 }
             }
 
-            return exif.isEmpty() ? null : exif;
-        } catch (Exception e) {
-            log.warn("Failed to extract EXIF metadata from {}: {}", sourceFile.getName(), e.getMessage());
-            return null;
-        }
+        return exif.isEmpty() ? null : exif;
     }
 
     private void putIfPresent(Map<String, Object> map, String key, String value) {
