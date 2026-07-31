@@ -141,6 +141,8 @@ public class UploadTokenService {
         task.setLatitude(request.latitude());
         task.setLongitude(request.longitude());
         task.setLocationLabel(request.locationLabel());
+        // V49: 客户端提取的全部EXIF元数据，传递给MediaEntity
+        task.setExifMetadata(request.exifMetadata());
         task.setIdempotencyKey(idempotencyKey);
         // mediaId is not set here to avoid FK constraint violation on upload_tasks.media_id → media(id).
         // The media entity is created during file upload or confirmation, where mediaId is resolved

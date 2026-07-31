@@ -74,6 +74,9 @@ public record UploadTokenRequest(
         String locationLabel,
 
         @Size(max = 128, message = "idempotencyKey must be at most 128 characters.")
-        String idempotencyKey
+        String idempotencyKey,
+
+        // V49: 全部EXIF元数据（24个字段），客户端提取后发送，服务端直接存储
+        java.util.Map<String, Object> exifMetadata
 ) {
 }
