@@ -49,10 +49,13 @@ public class SseEmitterRegistry {
     private final Map<String, Map<String, Connection>> connectionsByLibrary = new ConcurrentHashMap<>();
 
     private final NotificationEventRepository notificationEventRepository;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public SseEmitterRegistry(NotificationEventRepository notificationEventRepository) {
+    public SseEmitterRegistry(NotificationEventRepository notificationEventRepository,
+                              org.springframework.transaction.PlatformTransactionManager transactionManager) {
         this.notificationEventRepository = notificationEventRepository;
+        this.transactionTemplate = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
     }
 
     /**
@@ -109,18 +112,24 @@ public class SseEmitterRegistry {
      */
     @Transactional
     public void sendToPartners(String libraryId, String actorUserId, Map<String, String> data) {
-        Map<String, Connection> libraryConnections = connectionsByLibrary.get(libraryId);
-        if (libraryConnections == null || libraryConnections.isEmpty()) {
-            log.info("SSE sendToPartners: no connections for libraryId={}, skipping", libraryId);
+        // BUG-1 fix: Always persist event FIRST, regardless of active connections.
+        // Previously, when no connections existed the method returned early without persisting,
+        // causing events to be permanently lost (no replay, no notification list entry).
+        Long eventId = persistEvent(libraryId, actorUserId, data);
+        if (eventId == null) {
+            log.warn("sendToPartners: persistEvent returned null, skipping SSE send for libraryId={}", libraryId);
             return;
         }
 
-        // R2-A-1: Persist event to notification_events table for replay after restart.
-        // user_id stores the actorUserId (audit purpose); replay is library-scoped.
-        long eventId = persistEvent(libraryId, actorUserId, data);
+        // Cache in memory ring buffer for fast in-memory replay path.
+        bufferEvent(new BufferedEvent(eventId.longValue(), libraryId, data));
 
-        // Still cache in memory ring buffer for fast in-memory replay path.
-        bufferEvent(new BufferedEvent(eventId, libraryId, data));
+        Map<String, Connection> libraryConnections = connectionsByLibrary.get(libraryId);
+        if (libraryConnections == null || libraryConnections.isEmpty()) {
+            log.info("SSE sendToPartners: no active connections for libraryId={}, event persisted (id={}) for replay",
+                libraryId, eventId);
+            return;
+        }
 
         int sent = 0;
         int skippedActor = 0;
@@ -154,35 +163,41 @@ public class SseEmitterRegistry {
      * Returns the database BIGSERIAL id used as the SSE event id.
      * Idempotent: if (eventId, libraryId, userId) already exists, reuses that id.
      */
-    private long persistEvent(String libraryId, String userId, Map<String, String> data) {
-        String businessEventId = data != null ? data.get("notificationId") : null;
-        String type = data != null ? data.get("type") : null;
-        if (businessEventId == null || businessEventId.isBlank()) {
-            // Fall back to a synthetic id if data has no notificationId field
-            businessEventId = "sse:" + libraryId + ":" + System.currentTimeMillis();
-        }
-        String jsonData;
-        try {
-            jsonData = objectMapper.writeValueAsString(data == null ? Map.of() : data);
-        } catch (Exception e) {
-            log.warn("Failed to serialize SSE data for persistence: {}", e.getMessage());
-            jsonData = "{}";
-        }
-        // Idempotent: reuse existing record if present
-        NotificationEventEntity existing = notificationEventRepository
-                .findByEventIdAndLibraryIdAndUserId(businessEventId, libraryId, userId)
-                .orElse(null);
-        if (existing != null) {
-            return existing.getId();
-        }
-        NotificationEventEntity entity = new NotificationEventEntity();
-        entity.setLibraryId(libraryId);
-        entity.setUserId(userId);
-        entity.setEventId(businessEventId);
-        entity.setType(type == null ? "message" : type);
-        entity.setData(jsonData);
-        NotificationEventEntity saved = notificationEventRepository.save(entity);
-        return saved.getId();
+    private Long persistEvent(String libraryId, String userId, Map<String, String> data) {
+        return transactionTemplate.execute(status -> {
+            String businessEventId = data != null ? data.get("notificationId") : null;
+            String type = data != null ? data.get("type") : null;
+            if (businessEventId == null || businessEventId.isBlank()) {
+                businessEventId = "sse:" + libraryId + ":" + System.currentTimeMillis();
+            }
+            String jsonData;
+            try {
+                jsonData = objectMapper.writeValueAsString(data == null ? Map.of() : data);
+            } catch (Exception e) {
+                log.warn("Failed to serialize SSE data for persistence: {}", e.getMessage());
+                jsonData = "{}";
+            }
+            // Idempotent: reuse existing record if present
+            NotificationEventEntity existing = notificationEventRepository
+                    .findByEventIdAndLibraryIdAndUserId(businessEventId, libraryId, userId)
+                    .orElse(null);
+            if (existing != null) {
+                return existing.getId();
+            }
+            NotificationEventEntity entity = new NotificationEventEntity();
+            entity.setLibraryId(libraryId);
+            entity.setUserId(userId);
+            entity.setEventId(businessEventId);
+            entity.setType(type == null ? "message" : type);
+            entity.setData(jsonData);
+            NotificationEventEntity saved = notificationEventRepository.saveAndFlush(entity);
+            Long savedId = saved.getId();
+            if (savedId == null) {
+                log.warn("persistEvent: saved entity has null id, event_id={}, libraryId={}, userId={}", businessEventId, libraryId, userId);
+                return null;
+            }
+            return savedId;
+        });
     }
 
     /**
@@ -212,11 +227,14 @@ public class SseEmitterRegistry {
      */
     public void replayEvents(String libraryId, long lastEventId, SseEmitter emitter) {
         int replayed = 0;
+        // BUG-2 fix: Track eventIds already sent from ring buffer to avoid duplicates from DB path.
+        java.util.Set<Long> sentIds = new java.util.HashSet<>();
 
         // Fast path: in-memory ring buffer (covers most reconnect cases)
         for (BufferedEvent event : eventBuffer) {
             if (event.eventId() > lastEventId && libraryId.equals(event.libraryId())) {
                 if (sendReplay(emitter, event.eventId(), event.data(), libraryId)) {
+                    sentIds.add(event.eventId());
                     replayed++;
                 } else {
                     break;
@@ -225,15 +243,15 @@ public class SseEmitterRegistry {
         }
 
         // R2-A-1: Persistent path — query event table for any events with id > lastEventId
-        // that are NOT in the ring buffer (e.g. server restart, or older than buffer window).
-        // This is what makes replay survive server restarts.
+        // that were NOT already replayed from the ring buffer (e.g. server restart,
+        // or older than buffer window). This is what makes replay survive server restarts.
         if (lastEventId > 0) {
             try {
                 List<NotificationEventEntity> missed = notificationEventRepository
                         .findByLibraryIdAndIdGreaterThanOrderByIdAsc(libraryId, lastEventId);
                 for (NotificationEventEntity entity : missed) {
-                    // Skip ones already replayed from ring buffer
-                    if (entity.getId() <= lastEventId) continue;
+                    // BUG-2 fix: Skip events already sent from ring buffer
+                    if (sentIds.contains(entity.getId())) continue;
                     Map<String, String> data = deserializeData(entity.getData());
                     if (sendReplay(emitter, entity.getId(), data, libraryId)) {
                         replayed++;

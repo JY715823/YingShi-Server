@@ -56,9 +56,6 @@ app:
     allowed-origins: http://localhost
   production-safety:
     enabled: false
-  push:
-    fcm:
-      enabled: false
 
 yingshi:
   dev:

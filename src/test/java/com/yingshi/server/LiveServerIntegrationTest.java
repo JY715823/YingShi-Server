@@ -128,9 +128,9 @@ class LiveServerIntegrationTest {
 
     @Test
     @Order(8)
-    void pushDiagnosticsRequiresAuth() throws Exception {
+    void pushPreferencesRequiresAuth() throws Exception {
         HttpResponse<String> resp = http.send(
-                HttpRequest.newBuilder().uri(URI.create(BASE_URL + "/api/push/diagnostics")).build(),
+                HttpRequest.newBuilder().uri(URI.create(BASE_URL + "/api/push/preferences")).build(),
                 HttpResponse.BodyHandlers.ofString());
         assertEquals(401, resp.statusCode());
     }

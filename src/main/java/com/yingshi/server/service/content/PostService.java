@@ -87,15 +87,13 @@ public class PostService {
         String cursorId = cursorParts != null ? cursorParts[1] : null;
 
         int fetchLimit = normalizedPageSize + LIST_OVER_FETCH_MARGIN;
-        List<PostEntity> posts = postRepository.findPostPage(
-                libraryId,
-                cursorUpdatedAt,
-                cursorId,
-                PageRequest.of(0, fetchLimit, Sort.by(
-                        Sort.Order.desc("updatedAt"),
-                        Sort.Order.desc("id")
-                ))
-        );
+        var pageable = PageRequest.of(0, fetchLimit, Sort.by(
+                Sort.Order.desc("updatedAt"),
+                Sort.Order.desc("id")
+        ));
+        List<PostEntity> posts = (cursorUpdatedAt != null)
+                ? postRepository.findPostPageNext(libraryId, cursorUpdatedAt, cursorId, pageable)
+                : postRepository.findPostPageFirst(libraryId, pageable);
         if (posts.isEmpty()) {
             return new CursorPage<>(List.of(), null, false, normalizedPageSize);
         }

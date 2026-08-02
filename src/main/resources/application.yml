@@ -122,17 +122,6 @@ app:
     direct-upload-enabled: ${STORAGE_DIRECT_UPLOAD_ENABLED:false}
     direct-upload-public-endpoint: ${STORAGE_DIRECT_UPLOAD_PUBLIC_ENDPOINT:}
     force-path-style: ${STORAGE_FORCE_PATH_STYLE:true}
-  push:
-    fcm:
-      enabled: ${FCM_ENABLED:false}
-      dry-run: ${FCM_DRY_RUN:false}
-      project-id: ${FCM_PROJECT_ID:}
-      service-account-path: ${FCM_SERVICE_ACCOUNT_PATH:}
-      service-account-json-base64: ${FCM_SERVICE_ACCOUNT_JSON_BASE64:}
-    token-cleanup:
-      enabled: ${APP_PUSH_TOKEN_CLEANUP_ENABLED:true}
-      fixed-delay-millis: ${APP_PUSH_TOKEN_CLEANUP_FIXED_DELAY_MILLIS:3600000}   # 每小时
-      initial-delay-millis: ${APP_PUSH_TOKEN_CLEANUP_INITIAL_DELAY_MILLIS:300000} # 启动后5分钟
   geocoding:
     amap:
       enabled: ${AMAP_GEOCODING_ENABLED:true}

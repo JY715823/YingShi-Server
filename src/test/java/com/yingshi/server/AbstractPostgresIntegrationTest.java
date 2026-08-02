@@ -1,10 +1,7 @@
 package com.yingshi.server;
 
 import com.jayway.jsonpath.JsonPath;
-import com.yingshi.server.domain.PushDeviceTokenEntity;
 import com.yingshi.server.service.auth.AuthLoginCodeSender;
-import com.yingshi.server.service.push.PushDeliveryResult;
-import com.yingshi.server.service.push.PushMessageSender;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -26,8 +23,6 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -75,9 +70,6 @@ public abstract class AbstractPostgresIntegrationTest {
 
     @Autowired
     protected MockMvc mockMvc;
-
-    @Autowired
-    protected CapturingPushMessageSender capturingPushSender;
 
     @Autowired
     protected CapturingAuthLoginCodeSender capturingCodeSender;
@@ -139,26 +131,10 @@ public abstract class AbstractPostgresIntegrationTest {
     @TestConfiguration
     static class TestCapturingConfig {
         @Bean @Primary
-        CapturingPushMessageSender capturingPushMessageSender() {
-            return new CapturingPushMessageSender();
-        }
-        @Bean @Primary
         CapturingAuthLoginCodeSender capturingAuthLoginCodeSender() {
             return new CapturingAuthLoginCodeSender();
         }
     }
-
-    static class CapturingPushMessageSender implements PushMessageSender {
-        final List<CapturedDelivery> deliveries = new ArrayList<>();
-        @Override
-        public PushDeliveryResult sendDataMessage(List<PushDeviceTokenEntity> tokens, Map<String, String> data) {
-            deliveries.add(new CapturedDelivery(tokens.stream().map(PushDeviceTokenEntity::getToken).toList(), Map.copyOf(data)));
-            return new PushDeliveryResult(tokens.size(), tokens.size(), List.of());
-        }
-        void clear() { deliveries.clear(); }
-    }
-
-    record CapturedDelivery(List<String> tokens, Map<String, String> data) {}
 
     static class CapturingAuthLoginCodeSender implements AuthLoginCodeSender {
         final Map<String, String> codes = new ConcurrentHashMap<>();

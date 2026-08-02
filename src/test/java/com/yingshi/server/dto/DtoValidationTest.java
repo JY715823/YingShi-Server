@@ -5,7 +5,6 @@ import com.yingshi.server.dto.comment.CreateCommentRequest;
 import com.yingshi.server.dto.comment.UpdateCommentRequest;
 import com.yingshi.server.dto.content.CreateAlbumRequest;
 import com.yingshi.server.dto.content.CreatePostRequest;
-import com.yingshi.server.dto.push.RegisterPushTokenRequest;
 import com.yingshi.server.dto.upload.UploadTokenRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
@@ -30,7 +29,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * - CreatePostRequest (title @NotBlank, participantUserIds @NotNull + @Size(min=1))
  * - CreateCommentRequest / UpdateCommentRequest (content @NotBlank + @Size)
  * - UploadTokenRequest (fileName/mimeType/mediaType @NotBlank, fileSizeBytes/width/height @NotNull + @Positive)
- * - RegisterPushTokenRequest (platform/token @NotBlank + @Size)
  */
 class DtoValidationTest {
 
@@ -208,39 +206,6 @@ class DtoValidationTest {
     @Test
     void updateCommentRequestNullContentHasViolation() {
         assertHasViolationOnPath(new UpdateCommentRequest(null), "content");
-    }
-
-    // ---- RegisterPushTokenRequest ----
-
-    @Test
-    void registerPushTokenRequestValidHasNoViolations() {
-        assertNoViolations(new RegisterPushTokenRequest("android", "token-xyz-abc"));
-    }
-
-    @Test
-    void registerPushTokenRequestBlankPlatformHasViolation() {
-        assertHasViolationOnPath(new RegisterPushTokenRequest("", "token-xyz"), "platform");
-    }
-
-    @Test
-    void registerPushTokenRequestNullPlatformHasViolation() {
-        assertHasViolationOnPath(new RegisterPushTokenRequest(null, "token-xyz"), "platform");
-    }
-
-    @Test
-    void registerPushTokenRequestBlankTokenHasViolation() {
-        assertHasViolationOnPath(new RegisterPushTokenRequest("android", ""), "token");
-    }
-
-    @Test
-    void registerPushTokenRequestNullTokenHasViolation() {
-        assertHasViolationOnPath(new RegisterPushTokenRequest("android", null), "token");
-    }
-
-    @Test
-    void registerPushTokenRequestOversizedTokenHasViolation() {
-        String longToken = "t".repeat(600);
-        assertHasViolationOnPath(new RegisterPushTokenRequest("android", longToken), "token");
     }
 
     // ---- UploadTokenRequest ----

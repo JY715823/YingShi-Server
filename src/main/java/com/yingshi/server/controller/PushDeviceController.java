@@ -5,9 +5,6 @@ import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.common.auth.CurrentUser;
 import com.yingshi.server.common.response.ApiResponse;
 import com.yingshi.server.config.RequestIdFilter;
-import com.yingshi.server.dto.push.RegisterPushTokenRequest;
-import com.yingshi.server.dto.push.RegisterPushTokenResponse;
-import com.yingshi.server.dto.push.PushDiagnosticsResponse;
 import com.yingshi.server.dto.push.PushPreferencesResponse;
 import com.yingshi.server.dto.push.UpdatePushPreferenceRequest;
 import com.yingshi.server.service.push.PushNotificationService;
@@ -34,16 +31,6 @@ public class PushDeviceController {
         this.pushNotificationService = pushNotificationService;
     }
 
-    @Operation(summary = "Register an FCM device token", security = @SecurityRequirement(name = "bearerAuth"))
-    @PostMapping("/device-tokens")
-    public ApiResponse<RegisterPushTokenResponse> registerDeviceToken(
-            @Valid @RequestBody RegisterPushTokenRequest requestBody,
-            @CurrentUser AuthenticatedUser currentUser,
-            HttpServletRequest request
-    ) {
-        return ApiResponse.success(requestId(request), pushNotificationService.registerDeviceToken(requestBody, currentUser));
-    }
-
     @Operation(summary = "Get push preferences", security = @SecurityRequirement(name = "bearerAuth"))
     @GetMapping("/preferences")
     public ApiResponse<PushPreferencesResponse> getPreferences(
@@ -51,15 +38,6 @@ public class PushDeviceController {
             HttpServletRequest request
     ) {
         return ApiResponse.success(requestId(request), pushNotificationService.getPreferences(currentUser));
-    }
-
-    @Operation(summary = "Get push delivery diagnostics", security = @SecurityRequirement(name = "bearerAuth"))
-    @GetMapping("/diagnostics")
-    public ApiResponse<PushDiagnosticsResponse> getDiagnostics(
-            @CurrentUser AuthenticatedUser currentUser,
-            HttpServletRequest request
-    ) {
-        return ApiResponse.success(requestId(request), pushNotificationService.getDiagnostics(currentUser));
     }
 
     @Operation(summary = "Update push preference", security = @SecurityRequirement(name = "bearerAuth"))

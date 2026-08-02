@@ -32,35 +32,59 @@ public interface PostRepository extends JpaRepository<PostEntity, String> {
     @Query("SELECT p FROM PostEntity p WHERE p.libraryId = :libraryId AND p.deletedAt IS NULL ORDER BY p.displayTimeMillis DESC, p.updatedAt DESC")
     List<PostEntity> findByLibraryIdAndDeletedAtIsNullOrderByDisplayTimeMillisDescUpdatedAtDesc(@Param("libraryId") String libraryId);
 
-    // R2-E-5: keyset pagination for small album list (ORDER BY updatedAt DESC, id DESC)
+    // R2-E-5: keyset pagination for small album list — first page (no cursor)
     @Query("""
             SELECT p FROM PostEntity p
             WHERE p.libraryId = :libraryId
               AND p.deletedAt IS NULL
-              AND (:cursorUpdatedAt IS NULL
-                   OR p.updatedAt < :cursorUpdatedAt
+            ORDER BY p.updatedAt DESC, p.id DESC
+            """)
+    List<PostEntity> findPostPageFirst(
+            @Param("libraryId") String libraryId,
+            org.springframework.data.domain.Pageable pageable
+    );
+
+    // R2-E-5: keyset pagination for small album list — next page (with cursor)
+    @Query("""
+            SELECT p FROM PostEntity p
+            WHERE p.libraryId = :libraryId
+              AND p.deletedAt IS NULL
+              AND (p.updatedAt < :cursorUpdatedAt
                    OR (p.updatedAt = :cursorUpdatedAt AND p.id < :cursorId))
             ORDER BY p.updatedAt DESC, p.id DESC
             """)
-    List<PostEntity> findPostPage(
+    List<PostEntity> findPostPageNext(
             @Param("libraryId") String libraryId,
             @Param("cursorUpdatedAt") Instant cursorUpdatedAt,
             @Param("cursorId") String cursorId,
             org.springframework.data.domain.Pageable pageable
     );
 
-    // R2-E-4: keyset pagination for small albums under an album (ORDER BY updatedAt DESC, id DESC)
+    // R2-E-4: keyset pagination for small albums under an album — first page (no cursor)
     @Query("""
             SELECT p FROM PostEntity p
             WHERE p.libraryId = :libraryId
               AND p.albumId = :albumId
               AND p.deletedAt IS NULL
-              AND (:cursorUpdatedAt IS NULL
-                   OR p.updatedAt < :cursorUpdatedAt
+            ORDER BY p.updatedAt DESC, p.id DESC
+            """)
+    List<PostEntity> findPostPageByAlbumFirst(
+            @Param("libraryId") String libraryId,
+            @Param("albumId") String albumId,
+            org.springframework.data.domain.Pageable pageable
+    );
+
+    // R2-E-4: keyset pagination for small albums under an album — next page (with cursor)
+    @Query("""
+            SELECT p FROM PostEntity p
+            WHERE p.libraryId = :libraryId
+              AND p.albumId = :albumId
+              AND p.deletedAt IS NULL
+              AND (p.updatedAt < :cursorUpdatedAt
                    OR (p.updatedAt = :cursorUpdatedAt AND p.id < :cursorId))
             ORDER BY p.updatedAt DESC, p.id DESC
             """)
-    List<PostEntity> findPostPageByAlbum(
+    List<PostEntity> findPostPageByAlbumNext(
             @Param("libraryId") String libraryId,
             @Param("albumId") String albumId,
             @Param("cursorUpdatedAt") Instant cursorUpdatedAt,

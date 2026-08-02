@@ -129,16 +129,13 @@ public class AlbumService {
         String cursorId = cursorParts != null ? cursorParts[1] : null;
 
         int fetchLimit = normalizedPageSize + LIST_OVER_FETCH_MARGIN;
-        List<PostEntity> posts = postRepository.findPostPageByAlbum(
-                libraryId,
-                albumId,
-                cursorUpdatedAt,
-                cursorId,
-                PageRequest.of(0, fetchLimit, Sort.by(
-                        Sort.Order.desc("updatedAt"),
-                        Sort.Order.desc("id")
-                ))
-        );
+        var pageable = PageRequest.of(0, fetchLimit, Sort.by(
+                Sort.Order.desc("updatedAt"),
+                Sort.Order.desc("id")
+        ));
+        List<PostEntity> posts = (cursorUpdatedAt != null)
+                ? postRepository.findPostPageByAlbumNext(libraryId, albumId, cursorUpdatedAt, cursorId, pageable)
+                : postRepository.findPostPageByAlbumFirst(libraryId, albumId, pageable);
         if (posts.isEmpty()) {
             return new CursorPage<>(List.of(), null, false, normalizedPageSize);
         }

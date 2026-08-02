@@ -1,13 +1,10 @@
 package com.yingshi.server;
 
 import com.jayway.jsonpath.JsonPath;
-import com.yingshi.server.domain.PushDeviceTokenEntity;
 import com.yingshi.server.domain.MediaEntity;
 import com.yingshi.server.repository.MediaRepository;
 import com.yingshi.server.repository.TrashItemRepository;
 import com.yingshi.server.service.auth.AuthLoginCodeSender;
-import com.yingshi.server.service.push.PushDeliveryResult;
-import com.yingshi.server.service.push.PushMessageSender;
 import com.yingshi.server.service.trash.PendingCleanupScheduler;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Assumptions;
@@ -33,7 +30,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -79,9 +75,6 @@ class YingshiServerApplicationTests {
 
     @Autowired
     private TrashItemRepository trashItemRepository;
-
-    @Autowired
-    private CapturingPushMessageSender capturingPushMessageSender;
 
     @Autowired
     private CapturingAuthLoginCodeSender capturingAuthLoginCodeSender;
@@ -1619,44 +1612,6 @@ class YingshiServerApplicationTests {
     }
 
     @Test
-    void pushDeviceTokenRegistrationDoesNotDuplicateLifeConsoleSseViaFcm() throws Exception {
-        String demoAAccessToken = loginAndGetAccessToken(ACCOUNT_A, TEMP_PASSWORD);
-        String demoBAccessToken = loginAndGetAccessToken(ACCOUNT_B, TEMP_PASSWORD);
-        capturingPushMessageSender.clear();
-
-        mockMvc.perform(post("/api/push/device-tokens")
-                        .header("Authorization", "Bearer " + demoAAccessToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "platform": "android",
-                                  "token": "fcm-token-a"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.platform").value("android"))
-                .andExpect(jsonPath("$.data.enabled").value(true));
-
-        mockMvc.perform(post("/api/push/device-tokens")
-                        .header("Authorization", "Bearer " + demoBAccessToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "platform": "android",
-                                  "token": "fcm-token-b"
-                                }
-                                """))
-                .andExpect(status().isOk());
-
-        mockMvc.perform(post("/api/life-console/bowel-events")
-                        .header("Authorization", "Bearer " + demoAAccessToken))
-                .andExpect(status().isOk());
-
-        Thread.sleep(250L);
-        assertTrue(capturingPushMessageSender.deliveries.isEmpty());
-    }
-
-    @Test
     void directoryDeleteAndSystemDeleteHaveDifferentTrashBehavior() throws Exception {
         String accessToken = loginAndGetAccessToken();
 
@@ -2246,12 +2201,6 @@ class YingshiServerApplicationTests {
     static class PushTestConfig {
         @Bean
         @Primary
-        CapturingPushMessageSender capturingPushMessageSender() {
-            return new CapturingPushMessageSender();
-        }
-
-        @Bean
-        @Primary
         CapturingAuthLoginCodeSender capturingAuthLoginCodeSender() {
             return new CapturingAuthLoginCodeSender();
         }
@@ -2261,23 +2210,6 @@ class YingshiServerApplicationTests {
             String accessToken,
             String refreshToken
     ) {
-    }
-
-    static class CapturingPushMessageSender implements PushMessageSender {
-        private final List<CapturedPushDelivery> deliveries = new CopyOnWriteArrayList<>();
-
-        @Override
-        public PushDeliveryResult sendDataMessage(List<PushDeviceTokenEntity> targetTokens, Map<String, String> data) {
-            deliveries.add(new CapturedPushDelivery(
-                    targetTokens.stream().map(PushDeviceTokenEntity::getToken).toList(),
-                    Map.copyOf(data)
-            ));
-            return new PushDeliveryResult(targetTokens.size(), targetTokens.size(), List.of());
-        }
-
-        void clear() {
-            deliveries.clear();
-        }
     }
 
     static class CapturingAuthLoginCodeSender implements AuthLoginCodeSender {
@@ -2295,12 +2227,6 @@ class YingshiServerApplicationTests {
             }
             return code;
         }
-    }
-
-    record CapturedPushDelivery(
-            List<String> tokens,
-            Map<String, String> data
-    ) {
     }
 
 }
