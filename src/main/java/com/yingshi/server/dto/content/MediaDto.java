@@ -32,6 +32,8 @@ public record MediaDto(
         Double latitude,
         Double longitude,
         String locationLabel,
+        // V52: 位置来源 exif/inferred/manual
+        String locationSource,
         // V49: EXIF拍摄参数(JSONB, 灵活扩展)
         java.util.Map<String, Object> exifMetadata
 ) {

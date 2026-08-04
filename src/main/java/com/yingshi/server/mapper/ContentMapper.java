@@ -147,6 +147,7 @@ public class ContentMapper {
                 media.getLatitude(),
                 media.getLongitude(),
                 media.getLocationLabel(),
+                media.getLocationSource(),
                 media.getExifMetadata()
         );
     }

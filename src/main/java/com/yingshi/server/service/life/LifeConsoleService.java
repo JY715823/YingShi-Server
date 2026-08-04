@@ -289,6 +289,9 @@ public class LifeConsoleService {
         media.setLatitude(lat);
         media.setLongitude(lng);
         media.setLocationLabel(label);
+        // V52: 位置来源由客户端标明（实时定位 exif / 轨迹推断 inferred），缺省按手动修改
+        String source = request.locationSource();
+        media.setLocationSource(source == null || source.isBlank() ? "manual" : source.trim());
         mediaRepository.save(media);
         // 位置更新不触发推送通知：
         // 1. 位置更新通常是异步定位补全（先无位置提交，再补全），对用户无意义
@@ -569,6 +572,7 @@ public class LifeConsoleService {
                 source.latitude(),
                 source.longitude(),
                 source.locationLabel(),
+                source.locationSource(),
                 source.exifMetadata()
         );
     }

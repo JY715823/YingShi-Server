@@ -19,6 +19,8 @@ import com.yingshi.server.mapper.ContentMapper;
 import com.yingshi.server.repository.AlbumRepository;
 import com.yingshi.server.repository.PostMediaRepository;
 import com.yingshi.server.repository.PostRepository;
+import com.yingshi.server.service.push.PushDispatchSupport;
+import com.yingshi.server.service.push.PushNotificationService;
 import com.yingshi.server.service.trash.TrashService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -45,6 +47,7 @@ public class AlbumService {
     private final ContentMapper contentMapper;
     private final TrashService trashService;
     private final CursorCodec cursorCodec;
+    private final PushNotificationService pushNotificationService;
 
     public AlbumService(
             AlbumRepository albumRepository,
@@ -52,7 +55,8 @@ public class AlbumService {
             PostMediaRepository postMediaRepository,
             ContentMapper contentMapper,
             TrashService trashService,
-            CursorCodec cursorCodec
+            CursorCodec cursorCodec,
+            PushNotificationService pushNotificationService
     ) {
         this.albumRepository = albumRepository;
         this.postRepository = postRepository;
@@ -60,6 +64,7 @@ public class AlbumService {
         this.contentMapper = contentMapper;
         this.trashService = trashService;
         this.cursorCodec = cursorCodec;
+        this.pushNotificationService = pushNotificationService;
     }
 
     @Transactional
@@ -71,7 +76,30 @@ public class AlbumService {
         album.setSubtitle(request.subtitle() == null ? "" : request.subtitle().trim());
         album.setCoverMediaId(null);
         albumRepository.save(album);
+        notifyAlbumCreated(album, currentUser);
         return contentMapper.toAlbumDto(album, 0L);
+    }
+
+    /**
+     * 新建大相册推送：与 PostService.notifyContentUpdated（小相册）同模式。
+     * afterCommitAsync 保证外层事务提交后（虚拟线程）再推送，接收方查询时数据已可见。
+     * targetRoute "photos:album:{albumId}" 客户端据此切到相册 Tab。
+     */
+    private void notifyAlbumCreated(AlbumEntity album, AuthenticatedUser currentUser) {
+        String albumId = album.getId();
+        String libraryId = currentUser.libraryId();
+        String actorUserId = currentUser.userId();
+        long occurredAtMillis = Instant.now().toEpochMilli();
+        PushDispatchSupport.afterCommitAsync(() -> pushNotificationService.notifyPhotoChanged(
+                libraryId,
+                actorUserId,
+                PushNotificationService.CATEGORY_PHOTOS_CONTENT_UPDATE,
+                "大相册",
+                "对方新建了一个大相册。",
+                "photos:album:" + albumId,
+                "album:" + albumId + ":" + occurredAtMillis,
+                "album:" + albumId
+        ));
     }
 
     @Transactional(readOnly = true)

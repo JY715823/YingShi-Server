@@ -215,7 +215,7 @@ class DtoValidationTest {
                 "test.jpg", "image/jpeg", 1024L, "IMAGE", 1920, 1080,
                 null, System.currentTimeMillis(), null, null,
                 null, "fp-xyz", null, "IMPORT_TO_APP", null, null,
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -231,7 +231,7 @@ class DtoValidationTest {
                 req.durationMillis(), req.displayTimeMillis(), req.capturedAtMillis(), req.importedAtMillis(),
                 req.displayTimeSource(), req.sourceFingerprint(), req.operationId(), req.operationType(),
                 req.operationTitle(), req.operationMediaCount(), req.domain(), req.lifeCategory(),
-                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.idempotencyKey());
+                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.locationSource(), req.idempotencyKey(), req.exifMetadata());
         assertHasViolationOnPath(modified, "fileName");
     }
 
@@ -243,7 +243,7 @@ class DtoValidationTest {
                 req.durationMillis(), req.displayTimeMillis(), req.capturedAtMillis(), req.importedAtMillis(),
                 req.displayTimeSource(), req.sourceFingerprint(), req.operationId(), req.operationType(),
                 req.operationTitle(), req.operationMediaCount(), req.domain(), req.lifeCategory(),
-                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.idempotencyKey());
+                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.locationSource(), req.idempotencyKey(), req.exifMetadata());
         assertHasViolationOnPath(modified, "fileName");
     }
 
@@ -255,7 +255,7 @@ class DtoValidationTest {
                 req.durationMillis(), req.displayTimeMillis(), req.capturedAtMillis(), req.importedAtMillis(),
                 req.displayTimeSource(), req.sourceFingerprint(), req.operationId(), req.operationType(),
                 req.operationTitle(), req.operationMediaCount(), req.domain(), req.lifeCategory(),
-                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.idempotencyKey());
+                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.locationSource(), req.idempotencyKey(), req.exifMetadata());
         assertHasViolationOnPath(modified, "fileSizeBytes");
     }
 
@@ -267,7 +267,7 @@ class DtoValidationTest {
                 req.durationMillis(), req.displayTimeMillis(), req.capturedAtMillis(), req.importedAtMillis(),
                 req.displayTimeSource(), req.sourceFingerprint(), req.operationId(), req.operationType(),
                 req.operationTitle(), req.operationMediaCount(), req.domain(), req.lifeCategory(),
-                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.idempotencyKey());
+                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.locationSource(), req.idempotencyKey(), req.exifMetadata());
         assertHasViolationOnPath(modified, "fileSizeBytes");
     }
 
@@ -279,7 +279,7 @@ class DtoValidationTest {
                 req.durationMillis(), req.displayTimeMillis(), req.capturedAtMillis(), req.importedAtMillis(),
                 req.displayTimeSource(), req.sourceFingerprint(), req.operationId(), req.operationType(),
                 req.operationTitle(), req.operationMediaCount(), req.domain(), req.lifeCategory(),
-                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.idempotencyKey());
+                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.locationSource(), req.idempotencyKey(), req.exifMetadata());
         assertHasViolationOnPath(modified, "fileSizeBytes");
     }
 
@@ -291,7 +291,7 @@ class DtoValidationTest {
                 req.durationMillis(), req.displayTimeMillis(), req.capturedAtMillis(), req.importedAtMillis(),
                 req.displayTimeSource(), req.sourceFingerprint(), req.operationId(), req.operationType(),
                 req.operationTitle(), req.operationMediaCount(), req.domain(), req.lifeCategory(),
-                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.idempotencyKey());
+                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.locationSource(), req.idempotencyKey(), req.exifMetadata());
         assertHasViolationOnPath(modified, "width");
     }
 
@@ -303,7 +303,7 @@ class DtoValidationTest {
                 req.durationMillis(), req.displayTimeMillis(), req.capturedAtMillis(), req.importedAtMillis(),
                 req.displayTimeSource(), req.sourceFingerprint(), req.operationId(), req.operationType(),
                 req.operationTitle(), req.operationMediaCount(), req.domain(), req.lifeCategory(),
-                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.idempotencyKey());
+                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.locationSource(), req.idempotencyKey(), req.exifMetadata());
         assertHasViolationOnPath(modified, "width");
     }
 
@@ -315,7 +315,7 @@ class DtoValidationTest {
                 req.durationMillis(), req.displayTimeMillis(), req.capturedAtMillis(), req.importedAtMillis(),
                 req.displayTimeSource(), req.sourceFingerprint(), req.operationId(), req.operationType(),
                 req.operationTitle(), req.operationMediaCount(), req.domain(), req.lifeCategory(),
-                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.idempotencyKey());
+                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.locationSource(), req.idempotencyKey(), req.exifMetadata());
         assertHasViolationOnPath(modified, "mediaType");
     }
 
@@ -327,7 +327,7 @@ class DtoValidationTest {
                 req.durationMillis(), null, req.capturedAtMillis(), req.importedAtMillis(),
                 req.displayTimeSource(), req.sourceFingerprint(), req.operationId(), req.operationType(),
                 req.operationTitle(), req.operationMediaCount(), req.domain(), req.lifeCategory(),
-                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.idempotencyKey());
+                req.sourceItemId(), req.latitude(), req.longitude(), req.locationLabel(), req.locationSource(), req.idempotencyKey(), req.exifMetadata());
         assertHasViolationOnPath(modified, "displayTimeMillis");
     }
 }

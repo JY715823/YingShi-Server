@@ -141,6 +141,8 @@ public class UploadTokenService {
         task.setLatitude(request.latitude());
         task.setLongitude(request.longitude());
         task.setLocationLabel(request.locationLabel());
+        // V52: 位置来源标记（exif/inferred/manual）
+        task.setLocationSource(request.locationSource());
         // V49: 客户端提取的全部EXIF元数据，传递给MediaEntity
         task.setExifMetadata(request.exifMetadata());
         task.setIdempotencyKey(idempotencyKey);

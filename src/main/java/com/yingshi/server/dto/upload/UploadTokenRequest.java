@@ -73,6 +73,10 @@ public record UploadTokenRequest(
         @Size(max = 255, message = "locationLabel must be at most 255 characters.")
         String locationLabel,
 
+        // V52: 位置来源 exif/inferred/manual
+        @Size(max = 16, message = "locationSource must be at most 16 characters.")
+        String locationSource,
+
         @Size(max = 128, message = "idempotencyKey must be at most 128 characters.")
         String idempotencyKey,
 

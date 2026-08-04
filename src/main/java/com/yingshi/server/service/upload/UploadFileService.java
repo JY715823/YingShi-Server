@@ -411,6 +411,8 @@ public class UploadFileService {
         media.setLatitude(lat);
         media.setLongitude(lng);
         media.setLocationLabel(label);
+        // V52: 位置来源随任务转移到 media
+        media.setLocationSource(task.getLocationSource());
         // R1-H-2: 真实图片尺寸/像素校验，防止解压炸弹和元数据造假
         if (task.getMediaType() == MediaType.IMAGE) {
             try {

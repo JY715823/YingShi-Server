@@ -5,6 +5,7 @@ import com.yingshi.server.common.auth.AuthenticatedUser;
 import com.yingshi.server.domain.ledger.LedgerAccountEntity;
 import com.yingshi.server.domain.ledger.LedgerAccountType;
 import com.yingshi.server.domain.ledger.LedgerBookEntity;
+import com.yingshi.server.domain.ledger.LedgerDeletedRowEntity;
 import com.yingshi.server.domain.ledger.LedgerBudgetEntity;
 import com.yingshi.server.domain.ledger.LedgerBudgetPeriod;
 import com.yingshi.server.domain.ledger.LedgerCategoryBudgetEntity;
@@ -46,6 +47,7 @@ import com.yingshi.server.repository.ledger.LedgerBudgetRepository;
 import com.yingshi.server.repository.ledger.LedgerCategoryBudgetRepository;
 import com.yingshi.server.repository.ledger.LedgerCategoryRepository;
 import com.yingshi.server.repository.ledger.LedgerDeletedItemRepository;
+import com.yingshi.server.repository.ledger.LedgerDeletedRowRepository;
 import com.yingshi.server.repository.ledger.LedgerRecurringOccurrenceRepository;
 import com.yingshi.server.repository.ledger.LedgerRecurringRuleRepository;
 import com.yingshi.server.repository.ledger.LedgerTransactionRepository;
@@ -91,6 +93,7 @@ public class LedgerSyncService {
     private final LedgerDeletedItemRepository deletedItemRepository;
     private final LedgerRecurringRuleRepository recurringRuleRepository;
     private final LedgerRecurringOccurrenceRepository recurringOccurrenceRepository;
+    private final LedgerDeletedRowRepository deletedRowRepository;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -104,7 +107,8 @@ public class LedgerSyncService {
             LedgerCategoryBudgetRepository categoryBudgetRepository,
             LedgerDeletedItemRepository deletedItemRepository,
             LedgerRecurringRuleRepository recurringRuleRepository,
-            LedgerRecurringOccurrenceRepository recurringOccurrenceRepository
+            LedgerRecurringOccurrenceRepository recurringOccurrenceRepository,
+            LedgerDeletedRowRepository deletedRowRepository
     ) {
         this.bookRepository = bookRepository;
         this.categoryRepository = categoryRepository;
@@ -115,6 +119,7 @@ public class LedgerSyncService {
         this.deletedItemRepository = deletedItemRepository;
         this.recurringRuleRepository = recurringRuleRepository;
         this.recurringOccurrenceRepository = recurringOccurrenceRepository;
+        this.deletedRowRepository = deletedRowRepository;
     }
 
     @Transactional
@@ -843,6 +848,11 @@ public class LedgerSyncService {
         Instant now = Instant.now();
         long deletedAtMillis = now.toEpochMilli();
 
+        // V51: 为每条被删除的行记录墓碑，使共享 library 的其他客户端在后续同步时
+        // 通过 queryChangesSince 收到 deletedRowIds 并清理本地副本（修复"一个账号删除、
+        // 另一个账号复活"的跨账号不一致）。
+        recordDeletionTombstones(libraryId, deletedRowIds, now);
+
         // FR-3: books keeps hard delete (uses isDeleted boolean archive, applyDeletions = permanent)
         deleteIfPresent(libraryId, idsByTable.get(TABLE_BOOKS), bookRepository::deleteByLibraryIdAndIdIn);
         // FR-3: deleted_items keeps hard delete (deletedAtMillis is a business NOT NULL field, not a soft-delete marker)
@@ -856,6 +866,28 @@ public class LedgerSyncService {
         softDeleteIfPresent(libraryId, idsByTable.get(TABLE_CATEGORY_BUDGETS), now, deletedAtMillis, categoryBudgetRepository::softDeleteByLibraryIdAndIdIn);
         softDeleteIfPresent(libraryId, idsByTable.get(TABLE_RECURRING_RULES), now, deletedAtMillis, recurringRuleRepository::softDeleteByLibraryIdAndIdIn);
         softDeleteIfPresent(libraryId, idsByTable.get(TABLE_RECURRING_OCCURRENCES), now, deletedAtMillis, recurringOccurrenceRepository::softDeleteByLibraryIdAndIdIn);
+    }
+
+    /** 墓碑保留窗口：超过 30 天的删除记录清理掉（客户端超过 30 天未同步才会错过删除指令）。 */
+    private static final long TOMBSTONE_RETENTION_DAYS = 30;
+
+    private void recordDeletionTombstones(String libraryId, List<DeletedRowRef> deletedRowIds, Instant deletedAt) {
+        List<LedgerDeletedRowEntity> tombstones = new ArrayList<>(deletedRowIds.size());
+        for (DeletedRowRef ref : deletedRowIds) {
+            if (ref.table() == null || ref.id() == null || ref.id().isBlank()) continue;
+            LedgerDeletedRowEntity entity = new LedgerDeletedRowEntity();
+            entity.setLibraryId(libraryId);
+            entity.setTableName(ref.table());
+            entity.setRowId(ref.id());
+            entity.setDeletedAt(deletedAt);
+            tombstones.add(entity);
+        }
+        if (!tombstones.isEmpty()) {
+            deletedRowRepository.saveAll(tombstones);
+        }
+        // 顺手清理过期墓碑，控制表体积（删除操作低频，开销可忽略）
+        deletedRowRepository.deleteByLibraryIdAndDeletedAtBefore(
+                libraryId, deletedAt.minus(TOMBSTONE_RETENTION_DAYS, java.time.temporal.ChronoUnit.DAYS));
     }
 
     private interface BulkDeleter {
@@ -895,6 +927,12 @@ public class LedgerSyncService {
         var recurringRules = recurringRuleRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
         var recurringOccurrences = recurringOccurrenceRepository.findByLibraryIdAndUpdatedAtAfter(libraryId, since);
 
+        // V51: 下发 since 之后记录的删除墓碑，客户端 deleteSyncRows 据此清理本地副本
+        var tombstones = deletedRowRepository.findByLibraryIdAndDeletedAtAfter(libraryId, since);
+        var deletedRowIds = tombstones.stream()
+                .map(t -> new DeletedRowRef(t.getTableName(), t.getRowId()))
+                .toList();
+
         return new LedgerChangesDto(
                 books.stream().map(this::bookToRow).toList(),
                 categories.stream().map(this::categoryToRow).toList(),
@@ -905,7 +943,7 @@ public class LedgerSyncService {
                 deletedItems.stream().map(this::deletedItemToRow).toList(),
                 recurringRules.stream().map(this::recurringRuleToRow).toList(),
                 recurringOccurrences.stream().map(this::recurringOccurrenceToRow).toList(),
-                new ArrayList<>()
+                deletedRowIds
         );
     }
 

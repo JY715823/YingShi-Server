@@ -9,7 +9,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -55,7 +54,15 @@ public class SseEmitterRegistry {
     public SseEmitterRegistry(NotificationEventRepository notificationEventRepository,
                               org.springframework.transaction.PlatformTransactionManager transactionManager) {
         this.notificationEventRepository = notificationEventRepository;
+        // REQUIRES_NEW 是本类的关键设计：sendToPartners 常在事务的 afterCommit 回调中被调用
+        // （PushNotificationService.sendSseAfterCommit）。此时外层事务的 JDBC 连接已提交，但
+        // EntityManagerHolder 的 transactionActive 标志尚未清理（cleanup 在 afterCompletion 之后），
+        // 若用默认 REQUIRED 传播会误加入这个"僵尸事务"，saveAndFlush 抛 "No active transaction"，
+        // 导致 life 模块推送整体失败（生产事故根因）。REQUIRES_NEW 挂起僵尸上下文、开启并独立提交
+        // 新事务，在任何调用时机都可靠落库。
         this.transactionTemplate = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(
+            org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /**
@@ -109,8 +116,11 @@ public class SseEmitterRegistry {
      *
      * R2-A-1: 同时将事件持久化到 notification_events 表，使用其 BIGSERIAL id
      * 作为 SSE event id（替代之前的 AtomicLong 自增计数器，server 重启后仍可补拉）。
+     *
+     * 注意：本方法刻意不加 @Transactional——持久化由 persistEvent 内部的
+     * REQUIRES_NEW TransactionTemplate 自主管理。加 @Transactional 会在 afterCommit
+     * 回调场景下误加入已提交的僵尸事务，导致 "No active transaction" 异常。
      */
-    @Transactional
     public void sendToPartners(String libraryId, String actorUserId, Map<String, String> data) {
         // BUG-1 fix: Always persist event FIRST, regardless of active connections.
         // Previously, when no connections existed the method returned early without persisting,

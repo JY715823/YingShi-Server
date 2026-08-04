@@ -77,18 +77,25 @@ public class MediaMetadataProbe {
     }
 
     private static void verifyDimensions(ImageProbeResult actual, int declaredWidth, int declaredHeight) throws IOException {
-        if (declaredWidth > 0 && actual.width() > 0) {
-            double diff = Math.abs(actual.width() - declaredWidth) / (double) actual.width();
-            if (diff > SIZE_TOLERANCE) {
-                throw new IOException("Image width mismatch: declared=" + declaredWidth + " actual=" + actual.width());
-            }
+        // EXIF 方向契约: 客户端(LifeConsoleUploadBridge / SystemMediaUploadSupport)上报的宽高是
+        // "应用 EXIF orientation 旋转后的显示尺寸"——方向为 90°/270° 时会把原始宽高对调。
+        // 而 ImageIO 读出的是原始容器尺寸。因此带旋转 EXIF 的图片 declared 与 actual 恰好互为转置,
+        // 这是合法匹配而非元数据造假(像素总量不变,解压炸弹防护不受影响)。
+        boolean normalMatch = dimensionWithinTolerance(actual.width(), declaredWidth)
+                && dimensionWithinTolerance(actual.height(), declaredHeight);
+        boolean swappedMatch = dimensionWithinTolerance(actual.width(), declaredHeight)
+                && dimensionWithinTolerance(actual.height(), declaredWidth);
+        if (!normalMatch && !swappedMatch) {
+            throw new IOException("Image dimension mismatch: declared=" + declaredWidth + "x" + declaredHeight
+                    + " actual=" + actual.width() + "x" + actual.height());
         }
-        if (declaredHeight > 0 && actual.height() > 0) {
-            double diff = Math.abs(actual.height() - declaredHeight) / (double) actual.height();
-            if (diff > SIZE_TOLERANCE) {
-                throw new IOException("Image height mismatch: declared=" + declaredHeight + " actual=" + actual.height());
-            }
-        }
+    }
+
+    /** declared <= 0 表示客户端未提供该维度, 视为通过; 否则要求相对误差在容差内. */
+    private static boolean dimensionWithinTolerance(int actual, int declared) {
+        if (declared <= 0 || actual <= 0) return true;
+        double diff = Math.abs(actual - declared) / (double) actual;
+        return diff <= SIZE_TOLERANCE;
     }
 
     // 视频用 ffmpeg，本项目 LocalMediaStorageService 已有 ffmpeg 调用参考

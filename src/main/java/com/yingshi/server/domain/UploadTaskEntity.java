@@ -114,6 +114,10 @@ public class UploadTaskEntity extends LibraryScopedEntity {
     @Column(name = "location_label", length = 255)
     private String locationLabel;
 
+    // V52: 位置来源 exif/inferred/manual（随 build 转移到 MediaEntity）
+    @Column(name = "location_source", length = 16)
+    private String locationSource;
+
     // V49: 全部EXIF元数据（24个字段），客户端提取后发送，传递给MediaEntity
     @Column(name = "exif_metadata", columnDefinition = "jsonb")
     @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
@@ -373,6 +377,14 @@ public class UploadTaskEntity extends LibraryScopedEntity {
 
     public void setLocationLabel(String locationLabel) {
         this.locationLabel = locationLabel;
+    }
+
+    public String getLocationSource() {
+        return locationSource;
+    }
+
+    public void setLocationSource(String locationSource) {
+        this.locationSource = locationSource;
     }
 
     public java.util.Map<String, Object> getExifMetadata() {
